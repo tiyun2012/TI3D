@@ -72,7 +72,7 @@ const GraphMath = {
 const INITIAL_NODES: GraphNode[] = [
     { id: '1', type: 'Time', position: { x: 50, y: 100 } },
     { id: '2', type: 'Sine', position: { x: 280, y: 100 } },
-    { id: '3', type: 'Float', position: { x: 50, y: 250 }, data: { value: 1.5 } },
+    { id: '3', type: 'Float', position: { x: 50, y: 250 }, data: { value: "1,5" } },
     { id: '4', type: 'Add', position: { x: 500, y: 150 } },
     { id: '5', type: 'WaveViewer', position: { x: 750, y: 150 } }
 ];
@@ -308,21 +308,15 @@ export const NodeGraph: React.FC = () => {
         const activeLinks = connections
             .filter(c => currentSelection.has(c.fromNode) || currentSelection.has(c.toNode))
             .map(c => {
-                // If both ends are selected, we can skip updating the wire during partial drag because both ends move? 
-                // No, we still need to update visually. Ideally we translate the SVG path or re-calc.
-                // For simplicity, we re-calc.
-                
-                const isFromSelected = currentSelection.has(c.fromNode);
-                const isToSelected = currentSelection.has(c.toNode);
-                
-                // If both selected, it's a rigid body move of the wire (could optimize, but re-calc is cheap enough for lines)
-                
                 const fromNode = nodes.find(n => n.id === c.fromNode);
                 const toNode = nodes.find(n => n.id === c.toNode);
                 if (!fromNode || !toNode) return null;
 
                 const pathEl = pathRefs.current.get(c.id);
                 if (!pathEl) return null;
+
+                const isFromSelected = currentSelection.has(c.fromNode);
+                const isToSelected = currentSelection.has(c.toNode);
 
                 return {
                     pathEl,
@@ -357,7 +351,6 @@ export const NodeGraph: React.FC = () => {
                     if (!link) continue;
 
                     // Get "Live" positions
-                    // If a node is selected, calculate its new pos. If not, use its original pos.
                     const getPos = (id: string, defPos: {x:number, y:number}) => {
                          if (startPositions.has(id)) {
                              const s = startPositions.get(id)!;
@@ -607,8 +600,9 @@ export const NodeGraph: React.FC = () => {
                                         
                                         {def.type === 'Float' && (
                                             <input 
-                                                type="number" className="w-full h-6 bg-black/40 text-xs text-white px-1 rounded border border-white/10"
-                                                value={node.data?.value || 0}
+                                                type="text" 
+                                                className="w-full h-6 bg-black/40 text-xs text-white px-1 rounded border border-white/10"
+                                                value={node.data?.value || "0"}
                                                 onChange={(e) => setNodes(p => p.map(n => n.id===node.id ? {...n, data: {value: e.target.value}} : n))}
                                                 onMouseDown={e => e.stopPropagation()}
                                             />

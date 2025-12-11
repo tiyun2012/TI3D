@@ -102,7 +102,11 @@ export const NodeRegistry: Record<string, NodeDef> = {
     title: 'Float Constant',
     inputs: [],
     outputs: [{ id: 'out', name: 'Val', type: 'float' }],
-    execute: (_, data) => parseFloat(data?.value || 0)
+    execute: (_, data) => {
+        const val = data?.value || "0";
+        // Convert comma to dot to support multiple locales
+        return parseFloat(val.toString().replace(',', '.'));
+    }
   },
   'Vec3': {
     type: 'Vec3',
