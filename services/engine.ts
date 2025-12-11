@@ -1072,6 +1072,19 @@ export class Ti3DEngine {
       l.components[ComponentType.LIGHT]!.intensity = 1.0;
   }
 
+  syncTransforms() {
+      this.sceneGraph.update((id) => {
+          const idx = this.ecs.getEntityIndex(id);
+          if (idx === undefined || !this.ecs.store.isActive[idx]) return null;
+          const s = this.ecs.store;
+          const t = this.tempTransformData;
+          t[0] = s.posX[idx]; t[1] = s.posY[idx]; t[2] = s.posZ[idx];
+          t[3] = s.rotX[idx]; t[4] = s.rotY[idx]; t[5] = s.rotZ[idx];
+          t[6] = s.scaleX[idx]; t[7] = s.scaleY[idx]; t[8] = s.scaleZ[idx];
+          return t;
+      });
+  }
+
   tick(deltaTime: number) {
       if (this.isPlaying) {
           // simple animation
@@ -1083,16 +1096,7 @@ export class Ti3DEngine {
           }
       }
 
-      this.sceneGraph.update((id) => {
-          const idx = this.ecs.getEntityIndex(id);
-          if (idx === undefined || !this.ecs.store.isActive[idx]) return null;
-          const s = this.ecs.store;
-          const t = this.tempTransformData;
-          t[0] = s.posX[idx]; t[1] = s.posY[idx]; t[2] = s.posZ[idx];
-          t[3] = s.rotX[idx]; t[4] = s.rotY[idx]; t[5] = s.rotZ[idx];
-          t[6] = s.scaleX[idx]; t[7] = s.scaleY[idx]; t[8] = s.scaleZ[idx];
-          return t;
-      });
+      this.syncTransforms();
       
       // --- Logic Graph Execution ---
       this.debugRenderer.begin();
@@ -1123,7 +1127,11 @@ export class Ti3DEngine {
   stop() { this.isPlaying = false; this.notifyUI(); }
   
   subscribe(cb: () => void) { this.listeners.push(cb); return () => this.listeners = this.listeners.filter(c => c !== cb); }
-  notifyUI() { this.listeners.forEach(cb => cb()); }
+  
+  notifyUI() { 
+      this.syncTransforms();
+      this.listeners.forEach(cb => cb()); 
+  }
 }
 
 export const engineInstance = new Ti3DEngine();
