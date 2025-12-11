@@ -821,8 +821,9 @@ export const NodeGraph: React.FC = () => {
       {/* Context Menu */}
       {contextMenu && contextMenu.visible && (
         <div 
-            className="fixed bg-[#2a2a2a] border border-black shadow-2xl rounded w-40 py-1 z-50 text-xs"
+            className="fixed bg-[#2a2a2a] border border-black shadow-2xl rounded w-40 py-1 z-50 text-xs cursor-default"
             style={{ left: contextMenu.x, top: contextMenu.y }}
+            onMouseDown={(e) => e.stopPropagation()}
         >
             <div className="px-2 py-1 text-gray-500 font-bold bg-[#1a1a1a]">Create Node</div>
             {Object.keys(NODE_DEFINITIONS).map(key => (
