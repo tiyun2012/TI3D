@@ -1,4 +1,3 @@
-
 import React, { useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react';
 import { Entity, ComponentType, ToolType, Vector3, PerformanceMetrics } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
@@ -16,21 +15,34 @@ interface SceneViewProps {
 
 type Axis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'UNIFORM';
 
-const StatsPanel: React.FC<{ metrics: PerformanceMetrics }> = ({ metrics }) => (
-    <div className="absolute top-10 right-2 bg-black/60 backdrop-blur border border-white/10 rounded-md p-2 text-[10px] font-mono text-text-secondary select-none pointer-events-none z-30 shadow-lg">
-        <div className="flex justify-between gap-4"><span className="text-white">FPS</span> <span className={metrics.fps < 30 ? "text-red-500" : "text-green-500"}>{metrics.fps.toFixed(0)}</span></div>
-        <div className="flex justify-between gap-4"><span>Frame</span> <span>{metrics.frameTime.toFixed(2)}ms</span></div>
-        <div className="flex justify-between gap-4"><span>Calls</span> <span>{metrics.drawCalls}</span></div>
-        <div className="flex justify-between gap-4"><span>Tris</span> <span>{metrics.triangleCount}</span></div>
-        <div className="flex justify-between gap-4"><span>Ents</span> <span>{metrics.entityCount}</span></div>
-    </div>
-);
+// Optimization: Isolated component to prevent SceneView re-renders
+const StatsOverlay: React.FC = () => {
+    const [metrics, setMetrics] = useState<PerformanceMetrics>(engineInstance.metrics);
+    
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setMetrics({...engineInstance.metrics});
+        }, 500);
+        return () => clearInterval(interval);
+    }, []);
+
+    return (
+        <div className="absolute top-10 right-2 bg-black/60 backdrop-blur border border-white/10 rounded-md p-2 text-[10px] font-mono text-text-secondary select-none pointer-events-none z-30 shadow-lg">
+            <div className="flex justify-between gap-4"><span className="text-white">FPS</span> <span className={metrics.fps < 30 ? "text-red-500" : "text-green-500"}>{metrics.fps.toFixed(0)}</span></div>
+            <div className="flex justify-between gap-4"><span>Frame</span> <span>{metrics.frameTime.toFixed(2)}ms</span></div>
+            <div className="flex justify-between gap-4"><span>Calls</span> <span>{metrics.drawCalls}</span></div>
+            <div className="flex justify-between gap-4"><span>Tris</span> <span>{metrics.triangleCount}</span></div>
+            <div className="flex justify-between gap-4"><span>Ents</span> <span>{metrics.entityCount}</span></div>
+        </div>
+    );
+};
 
 export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSelect, selectedIds, tool }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
-  const [metrics, setMetrics] = useState<PerformanceMetrics>(engineInstance.metrics);
+  // Optimization: Stable viewport state
+  const [viewport, setViewport] = useState({ width: 1, height: 1 });
 
   const [camera, setCamera] = useState({
     target: { x: 0, y: 0, z: 0 },
@@ -47,7 +59,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     startCamera: typeof camera;
   } | null>(null);
 
-  // Marquee Selection State
   const [selectionBox, setSelectionBox] = useState<{
     startX: number;
     startY: number;
@@ -64,45 +75,35 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     startY: number;
     startValue: Vector3;
     hasMoved: boolean;
-    screenAxis: { x: number, y: number }; // Normalized screen space vector for axis projection
+    screenAxis: { x: number, y: number };
     rotationStartAngle?: number; 
-    axisVector?: Vector3; // The world-space vector of the axis being manipulated
+    axisVector?: Vector3;
   } | null>(null);
 
   useLayoutEffect(() => {
-    if (canvasRef.current) {
+    if (canvasRef.current && containerRef.current) {
         engineInstance.initGL(canvasRef.current);
-        const resizeObserver = new ResizeObserver(() => {
-            if (containerRef.current && canvasRef.current) {
-                const { width, height } = containerRef.current.getBoundingClientRect();
-                engineInstance.resize(width, height);
-            }
+        
+        // Optimization: Use ResizeObserver instead of getBoundingClientRect in render loop
+        const observer = new ResizeObserver((entries) => {
+            const { width, height } = entries[0].contentRect;
+            setViewport({ width, height });
+            engineInstance.resize(width, height);
         });
-        resizeObserver.observe(containerRef.current!);
-        return () => resizeObserver.disconnect();
+        
+        observer.observe(containerRef.current);
+        return () => observer.disconnect();
     }
-  }, []);
-
-  // Poll for metrics
-  useEffect(() => {
-      const interval = setInterval(() => {
-          setMetrics({...engineInstance.metrics});
-      }, 500);
-      return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
       engineInstance.setSelected(selectedIds);
   }, [selectedIds]);
 
-  // Derived Camera Matrices
-  const { vpMatrix, width, height } = useMemo(() => {
-    if (!containerRef.current) return { vpMatrix: Mat4Utils.create(), width: 1, height: 1 };
+  // Derived Camera Matrices using stable viewport state
+  const { vpMatrix } = useMemo(() => {
+    const { width, height } = viewport;
     
-    const rect = containerRef.current.getBoundingClientRect();
-    const w = rect.width;
-    const h = rect.height;
-
     const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta);
     const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
     const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
@@ -111,21 +112,21 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const viewMatrix = Mat4Utils.create();
     Mat4Utils.lookAt(eye, camera.target, { x: 0, y: 1, z: 0 }, viewMatrix);
     
-    const aspect = w / h;
+    const aspect = width / height;
     const projMatrix = Mat4Utils.create();
     Mat4Utils.perspective(Math.PI / 4, aspect, 0.1, 1000, projMatrix);
     
     const vp = Mat4Utils.create();
     Mat4Utils.multiply(projMatrix, viewMatrix, vp);
 
-    return { vpMatrix: vp, width: w, height: h };
-  }, [camera, containerRef.current?.getBoundingClientRect().width, containerRef.current?.getBoundingClientRect().height]);
+    return { vpMatrix: vp };
+  }, [camera, viewport.width, viewport.height]);
 
   useEffect(() => {
-    if (width > 1) {
-       engineInstance.updateCamera(vpMatrix, width, height);
+    if (viewport.width > 1) {
+       engineInstance.updateCamera(vpMatrix, viewport.width, viewport.height);
     }
-  }, [vpMatrix, width, height]);
+  }, [vpMatrix, viewport.width, viewport.height]);
 
   const getCameraPosition = () => {
     const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta);
@@ -247,9 +248,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           const factor = dist * 0.002; 
 
           if (tool === 'MOVE') {
-              // Vector Projection Logic for Axis Move
               if (['X', 'Y', 'Z'].includes(gizmoDrag.axis)) {
-                  // Project mouse delta onto the screen-space axis vector
                   const proj = dx * gizmoDrag.screenAxis.x + dy * gizmoDrag.screenAxis.y;
                   const moveAmount = proj * factor;
 
@@ -257,32 +256,29 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                   if (gizmoDrag.axis === 'Y') transform.position.y = gizmoDrag.startValue.y + moveAmount;
                   if (gizmoDrag.axis === 'Z') transform.position.z = gizmoDrag.startValue.z + moveAmount;
               }
-              // Plane Moves (Simplified 2D mapping)
               else if (gizmoDrag.axis === 'XZ') {
                   transform.position.x = gizmoDrag.startValue.x + dx * factor;
-                  transform.position.z = gizmoDrag.startValue.z + dy * factor; // Y on screen maps to Z depth
+                  transform.position.z = gizmoDrag.startValue.z + dy * factor;
               }
               else if (gizmoDrag.axis === 'XY') {
                   transform.position.x = gizmoDrag.startValue.x + dx * factor;
                   transform.position.y = gizmoDrag.startValue.y - dy * factor;
               }
               else if (gizmoDrag.axis === 'YZ') {
-                  transform.position.z = gizmoDrag.startValue.z + dx * factor; // X on screen maps to Z
+                  transform.position.z = gizmoDrag.startValue.z + dx * factor;
                   transform.position.y = gizmoDrag.startValue.y - dy * factor;
               }
           } 
           else if (tool === 'ROTATE' && gizmoDrag.rotationStartAngle !== undefined && gizmoDrag.axisVector) {
              const rect = containerRef.current?.getBoundingClientRect();
              if (rect) {
-                 // Calculate current angle based on mouse position relative to object center
-                 const pCenter = Mat4Utils.transformPoint(worldPos, vpMatrix, width, height);
+                 const pCenter = Mat4Utils.transformPoint(worldPos, vpMatrix, viewport.width, viewport.height);
                  const cx = rect.left + pCenter.x;
                  const cy = rect.top + pCenter.y;
                  
                  const currentAngle = Math.atan2(e.clientY - cy, e.clientX - cx);
                  let delta = currentAngle - gizmoDrag.rotationStartAngle;
                  
-                 // View-Dependent Flow: Flip rotation if axis points away from camera
                  const viewDir = { 
                      x: camPos.x - worldPos.x, 
                      y: camPos.y - worldPos.y, 
@@ -294,11 +290,10 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                  }
 
                  if (e.shiftKey) {
-                     const snap = Math.PI / 12; // 15 degrees
+                     const snap = Math.PI / 12;
                      delta = Math.round(delta / snap) * snap;
                  }
                  
-                 // Subtract delta for intuitive "trackball-like" feel
                  const v = gizmoDrag.startValue;
                  if (gizmoDrag.axis === 'X') transform.rotation.x = v.x - delta;
                  if (gizmoDrag.axis === 'Y') transform.rotation.y = v.y - delta;
@@ -372,10 +367,39 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       window.removeEventListener('mousemove', handleWindowMouseMove);
       window.removeEventListener('mouseup', handleWindowMouseUp);
     };
-  }, [dragState, gizmoDrag, camera, selectedIds, tool, entities]);
+  }, [dragState, gizmoDrag, camera, selectedIds, tool, entities, vpMatrix, viewport.width, viewport.height, sceneGraph]);
 
   const handleWheel = (e: React.WheelEvent) => {
     setCamera(prev => ({ ...prev, radius: Math.max(2, prev.radius + e.deltaY * 0.01) }));
+  };
+
+  const renderScaleIndicator = () => {
+      if (tool !== 'SCALE' || !gizmoDrag || selectedIds.length === 0) return null;
+      const entity = entities.find(e => e.id === selectedIds[0]);
+      if (!entity) return null;
+      const { scale } = entity.components[ComponentType.TRANSFORM];
+      
+      const worldPos = sceneGraph.getWorldPosition(selectedIds[0]);
+      const screenPos = Mat4Utils.transformPoint(worldPos, vpMatrix, viewport.width, viewport.height);
+      
+      if (screenPos.w <= 0) return null;
+
+      return (
+        <div 
+          className="absolute pointer-events-none bg-black/80 text-white text-[10px] px-2 py-1 rounded border border-white/10 font-mono whitespace-nowrap z-50 backdrop-blur-sm"
+          style={{ 
+            left: screenPos.x, 
+            top: screenPos.y + 20,
+            transform: 'translate(-50%, 0)'
+          }}
+        >
+          <div className="flex gap-2">
+            <span className="text-red-400">X: {scale.x.toFixed(2)}</span>
+            <span className="text-green-400">Y: {scale.y.toFixed(2)}</span>
+            <span className="text-blue-400">Z: {scale.z.toFixed(2)}</span>
+          </div>
+        </div>
+      );
   };
 
   const renderGizmos = () => {
@@ -386,8 +410,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       const worldMatrix = sceneGraph.getWorldMatrix(selectedId);
       if (!worldMatrix) return null;
 
-      // Extract Local Basis Vectors (Local Rotation)
-      // Columns 0, 1, 2 of World Matrix
       const normalize = (v: Vector3) => {
           const l = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
           return l > 0 ? {x: v.x/l, y: v.y/l, z: v.z/l} : v;
@@ -397,32 +419,28 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       const yAxis = normalize({ x: worldMatrix[4], y: worldMatrix[5], z: worldMatrix[6] });
       const zAxis = normalize({ x: worldMatrix[8], y: worldMatrix[9], z: worldMatrix[10] });
 
-      // --- 1. Calculate View-Dependent Scale ---
       const camPos = getCameraPosition();
       const dist = Math.sqrt(
           Math.pow(camPos.x - worldPos.x, 2) + 
           Math.pow(camPos.y - worldPos.y, 2) + 
           Math.pow(camPos.z - worldPos.z, 2)
       );
-      // Constant screen size factor
       const scale = dist * 0.15; 
 
-      const pCenter = Mat4Utils.transformPoint(worldPos, vpMatrix, width, height);
+      const pCenter = Mat4Utils.transformPoint(worldPos, vpMatrix, viewport.width, viewport.height);
       if (pCenter.w <= 0) return null;
 
-      // Axis length in World Units, scaled by distance
       const axisLen = 1.0 * scale; 
       const handleLen = 0.3 * scale; 
       const origin = { x: worldPos.x, y: worldPos.y, z: worldPos.z };
       
-      // Calculate Axis End Points using LOCAL axes
       const projectAxis = (axisVec: Vector3, len: number) => Mat4Utils.transformPoint(
           { 
               x: origin.x + axisVec.x * len, 
               y: origin.y + axisVec.y * len, 
               z: origin.z + axisVec.z * len 
           }, 
-          vpMatrix, width, height
+          vpMatrix, viewport.width, viewport.height
       );
 
       const axes = {
@@ -443,13 +461,11 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           else if (tool === 'ROTATE') startValue = { ...transform.rotation };
           else if (tool === 'SCALE') startValue = { ...transform.scale };
 
-          // Determine current axis vector
           let axisVector = { x: 1, y: 0, z: 0 };
           if (axis === 'X') axisVector = xAxis;
           if (axis === 'Y') axisVector = yAxis;
           if (axis === 'Z') axisVector = zAxis;
 
-          // Store current mouse projection for improved dragging feel
           let screenAxis = { x: 1, y: 0 };
           if (tool === 'MOVE' && ['X','Y','Z'].includes(axis)) {
               const target = axis === 'X' ? axes.x : axis === 'Y' ? axes.y : axes.z;
@@ -459,7 +475,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
               if (len > 0.001) screenAxis = { x: dx/len, y: dy/len };
           }
           
-          // Calculate initial angle for Rotation Tool
           let rotationStartAngle = 0;
           if (tool === 'ROTATE') {
                const rect = containerRef.current?.getBoundingClientRect();
@@ -482,13 +497,11 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           });
       };
 
-      // --- Helper: Project Circle Ring (Local-aligned) ---
       const projectRing = (axis: 'X' | 'Y' | 'Z', radius: number, segments = 32) => {
-          // Define basis for the ring plane
           let u = xAxis, v = yAxis;
-          if (axis === 'X') { u = yAxis; v = zAxis; } // YZ plane
-          if (axis === 'Y') { u = xAxis; v = zAxis; } // XZ plane
-          if (axis === 'Z') { u = xAxis; v = yAxis; } // XY plane
+          if (axis === 'X') { u = yAxis; v = zAxis; } 
+          if (axis === 'Y') { u = xAxis; v = zAxis; }
+          if (axis === 'Z') { u = xAxis; v = yAxis; }
 
           const points: string[] = [];
           for (let i = 0; i <= segments; i++) {
@@ -502,24 +515,18 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                   z: origin.z + u.z * c + v.z * s
               };
               
-              const screen = Mat4Utils.transformPoint(pt, vpMatrix, width, height);
+              const screen = Mat4Utils.transformPoint(pt, vpMatrix, viewport.width, viewport.height);
               points.push(`${screen.x},${screen.y}`);
           }
           return points.join(' ');
       };
 
-      // --- Helper: Render Plane Handle ---
       const renderPlaneHandle = (type: Axis, color: string) => {
-          // Plane handles use local axes too
           const scaleHandle = handleLen;
-          
           const pOrigin = { ...origin };
-          let p2 = { ...origin };
-          let p3 = { ...origin };
-          let p4 = { ...origin };
+          let p2 = { ...origin }, p3 = { ...origin }, p4 = { ...origin };
 
           if (type === 'XY') {
-              // Origin -> X -> X+Y -> Y
               p2 = { x: origin.x + xAxis.x * scaleHandle, y: origin.y + xAxis.y * scaleHandle, z: origin.z + xAxis.z * scaleHandle };
               p4 = { x: origin.x + yAxis.x * scaleHandle, y: origin.y + yAxis.y * scaleHandle, z: origin.z + yAxis.z * scaleHandle };
               p3 = { x: p2.x + yAxis.x * scaleHandle, y: p2.y + yAxis.y * scaleHandle, z: p2.z + yAxis.z * scaleHandle };
@@ -533,10 +540,10 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
               p3 = { x: p2.x + zAxis.x * scaleHandle, y: p2.y + zAxis.y * scaleHandle, z: p2.z + zAxis.z * scaleHandle };
           }
 
-          const s1 = Mat4Utils.transformPoint(pOrigin, vpMatrix, width, height);
-          const s2 = Mat4Utils.transformPoint(p2, vpMatrix, width, height);
-          const s3 = Mat4Utils.transformPoint(p3, vpMatrix, width, height);
-          const s4 = Mat4Utils.transformPoint(p4, vpMatrix, width, height);
+          const s1 = Mat4Utils.transformPoint(pOrigin, vpMatrix, viewport.width, viewport.height);
+          const s2 = Mat4Utils.transformPoint(p2, vpMatrix, viewport.width, viewport.height);
+          const s3 = Mat4Utils.transformPoint(p3, vpMatrix, viewport.width, viewport.height);
+          const s4 = Mat4Utils.transformPoint(p4, vpMatrix, viewport.width, viewport.height);
 
           const isActive = gizmoDrag?.axis === type;
           const isHover = hoverAxis === type;
@@ -570,13 +577,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                   onMouseEnter={() => setHoverAxis(axis)}
                   onMouseLeave={() => setHoverAxis(null)}
               >
-                  {/* Invisible fat line for easier clicking */}
                   <line x1={pCenter.x} y1={pCenter.y} x2={endPoint.x} y2={endPoint.y} stroke="transparent" strokeWidth={15} />
-                  
-                  {/* Visible Line */}
                   <line x1={pCenter.x} y1={pCenter.y} x2={endPoint.x} y2={endPoint.y} stroke={strokeColor} strokeWidth={lineWidth} />
                   
-                  {/* Cone Tip for Move Tool */}
                   {tool === 'MOVE' && (
                       <polygon 
                           points={`${endPoint.x},${endPoint.y-5} ${endPoint.x-5},${endPoint.y+10} ${endPoint.x+5},${endPoint.y+10}`}
@@ -584,7 +587,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                           transform={`rotate(${Math.atan2(endPoint.y - pCenter.y, endPoint.x - pCenter.x) * 180 / Math.PI + 90}, ${endPoint.x}, ${endPoint.y})`}
                       />
                   )}
-                  {/* Cube Tip for Scale Tool */}
                   {tool === 'SCALE' && (
                       <rect 
                           x={endPoint.x - 4} y={endPoint.y - 4} width={8} height={8} 
@@ -618,7 +620,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       return (
           <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-10">
               <g className="pointer-events-auto">
-                {/* 1. Planes (Draw first so they are behind lines usually) */}
                 {tool === 'MOVE' && (
                     <>
                         {renderPlaneHandle('XZ', '#22c55e')}
@@ -627,18 +628,15 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     </>
                 )}
 
-                {/* 2. Rotation Rings */}
                 {tool === 'ROTATE' && (
                     <>
                          {renderRing('X', '#ef4444')}
                          {renderRing('Y', '#22c55e')}
                          {renderRing('Z', '#3b82f6')}
-                         {/* Semi-transparent inner sphere hint */}
                          <circle cx={pCenter.x} cy={pCenter.y} r={30 * scale} fill="white" fillOpacity="0.05" className="pointer-events-none"/>
                     </>
                 )}
 
-                {/* 3. Axis Lines */}
                 {(tool === 'MOVE' || tool === 'SCALE') && (
                     <>
                         {renderAxisLine('Z', '#3b82f6', axes.z)}
@@ -647,7 +645,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     </>
                 )}
 
-                {/* 4. Center Handle */}
                 {tool === 'SCALE' && (
                     <rect 
                         x={pCenter.x - 6} y={pCenter.y - 6} width={12} height={12} fill="white" 
@@ -679,9 +676,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         <div className="absolute inset-0 bg-gradient-to-b from-[#202020] to-[#101010] -z-10 pointer-events-none" />
         <canvas ref={canvasRef} className="block w-full h-full outline-none" />
         {renderGizmos()}
+        {renderScaleIndicator()}
         
-        {/* Performance Stats Overlay */}
-        <StatsPanel metrics={metrics} />
+        <StatsOverlay />
         
         {selectionBox && selectionBox.isSelecting && (
             <div 
