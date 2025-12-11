@@ -376,15 +376,13 @@ class WebGLRenderer {
         idToIndex: Map<string, number>, 
         sceneGraph: SceneGraph, 
         viewProjection: Mat4, 
-        selectedId: string | null
+        selectedIds: Set<string>
     ) {
         if (!this.gl || !this.program) return;
         const gl = this.gl;
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         gl.useProgram(this.program);
         gl.uniformMatrix4fv(this.uniforms.u_viewProjection, false, viewProjection);
-
-        const selectedIndex = selectedId ? idToIndex.get(selectedId) : -1;
 
         // Group by MeshType and Build Instance Buffers
         const meshTypes = [1, 2, 3]; // Cube, Sphere, Plane
@@ -412,7 +410,7 @@ class WebGLRenderer {
                     this.instanceData[dataPtr++] = store.colorB[index];
 
                     // Copy Selection (1 float)
-                    this.instanceData[dataPtr++] = (index === selectedIndex) ? 1.0 : 0.0;
+                    this.instanceData[dataPtr++] = selectedIds.has(store.ids[index]) ? 1.0 : 0.0;
 
                     instanceCount++;
                 }
@@ -476,7 +474,7 @@ export class Ti3DEngine {
   physics: PhysicsSystem;
   
   isPlaying: boolean = false;
-  selectedId: string | null = null;
+  selectedIds: Set<string> = new Set();
   private listeners: (() => void)[] = [];
 
   // Scratchpad for transform update callback
@@ -493,22 +491,25 @@ export class Ti3DEngine {
   initGL(canvas: HTMLCanvasElement) { this.renderer.init(canvas); }
   resize(width: number, height: number) { this.renderer.resize(width, height); }
 
-  setSelected(id: string | null) {
-      this.selectedId = id;
+  setSelected(ids: string[]) {
+      this.selectedIds = new Set(ids);
       this.notifyUI();
   }
 
   viewProjectionMatrix = Mat4Utils.create();
-  updateCamera(vpMatrix: Mat4) {
+  // Store canvas dims for projection
+  private canvasWidth = 1;
+  private canvasHeight = 1;
+
+  updateCamera(vpMatrix: Mat4, w: number, h: number) {
       Mat4Utils.copy(this.viewProjectionMatrix, vpMatrix);
+      this.canvasWidth = w;
+      this.canvasHeight = h;
   }
 
   // --- High Performance Selection System ---
   selectEntityAt(x: number, y: number, width: number, height: number): string | null {
       // 1. Unproject Screen to World Ray
-      // We need the inverse ViewProjection.
-      // NOTE: This uses shared scratchpads TMP_MAT4_1, TMP_MAT4_2. 
-      // Do not use them in nested calls inside this block if possible.
       if (!Mat4Utils.invert(this.viewProjectionMatrix, TMP_MAT4_1)) return null;
       
       const ray = RayUtils.create();
@@ -522,7 +523,6 @@ export class Ti3DEngine {
       const invWorld = TMP_MAT4_2;
 
       // 2. Iterate Active Entities
-      // Optimization: This loop is synchronous, ensuring "datalock" (no concurrent updates)
       for (const [id, index] of this.ecs.idToIndex) {
           if (!this.ecs.store.isActive[index]) continue;
           
@@ -534,15 +534,12 @@ export class Ti3DEngine {
           if (!worldMatrix) continue;
 
           // 3. Narrow Phase: Transform Ray to Local Object Space
-          // Instead of transforming "Huge Vertices", we transform 1 Ray.
           if (!Mat4Utils.invert(worldMatrix, invWorld)) continue;
 
           // Transform Ray Origin
           Vec3Utils.transformMat4(ray.origin, invWorld, localRay.origin);
           
           // Transform Ray Direction (as Vector, w=0)
-          // Note: We do NOT normalize here. This allows 't' to remain in World Space units
-          // if we consider the scaling factor embedded in the direction vector.
           Vec3Utils.transformMat4Normal(ray.direction, invWorld, localRay.direction);
 
           // 4. Test against Unit Primitives (Local Space)
@@ -565,6 +562,37 @@ export class Ti3DEngine {
           }
       }
       return closestId;
+  }
+
+  // --- Marquee / Rect Selection ---
+  selectEntitiesInRect(x: number, y: number, w: number, h: number): string[] {
+      const results: string[] = [];
+      const minX = Math.min(x, x + w);
+      const maxX = Math.max(x, x + w);
+      const minY = Math.min(y, y + h);
+      const maxY = Math.max(y, y + h);
+
+      for (const [id, index] of this.ecs.idToIndex) {
+          if (!this.ecs.store.isActive[index]) continue;
+          if (this.ecs.store.meshType[index] === 0) continue;
+
+          // Get World Position (Center)
+          const worldPos = this.sceneGraph.getWorldPosition(id);
+          
+          // Project to Screen Space
+          // Mat4Utils.transformPoint returns {x,y,z,w} where x,y are in screen coords [0..width, 0..height]
+          // but Y is often inverted in screen coords compared to CSS.
+          // Our math util transformPoint outputs Top-Left origin screen coords if width/height passed
+          const screenPos = Mat4Utils.transformPoint(worldPos, this.viewProjectionMatrix, this.canvasWidth, this.canvasHeight);
+          
+          if (screenPos.w <= 0) continue; // Behind camera
+
+          if (screenPos.x >= minX && screenPos.x <= maxX &&
+              screenPos.y >= minY && screenPos.y <= maxY) {
+              results.push(id);
+          }
+      }
+      return results;
   }
 
   createEntity(name: string): Entity {
@@ -642,7 +670,7 @@ export class Ti3DEngine {
           this.ecs.idToIndex, 
           this.sceneGraph, 
           this.viewProjectionMatrix, 
-          this.selectedId
+          this.selectedIds
       );
   }
   

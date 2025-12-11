@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Entity, ComponentType } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
@@ -6,8 +7,8 @@ import { Icon } from './Icon';
 interface HierarchyPanelProps {
   entities: Entity[];
   sceneGraph: SceneGraph;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
+  selectedIds: string[];
+  onSelect: (ids: string[]) => void;
 }
 
 const getEntityIcon = (entity: Entity) => {
@@ -21,10 +22,10 @@ const HierarchyItem: React.FC<{
   entityId: string;
   entities: Entity[];
   sceneGraph: SceneGraph;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
+  selectedIds: string[];
+  onSelect: (ids: string[]) => void;
   depth: number;
-}> = ({ entityId, entities, sceneGraph, selectedId, onSelect, depth }) => {
+}> = ({ entityId, entities, sceneGraph, selectedIds, onSelect, depth }) => {
   const [expanded, setExpanded] = useState(true);
   
   const entity = entities.find(e => e.id === entityId);
@@ -32,12 +33,28 @@ const HierarchyItem: React.FC<{
 
   const childrenIds = sceneGraph.getChildren(entityId);
   const hasChildren = childrenIds.length > 0;
-  const isSelected = selectedId === entity.id;
+  const isSelected = selectedIds.includes(entity.id);
+
+  const handleClick = (e: React.MouseEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+          // Toggle selection
+          if (isSelected) {
+              onSelect(selectedIds.filter(id => id !== entity.id));
+          } else {
+              onSelect([...selectedIds, entity.id]);
+          }
+      } else if (e.shiftKey && selectedIds.length > 0) {
+          // Simplistic Shift Select: just add to current for now (range select requires flattened list logic)
+           onSelect([...new Set([...selectedIds, entity.id])]);
+      } else {
+          onSelect([entity.id]);
+      }
+  };
 
   return (
     <div>
       <div 
-        onClick={() => onSelect(entity.id)}
+        onClick={handleClick}
         className={`group flex items-center gap-1.5 py-1 pr-2 cursor-pointer text-xs select-none transition-colors border-l-2
             ${isSelected 
                 ? 'bg-accent/20 border-accent text-white' 
@@ -73,7 +90,7 @@ const HierarchyItem: React.FC<{
               entityId={childId}
               entities={entities}
               sceneGraph={sceneGraph}
-              selectedId={selectedId}
+              selectedIds={selectedIds}
               onSelect={onSelect}
               depth={depth + 1}
             />
@@ -84,7 +101,7 @@ const HierarchyItem: React.FC<{
   );
 };
 
-export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneGraph, selectedId, onSelect }) => {
+export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneGraph, selectedIds, onSelect }) => {
   const rootIds = sceneGraph.getRootIds();
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -113,7 +130,10 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
 
       {/* Tree List */}
       <div className="flex-1 overflow-y-auto py-2">
-        <div className="flex items-center gap-2 text-xs text-text-primary px-3 py-1 font-semibold opacity-70">
+        <div 
+            className="flex items-center gap-2 text-xs text-text-primary px-3 py-1 font-semibold opacity-70 cursor-default"
+            onClick={() => onSelect([])}
+        >
             <Icon name="Scene" size={12} />
             <span>MainScene</span>
         </div>
@@ -125,7 +145,7 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
                   entityId={id}
                   entities={entities}
                   sceneGraph={sceneGraph}
-                  selectedId={selectedId}
+                  selectedIds={selectedIds}
                   onSelect={onSelect}
                   depth={0}
                 />

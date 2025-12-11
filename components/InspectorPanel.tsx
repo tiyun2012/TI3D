@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { Entity, Component, ComponentType, Vector3 } from '../types';
 import { engineInstance } from '../services/engine';
@@ -5,6 +6,7 @@ import { Icon } from './Icon';
 
 interface InspectorPanelProps {
   entity: Entity | null;
+  selectionCount?: number;
 }
 
 // --- Reusable UI Controls ---
@@ -222,7 +224,18 @@ const ComponentCard: React.FC<{
   );
 };
 
-export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity }) => {
+export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectionCount = 0 }) => {
+  
+  if (selectionCount > 1) {
+    return (
+        <div className="h-full bg-panel flex flex-col items-center justify-center text-text-secondary">
+          <Icon name="Layers" size={48} className="opacity-20 mb-2" />
+          <span className="text-xs">{selectionCount} Objects Selected</span>
+          <span className="text-[10px] opacity-50 mt-1">Multi-edit not supported</span>
+        </div>
+      );
+  }
+
   if (!entity) {
     return (
       <div className="h-full bg-panel flex flex-col items-center justify-center text-text-secondary">

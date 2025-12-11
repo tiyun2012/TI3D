@@ -9,14 +9,14 @@ import { Icon } from './Icon';
 interface SceneViewProps {
   entities: Entity[];
   sceneGraph: SceneGraph;
-  onSelect: (id: string) => void;
-  selectedId: string | null;
+  onSelect: (ids: string[]) => void;
+  selectedIds: string[];
   tool: ToolType;
 }
 
 type Axis = 'X' | 'Y' | 'Z';
 
-export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSelect, selectedId, tool }) => {
+export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSelect, selectedIds, tool }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -33,6 +33,15 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     startY: number;
     mode: 'ORBIT' | 'PAN' | 'ZOOM';
     startCamera: typeof camera;
+  } | null>(null);
+
+  // Marquee Selection State
+  const [selectionBox, setSelectionBox] = useState<{
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    isSelecting: boolean;
   } | null>(null);
 
   const [gizmoDrag, setGizmoDrag] = useState<{
@@ -57,8 +66,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   }, []);
 
   useEffect(() => {
-      engineInstance.setSelected(selectedId);
-  }, [selectedId]);
+      engineInstance.setSelected(selectedIds);
+  }, [selectedIds]);
 
   // Derived Camera Matrices
   const { vpMatrix, width, height } = useMemo(() => {
@@ -88,32 +97,54 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
 
   useEffect(() => {
     if (width > 1) {
-       engineInstance.updateCamera(vpMatrix);
+       engineInstance.updateCamera(vpMatrix, width, height);
     }
-  }, [vpMatrix, width]);
+  }, [vpMatrix, width, height]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
     // Selection Logic: Left Click + No Alt (Not orbiting)
-    // Maya Style: Alt is reserved for camera navigation
     if (!e.altKey && e.button === 0) {
-        if (canvasRef.current && containerRef.current) {
-            const rect = containerRef.current.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            
-            const hitId = engineInstance.selectEntityAt(x, y, rect.width, rect.height);
-            onSelect(hitId || '');
+        
+        // Check Gizmo intersection (Simplified: we let gizmo handle its own MouseDown via renderGizmos)
+        // If we are here, we might be selecting
+        
+        // Start Marquee Selection if using Select Tool
+        if (tool === 'SELECT') {
+            setSelectionBox({
+                startX: mouseX,
+                startY: mouseY,
+                currentX: mouseX,
+                currentY: mouseY,
+                isSelecting: true
+            });
+            // Don't clear selection immediately on mouse down to allow for drag start
+        } else {
+             // Instant Click Select for Transform Tools if not clicking gizmo
+             const hitId = engineInstance.selectEntityAt(mouseX, mouseY, rect.width, rect.height);
+             if (hitId) {
+                if (e.shiftKey) {
+                    onSelect([...selectedIds, hitId]);
+                } else {
+                    onSelect([hitId]);
+                }
+             } else {
+                 if(!e.shiftKey) onSelect([]);
+             }
         }
     }
     
-    // Navigation Logic: Alt + Mouse Buttons OR explicitly using tools
-    if (e.altKey || (tool !== 'SELECT' && tool !== 'MOVE' && tool !== 'ROTATE' && tool !== 'SCALE')) {
+    // Navigation Logic: Alt + Mouse Buttons
+    if (e.altKey || (e.button === 1) || (e.button === 2)) {
         e.preventDefault();
         let mode: 'ORBIT' | 'PAN' | 'ZOOM' = 'ORBIT';
         if (e.button === 1 || (e.altKey && e.button === 1)) mode = 'PAN';
         if (e.button === 2 || (e.altKey && e.button === 2)) mode = 'ZOOM';
         
-        // Maya Style: Alt + Left = Orbit, Alt + Middle = Pan, Alt + Right = Zoom
         if (e.altKey) {
             if (e.button === 0) mode = 'ORBIT';
             if (e.button === 1) mode = 'PAN';
@@ -130,13 +161,57 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     }
   };
 
-  const handleWheel = (e: React.WheelEvent) => {
-    setCamera(prev => ({ ...prev, radius: Math.max(2, prev.radius + e.deltaY * 0.01) }));
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (selectionBox && selectionBox.isSelecting && containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        setSelectionBox({
+            ...selectionBox,
+            currentX: e.clientX - rect.left,
+            currentY: e.clientY - rect.top
+        });
+        return;
+    }
+
+    // Gizmo Dragging (Moved logic to window listener in useEffect but kept start logic here)
+    // ... logic handled by gizmoDrag state in useEffect below
+  };
+
+  const handleMouseUp = (e: React.MouseEvent) => {
+      // Finish Selection Box
+      if (selectionBox && selectionBox.isSelecting) {
+          const w = selectionBox.currentX - selectionBox.startX;
+          const h = selectionBox.currentY - selectionBox.startY;
+          
+          // If barely moved, treat as single click
+          if (Math.abs(w) < 2 && Math.abs(h) < 2) {
+               if (containerRef.current) {
+                    const rect = containerRef.current.getBoundingClientRect();
+                    const hitId = engineInstance.selectEntityAt(selectionBox.startX, selectionBox.startY, rect.width, rect.height);
+                    if (hitId) {
+                        if (e.shiftKey) onSelect([...new Set([...selectedIds, hitId])]);
+                        else onSelect([hitId]);
+                    } else {
+                        if (!e.shiftKey) onSelect([]);
+                    }
+               }
+          } else {
+              // Box Selection
+              const rectIds = engineInstance.selectEntitiesInRect(selectionBox.startX, selectionBox.startY, w, h);
+              if (e.shiftKey) {
+                  onSelect([...new Set([...selectedIds, ...rectIds])]);
+              } else {
+                  onSelect(rectIds);
+              }
+          }
+          setSelectionBox(null);
+      }
   };
 
   useEffect(() => {
     const handleWindowMouseMove = (e: MouseEvent) => {
-      if (gizmoDrag && selectedId) {
+      if (gizmoDrag && selectedIds.length > 0) {
+          // Only transform the FIRST selected entity for simplicity in this demo
+          const selectedId = selectedIds[0];
           const entity = entities.find(e => e.id === selectedId);
           if (!entity) return;
           const transform = entity.components[ComponentType.TRANSFORM];
@@ -186,7 +261,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         }));
       } else if (dragState.mode === 'PAN') {
         const panSpeed = dragState.startCamera.radius * 0.002;
-        // Simple panning relative to camera orientation approx
         const sinT = Math.sin(dragState.startCamera.theta);
         const cosT = Math.cos(dragState.startCamera.theta);
         
@@ -194,7 +268,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             ...prev,
             target: {
                 x: dragState.startCamera.target.x - (dx * cosT - dy * sinT) * panSpeed,
-                y: dragState.startCamera.target.y + dy * panSpeed, // Simplified Y Pan
+                y: dragState.startCamera.target.y + dy * panSpeed,
                 z: dragState.startCamera.target.z - (dx * sinT + dy * cosT) * panSpeed
             }
         }));
@@ -204,6 +278,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const handleWindowMouseUp = () => {
         setDragState(null);
         setGizmoDrag(null);
+        // Note: selectionBox mouseup is handled on the container to capture clicks better
     };
 
     if (dragState || gizmoDrag) {
@@ -214,11 +289,17 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       window.removeEventListener('mousemove', handleWindowMouseMove);
       window.removeEventListener('mouseup', handleWindowMouseUp);
     };
-  }, [dragState, gizmoDrag, camera, selectedId, tool, entities]);
+  }, [dragState, gizmoDrag, camera, selectedIds, tool, entities]);
+
+  const handleWheel = (e: React.WheelEvent) => {
+    setCamera(prev => ({ ...prev, radius: Math.max(2, prev.radius + e.deltaY * 0.01) }));
+  };
 
   const renderGizmos = () => {
-      if (!selectedId || tool === 'SELECT') return null;
+      // Only show gizmo if one object is selected
+      if (selectedIds.length !== 1 || tool === 'SELECT') return null;
       
+      const selectedId = selectedIds[0];
       const worldPos = sceneGraph.getWorldPosition(selectedId);
       
       const pCenter = Mat4Utils.transformPoint(worldPos, vpMatrix, width, height);
@@ -307,12 +388,27 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         ref={containerRef}
         className="w-full h-full bg-[#151515] relative overflow-hidden select-none group"
         onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
         onWheel={handleWheel}
         onContextMenu={(e) => e.preventDefault()}
     >
         <div className="absolute inset-0 bg-gradient-to-b from-[#202020] to-[#101010] -z-10 pointer-events-none" />
         <canvas ref={canvasRef} className="block w-full h-full outline-none" />
         {renderGizmos()}
+        
+        {/* Marquee Selection Box */}
+        {selectionBox && selectionBox.isSelecting && (
+            <div 
+                className="absolute border border-blue-500 bg-blue-500/20 pointer-events-none z-30"
+                style={{
+                    left: Math.min(selectionBox.startX, selectionBox.currentX),
+                    top: Math.min(selectionBox.startY, selectionBox.currentY),
+                    width: Math.abs(selectionBox.currentX - selectionBox.startX),
+                    height: Math.abs(selectionBox.currentY - selectionBox.startY),
+                }}
+            />
+        )}
         
         {/* Helper UI Overlays */}
         <div className="absolute top-3 left-3 flex gap-2 z-20">
@@ -323,13 +419,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             <div className="bg-black/40 backdrop-blur border border-white/5 rounded-md flex items-center px-2 text-[10px] text-text-secondary">
                 <span>Perspective</span>
             </div>
-        </div>
-        <div className="absolute top-3 right-3 opacity-80 hover:opacity-100 transition-opacity cursor-pointer z-20">
-             <div className="relative w-8 h-8">
-                 <div className="absolute right-0 top-0 w-1 h-6 bg-green-500 rounded-full"></div>
-                 <div className="absolute right-0 top-6 w-6 h-1 bg-red-500 rounded-full"></div>
-                 <div className="absolute right-1 top-1 w-4 h-4 bg-blue-500 rounded-full z-10 border-2 border-[#151515]"></div>
-             </div>
         </div>
         <div className="absolute bottom-2 right-2 text-[10px] text-text-secondary bg-black/40 px-2 py-0.5 rounded backdrop-blur border border-white/5 z-20">
             Cam: {camera.target.x.toFixed(1)}, {camera.target.y.toFixed(1)}, {camera.target.z.toFixed(1)}

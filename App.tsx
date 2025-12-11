@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import DockLayout, { LayoutData, TabData, BoxData, PanelData } from 'rc-dock';
 import { engineInstance } from './services/engine';
@@ -22,8 +23,8 @@ const HierarchyWrapper = () => {
     <HierarchyPanel 
       entities={ctx.entities} 
       sceneGraph={ctx.sceneGraph}
-      selectedId={ctx.selectedId}
-      onSelect={ctx.setSelectedId}
+      selectedIds={ctx.selectedIds}
+      onSelect={ctx.setSelectedIds}
     />
   );
 };
@@ -31,8 +32,10 @@ const HierarchyWrapper = () => {
 const InspectorWrapper = () => {
   const ctx = useContext(EditorContext);
   if (!ctx) return null;
-  const entity = ctx.selectedId ? ctx.entities.find(e => e.id === ctx.selectedId) || null : null;
-  return <InspectorPanel entity={entity} />;
+  // Inspect the first selected entity, or null
+  const entity = ctx.selectedIds.length > 0 ? ctx.entities.find(e => e.id === ctx.selectedIds[0]) || null : null;
+  // Pass count for UI feedback
+  return <InspectorPanel entity={entity} selectionCount={ctx.selectedIds.length} />;
 };
 
 const SceneWrapper = () => {
@@ -42,8 +45,8 @@ const SceneWrapper = () => {
     <SceneView 
       entities={ctx.entities}
       sceneGraph={ctx.sceneGraph}
-      selectedId={ctx.selectedId}
-      onSelect={ctx.setSelectedId}
+      selectedIds={ctx.selectedIds}
+      onSelect={ctx.setSelectedIds}
       tool={ctx.tool}
     />
   );
@@ -114,7 +117,7 @@ const DEFAULT_LAYOUT: LayoutData = {
 
 const App: React.FC = () => {
   const [entities, setEntities] = useState<Entity[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [tool, setTool] = useState<ToolType>('SELECT');
   const [isPlaying, setIsPlaying] = useState(false);
 
@@ -218,8 +221,8 @@ const App: React.FC = () => {
     <EditorContext.Provider value={{
       entities,
       sceneGraph: engineInstance.sceneGraph,
-      selectedId,
-      setSelectedId,
+      selectedIds,
+      setSelectedIds,
       tool,
       setTool,
       isPlaying
