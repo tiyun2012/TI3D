@@ -1,14 +1,74 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react';
 import { GraphNode, GraphConnection } from '../types';
-import { Icon } from './Icon';
 import { engineInstance } from '../services/engine';
 import { NodeRegistry, getTypeColor } from '../services/NodeRegistry';
 
-// Constants
-const GRID_SIZE = 20;
-const NODE_WIDTH = 180;
-const REROUTE_SIZE = 12;
+// --- 1. Shared Layout Constants ---
+const LayoutConfig = {
+    GRID_SIZE: 20,
+    NODE_WIDTH: 180,
+    REROUTE_SIZE: 12,
+    HEADER_HEIGHT: 36,
+    ITEM_HEIGHT: 24,
+    PIN_RADIUS: 6,
+    BORDER: 1,
+    GAP: 4,
+    PADDING_TOP: 8
+};
 
+// --- 2. Math Helpers ---
+const GraphMath = {
+    getPinPosition: (node: GraphNode, pinId: string, type: 'input' | 'output') => {
+        // Reroute Node: Input Left, Output Right (Center Y)
+        if (node.type === 'Reroute') {
+            const centerY = node.position.y + LayoutConfig.REROUTE_SIZE / 2;
+            if (type === 'input') {
+                return { x: node.position.x - LayoutConfig.PIN_RADIUS, y: centerY }; 
+            } else {
+                return { x: node.position.x + LayoutConfig.REROUTE_SIZE + LayoutConfig.PIN_RADIUS, y: centerY };
+            }
+        }
+
+        const def = NodeRegistry[node.type];
+        if (!def) return { x: node.position.x, y: node.position.y };
+
+        let index = 0;
+        if (type === 'output') {
+            index += def.inputs.length;
+            if (node.type === 'Float') index += 1;
+            const outIdx = def.outputs.findIndex(p => p.id === pinId);
+            index += outIdx !== -1 ? outIdx : 0;
+        } else {
+            const inIdx = def.inputs.findIndex(p => p.id === pinId);
+            index += inIdx !== -1 ? inIdx : 0;
+        }
+
+        const yOffset = LayoutConfig.BORDER + LayoutConfig.HEADER_HEIGHT + LayoutConfig.PADDING_TOP + 
+                       (index * (LayoutConfig.ITEM_HEIGHT + LayoutConfig.GAP)) + (LayoutConfig.ITEM_HEIGHT / 2);
+        
+        const xOffset = type === 'output' 
+            ? (LayoutConfig.NODE_WIDTH + LayoutConfig.PIN_RADIUS) 
+            : -LayoutConfig.PIN_RADIUS;
+
+        return { x: node.position.x + xOffset, y: node.position.y + yOffset };
+    },
+
+    calculateCurve: (x1: number, y1: number, x2: number, y2: number) => {
+        const dist = Math.abs(x1 - x2) * 0.4;
+        const cX1 = x1 + Math.max(dist, 50);
+        const cX2 = x2 - Math.max(dist, 50);
+        return `M ${x1} ${y1} C ${cX1} ${y1} ${cX2} ${y2} ${x2} ${y2}`;
+    },
+
+    screenToWorld: (clientX: number, clientY: number, rect: DOMRect, transform: { x: number, y: number, k: number }) => {
+        return {
+            x: (clientX - rect.left - transform.x) / transform.k,
+            y: (clientY - rect.top - transform.y) / transform.k
+        };
+    }
+};
+
+// --- Initial Data ---
 const INITIAL_NODES: GraphNode[] = [
     { id: '1', type: 'Time', position: { x: 50, y: 100 } },
     { id: '2', type: 'Sine', position: { x: 280, y: 100 } },
@@ -25,328 +85,522 @@ const INITIAL_CONNECTIONS: GraphConnection[] = [
 ];
 
 export const NodeGraph: React.FC = () => {
+    // React State
     const [nodes, setNodes] = useState<GraphNode[]>(INITIAL_NODES);
     const [connections, setConnections] = useState<GraphConnection[]>(INITIAL_CONNECTIONS);
-    const [transform, setTransform] = useState({ x: 0, y: 0, k: 1 });
+    const [connecting, setConnecting] = useState<{ nodeId: string, pinId: string, type: 'input'|'output', x: number, y: number, dataType: string } | null>(null);
+    const [contextMenu, setContextMenu] = useState<{ x: number, y: number, visible: boolean } | null>(null);
+    const [searchFilter, setSearchFilter] = useState('');
     
+    // Selection State
+    const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+    const [selectionBox, setSelectionBox] = useState<{ startX: number, startY: number, currentX: number, currentY: number } | null>(null);
+
+    // High-Performance Refs
+    const transformRef = useRef({ x: 0, y: 0, k: 1 });
+    const viewRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const pathRefs = useRef<Map<string, SVGPathElement>>(new Map());
     
-    const [connecting, setConnecting] = useState<{ nodeId: string, pinId: string, type: 'input'|'output', x: number, y: number } | null>(null);
-    const [contextMenu, setContextMenu] = useState<{ x: number, y: number, visible: boolean } | null>(null);
-    const [searchFilter, setSearchFilter] = useState('');
-    const [panning, setPanning] = useState(false);
+    // Global Event Manager
+    const activeListenersRef = useRef<{ move?: (ev: MouseEvent) => void; up?: (ev: MouseEvent) => void }>({});
 
     useEffect(() => {
         engineInstance.compileGraph(nodes, connections);
     }, [nodes, connections]);
 
-    // --- Helpers ---
-
-    const screenToGraph = (clientX: number, clientY: number) => {
-        const rect = containerRef.current?.getBoundingClientRect();
-        if (!rect) return { x: 0, y: 0 };
-        return {
-            x: (clientX - rect.left - transform.x) / transform.k,
-            y: (clientY - rect.top - transform.y) / transform.k
-        };
-    };
-
-    // Robust math-based pin lookup. Matches CSS layout exactly to prevent visual jitter during zoom/pan.
-    const getPinOffset = (nodeX: number, nodeY: number, nodeType: string, pinId: string, type: 'input'|'output') => {
-        if (nodeType === 'Reroute') {
-            return { x: nodeX + REROUTE_SIZE/2, y: nodeY + REROUTE_SIZE/2 };
-        }
+    // --- Helper: Type Checking ---
+    const getPortType = useCallback((nodeId: string, pinId: string, type: 'input' | 'output') => {
+        const node = nodes.find(n => n.id === nodeId);
+        if (!node) return 'any';
+        if (node.type === 'Reroute') return 'any';
         
-        const def = NodeRegistry[nodeType];
-        if (!def) return { x: nodeX, y: nodeY };
-
-        // Determine vertical stack index
-        // Order: Inputs -> [Float Input] -> Outputs
-        let index = 0;
-        if (type === 'output') {
-            index += def.inputs.length;
-            if (nodeType === 'Float') index += 1;
-            const outIdx = def.outputs.findIndex(p => p.id === pinId);
-            index += outIdx !== -1 ? outIdx : 0;
-        } else {
-            const inIdx = def.inputs.findIndex(p => p.id === pinId);
-            index += inIdx !== -1 ? inIdx : 0;
-        }
-
-        // Layout Constants (Tailwind & CSS Logic)
-        const HEADER_HEIGHT = 36; // h-9
-        const PADDING_TOP = 8;    // p-2 (top part)
-        const ITEM_HEIGHT = 24;   // h-6
-        const GAP = 4;            // space-y-1
-        const BORDER = 1;         // border width (border-black)
-
-        // Y Position: Top Border + Header + Body Padding + Stack Index * (Item + Gap) + Half Item
-        const yOffset = BORDER + HEADER_HEIGHT + PADDING_TOP + (index * (ITEM_HEIGHT + GAP)) + (ITEM_HEIGHT / 2);
+        const def = NodeRegistry[node.type];
+        if (!def) return 'any';
         
-        // X Position:
-        // Input: 1px (Border) - 6px (Pin Center Offset from Content Start) + 6px (Pin Radius) = 1px (Inside Left Border)
-        // Output: NODE_WIDTH - 1px (Border) = 179px (Inside Right Border)
-        const xOffset = type === 'output' ? (NODE_WIDTH - BORDER) : BORDER;
+        const list = type === 'input' ? def.inputs : def.outputs;
+        const port = list.find(p => p.id === pinId);
+        return port ? port.type : 'any';
+    }, [nodes]);
 
-        return {
-            x: nodeX + xOffset,
-            y: nodeY + yOffset
-        };
-    };
+    const isCompatible = useCallback((sourceType: string, targetType: string) => {
+        return sourceType === 'any' || targetType === 'any' || sourceType === targetType;
+    }, []);
 
-    const calculateCurve = (x1: number, y1: number, x2: number, y2: number) => {
-        const dist = Math.abs(x1 - x2) * 0.4; 
-        const cX1 = x1 + Math.max(dist, 50); 
-        const cX2 = x2 - Math.max(dist, 50);
-        return `M ${x1} ${y1} C ${cX1} ${y1} ${cX2} ${y2} ${x2} ${y2}`;
-    };
+    // --- Viewport Syncing ---
 
-    // --- Interaction ---
+    const updateViewportStyle = useCallback(() => {
+        if (viewRef.current && containerRef.current) {
+            const { x, y, k } = transformRef.current;
+            viewRef.current.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k})`;
+            containerRef.current.style.backgroundPosition = `${x}px ${y}px`;
+            containerRef.current.style.backgroundSize = `${LayoutConfig.GRID_SIZE * k}px ${LayoutConfig.GRID_SIZE * k}px`;
+        }
+    }, []);
 
-    const handleWheel = (e: React.WheelEvent) => {
+    useLayoutEffect(() => {
+        updateViewportStyle();
+    }, [updateViewportStyle]);
+
+    // Cleanup Helper
+    const cleanupListeners = useCallback(() => {
+        if (activeListenersRef.current.move) window.removeEventListener('mousemove', activeListenersRef.current.move);
+        if (activeListenersRef.current.up) window.removeEventListener('mouseup', activeListenersRef.current.up);
+        activeListenersRef.current = {};
+    }, []);
+
+    // --- Interaction Handlers ---
+
+    const handleWheel = useCallback((e: React.WheelEvent) => {
         e.stopPropagation();
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+
         const zoomIntensity = 0.1;
         const wheel = e.deltaY < 0 ? 1 : -1;
-        const zoom = Math.exp(wheel * zoomIntensity);
-        const mouse = screenToGraph(e.clientX, e.clientY);
+        const zoomFactor = Math.exp(wheel * zoomIntensity);
+        const current = transformRef.current;
+        const newK = Math.min(Math.max(current.k * zoomFactor, 0.2), 3);
+        
+        const mouseX = (e.clientX - rect.left - current.x) / current.k;
+        const mouseY = (e.clientY - rect.top - current.y) / current.k;
 
-        setTransform(t => {
-            const newK = Math.min(Math.max(t.k * zoom, 0.2), 3);
-            return {
-                x: e.clientX - containerRef.current!.getBoundingClientRect().left - (mouse.x * newK),
-                y: e.clientY - containerRef.current!.getBoundingClientRect().top - (mouse.y * newK),
-                k: newK
+        const newX = e.clientX - rect.left - (mouseX * newK);
+        const newY = e.clientY - rect.top - (mouseY * newK);
+
+        transformRef.current = { x: newX, y: newY, k: newK };
+        updateViewportStyle();
+    }, [updateViewportStyle]);
+
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        if (e.button === 2) { 
+            setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
+            return;
+        }
+        setContextMenu(null);
+
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        // Pan
+        if (e.button === 1 || (e.button === 0 && e.altKey)) {
+            e.preventDefault();
+            cleanupListeners();
+
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const startTrans = { ...transformRef.current };
+            let frameId = 0;
+
+            const onMove = (ev: MouseEvent) => {
+                cancelAnimationFrame(frameId);
+                frameId = requestAnimationFrame(() => {
+                    const dx = ev.clientX - startX;
+                    const dy = ev.clientY - startY;
+                    transformRef.current.x = startTrans.x + dx;
+                    transformRef.current.y = startTrans.y + dy;
+                    updateViewportStyle();
+                });
             };
-        });
-    };
 
-    const handleNodeMouseDown = (e: React.MouseEvent, node: GraphNode) => {
-        e.stopPropagation();
-        const startMouse = { x: e.clientX, y: e.clientY };
-        const startNodePos = { ...node.position };
+            const onUp = () => {
+                cancelAnimationFrame(frameId);
+                cleanupListeners();
+            };
 
-        // Cache related connections for fast updates
-        const connectedLines = connections
-            .filter(c => c.fromNode === node.id || c.toNode === node.id)
-            .map(c => {
-                const isOutput = c.fromNode === node.id;
-                const otherNodeId = isOutput ? c.toNode : c.fromNode;
-                const otherNode = nodes.find(n => n.id === otherNodeId);
-                
-                // Calculate static offsets relative to the moving node
-                const myPinPos = getPinOffset(node.position.x, node.position.y, node.type, isOutput ? c.fromPin : c.toPin, isOutput ? 'output' : 'input');
-                const offsetX = myPinPos.x - startNodePos.x;
-                const offsetY = myPinPos.y - startNodePos.y;
-
-                // Calculate absolute pos of the other node's pin
-                let otherPinPos = { x: 0, y: 0 };
-                if (otherNode) {
-                    otherPinPos = getPinOffset(otherNode.position.x, otherNode.position.y, otherNode.type, isOutput ? c.toPin : c.fromPin, isOutput ? 'input' : 'output');
-                }
-
-                return {
-                    id: c.id,
-                    isOutput, 
-                    offsetX,
-                    offsetY,
-                    otherPinPos
-                };
-            });
-
-        const handleWinMove = (ev: MouseEvent) => {
-            const dx = (ev.clientX - startMouse.x) / transform.k;
-            const dy = (ev.clientY - startMouse.y) / transform.k;
-            const newX = startNodePos.x + dx;
-            const newY = startNodePos.y + dy;
-
-            // 1. Update Node Div directly (bypass React Render)
-            const el = nodeRefs.current.get(node.id);
-            if(el) {
-                el.style.left = `${newX}px`;
-                el.style.top = `${newY}px`;
+            activeListenersRef.current = { move: onMove, up: onUp };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+        }
+        // Selection Box (Left Click)
+        else if (e.button === 0) {
+            if (!e.shiftKey && !e.ctrlKey) {
+                setSelectedNodeIds(new Set());
             }
 
-            // 2. Update Wires Imperatively
-            connectedLines.forEach(link => {
-                const pathEl = pathRefs.current.get(link.id);
-                if(!pathEl) return;
+            const startX = e.clientX - rect.left;
+            const startY = e.clientY - rect.top;
+            setSelectionBox({ startX, startY, currentX: startX, currentY: startY });
 
-                const movingPinX = newX + link.offsetX;
-                const movingPinY = newY + link.offsetY;
+            let frameId = 0;
 
-                const start = link.isOutput ? { x: movingPinX, y: movingPinY } : link.otherPinPos;
-                const end = link.isOutput ? link.otherPinPos : { x: movingPinX, y: movingPinY };
+            const onMove = (ev: MouseEvent) => {
+                const currentX = ev.clientX - rect.left;
+                const currentY = ev.clientY - rect.top;
+                
+                setSelectionBox(prev => prev ? { ...prev, currentX, currentY } : null);
 
-                pathEl.setAttribute('d', calculateCurve(start.x, start.y, end.x, end.y));
+                // Live Selection Update
+                cancelAnimationFrame(frameId);
+                frameId = requestAnimationFrame(() => {
+                     // Calculate Selection Rect
+                     const minX = Math.min(startX, currentX);
+                     const maxX = Math.max(startX, currentX);
+                     const minY = Math.min(startY, currentY);
+                     const maxY = Math.max(startY, currentY);
+                     
+                     const newSelected = new Set(e.shiftKey || e.ctrlKey ? selectedNodeIds : []);
+                     
+                     nodeRefs.current.forEach((el, id) => {
+                         const nodeRect = el.getBoundingClientRect();
+                         // Convert Node Rect to Container Space
+                         const nx = nodeRect.left - rect.left;
+                         const ny = nodeRect.top - rect.top;
+                         const nw = nodeRect.width;
+                         const nh = nodeRect.height;
+                         
+                         // Intersection
+                         if (minX < nx + nw && maxX > nx && minY < ny + nh && maxY > ny) {
+                             newSelected.add(id);
+                         }
+                     });
+                     setSelectedNodeIds(newSelected);
+                });
+            };
+
+            const onUp = () => {
+                cancelAnimationFrame(frameId);
+                cleanupListeners();
+                setSelectionBox(null);
+            };
+            
+            activeListenersRef.current = { move: onMove, up: onUp };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+        }
+    }, [cleanupListeners, updateViewportStyle, selectedNodeIds]);
+
+    const handleNodeDragStart = useCallback((e: React.MouseEvent, node: GraphNode) => {
+        e.stopPropagation();
+        if (e.button !== 0 || e.altKey) return;
+        
+        cleanupListeners();
+
+        // Selection Logic
+        let currentSelection = new Set(selectedNodeIds);
+        if (!currentSelection.has(node.id)) {
+            if (!e.shiftKey && !e.ctrlKey) {
+                currentSelection = new Set([node.id]);
+            } else {
+                currentSelection.add(node.id);
+            }
+            setSelectedNodeIds(currentSelection);
+        }
+
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        const startMouse = { x: e.clientX, y: e.clientY };
+        const k = transformRef.current.k;
+        
+        // Capture start positions of ALL selected nodes
+        const startPositions = new Map<string, {x: number, y: number}>();
+        nodes.forEach(n => {
+            if (currentSelection.has(n.id)) {
+                startPositions.set(n.id, { ...n.position });
+            }
+        });
+
+        let frameId = 0;
+
+        // Optimization: Pre-calculate static connection points for all selected nodes
+        const activeLinks = connections
+            .filter(c => currentSelection.has(c.fromNode) || currentSelection.has(c.toNode))
+            .map(c => {
+                // If both ends are selected, we can skip updating the wire during partial drag because both ends move? 
+                // No, we still need to update visually. Ideally we translate the SVG path or re-calc.
+                // For simplicity, we re-calc.
+                
+                const isFromSelected = currentSelection.has(c.fromNode);
+                const isToSelected = currentSelection.has(c.toNode);
+                
+                // If both selected, it's a rigid body move of the wire (could optimize, but re-calc is cheap enough for lines)
+                
+                const fromNode = nodes.find(n => n.id === c.fromNode);
+                const toNode = nodes.find(n => n.id === c.toNode);
+                if (!fromNode || !toNode) return null;
+
+                const pathEl = pathRefs.current.get(c.id);
+                if (!pathEl) return null;
+
+                return {
+                    pathEl,
+                    fromNodeId: c.fromNode,
+                    fromPin: c.fromPin,
+                    toNodeId: c.toNode,
+                    toPin: c.toPin,
+                    isFromSelected,
+                    isToSelected
+                };
+            })
+            .filter(Boolean); // Remove nulls
+
+        const onMove = (ev: MouseEvent) => {
+            cancelAnimationFrame(frameId);
+            frameId = requestAnimationFrame(() => {
+                const dx = (ev.clientX - startMouse.x) / k;
+                const dy = (ev.clientY - startMouse.y) / k;
+
+                // 1. Direct DOM Update for all selected nodes
+                startPositions.forEach((startPos, id) => {
+                    const nodeEl = nodeRefs.current.get(id);
+                    if (nodeEl) {
+                        const nx = startPos.x + dx;
+                        const ny = startPos.y + dy;
+                        nodeEl.style.transform = `translate(${nx}px, ${ny}px)`;
+                    }
+                });
+
+                // 2. Update Wires
+                for(const link of activeLinks) {
+                    if (!link) continue;
+
+                    // Get "Live" positions
+                    // If a node is selected, calculate its new pos. If not, use its original pos.
+                    const getPos = (id: string, defPos: {x:number, y:number}) => {
+                         if (startPositions.has(id)) {
+                             const s = startPositions.get(id)!;
+                             return { x: s.x + dx, y: s.y + dy };
+                         }
+                         return defPos;
+                    };
+
+                    const n1 = nodes.find(n => n.id === link.fromNodeId)!;
+                    const n2 = nodes.find(n => n.id === link.toNodeId)!;
+
+                    const p1 = GraphMath.getPinPosition(
+                        { ...n1, position: getPos(n1.id, n1.position) }, 
+                        link.fromPin, 'output'
+                    );
+                    const p2 = GraphMath.getPinPosition(
+                        { ...n2, position: getPos(n2.id, n2.position) }, 
+                        link.toPin, 'input'
+                    );
+                    
+                    link.pathEl.setAttribute('d', GraphMath.calculateCurve(p1.x, p1.y, p2.x, p2.y));
+                }
             });
         };
 
-        const handleWinUp = (ev: MouseEvent) => {
-            window.removeEventListener('mousemove', handleWinMove);
-            window.removeEventListener('mouseup', handleWinUp);
-            
-            // Sync final position to React State
-            const dx = (ev.clientX - startMouse.x) / transform.k;
-            const dy = (ev.clientY - startMouse.y) / transform.k;
-            setNodes(prev => prev.map(n => n.id === node.id ? { ...n, position: { x: startNodePos.x + dx, y: startNodePos.y + dy } } : n));
+        const onUp = (ev: MouseEvent) => {
+            cancelAnimationFrame(frameId);
+            cleanupListeners();
+
+            const dx = (ev.clientX - startMouse.x) / k;
+            const dy = (ev.clientY - startMouse.y) / k;
+
+            setNodes(prev => prev.map(n => {
+                if (startPositions.has(n.id)) {
+                    const s = startPositions.get(n.id)!;
+                    return { ...n, position: { x: s.x + dx, y: s.y + dy } };
+                }
+                return n;
+            }));
         };
 
-        window.addEventListener('mousemove', handleWinMove);
-        window.addEventListener('mouseup', handleWinUp);
-    };
+        activeListenersRef.current = { move: onMove, up: onUp };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    }, [nodes, connections, cleanupListeners, selectedNodeIds]);
 
-    const handlePinDown = (e: React.MouseEvent, nodeId: string, pinId: string, type: 'input'|'output') => {
+    // --- Wire Linking ---
+
+    const handlePinDown = useCallback((e: React.MouseEvent, nodeId: string, pinId: string, type: 'input'|'output') => {
         e.stopPropagation();
-        const pos = screenToGraph(e.clientX, e.clientY);
-        setConnecting({ nodeId, pinId, type, x: pos.x, y: pos.y });
-    };
+        e.preventDefault();
+        cleanupListeners();
 
-    const handlePinUp = (e: React.MouseEvent, nodeId: string, pinId: string, type: 'input'|'output') => {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if(!rect) return;
+        
+        const pos = GraphMath.screenToWorld(e.clientX, e.clientY, rect, transformRef.current);
+        const dataType = getPortType(nodeId, pinId, type);
+        
+        setConnecting({ nodeId, pinId, type, x: pos.x, y: pos.y, dataType });
+
+        const onMove = (ev: MouseEvent) => {
+            const worldPos = GraphMath.screenToWorld(ev.clientX, ev.clientY, rect, transformRef.current);
+            setConnecting(prev => prev ? { ...prev, x: worldPos.x, y: worldPos.y } : null);
+        };
+        
+        const onUp = () => {
+            cleanupListeners();
+            setConnecting(null);
+        };
+
+        activeListenersRef.current = { move: onMove, up: onUp };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    }, [cleanupListeners, getPortType]);
+
+    const handlePinUp = useCallback((e: React.MouseEvent, nodeId: string, pinId: string, type: 'input'|'output') => {
         e.stopPropagation();
-        if (connecting && connecting.nodeId !== nodeId && connecting.type !== type) {
-             const source = connecting.type === 'output' ? connecting : { nodeId, pinId };
-             const target = connecting.type === 'input' ? connecting : { nodeId, pinId };
-             
-             // Check duplicates
-             const exists = connections.some(c => c.fromNode === source.nodeId && c.fromPin === source.pinId && c.toNode === target.nodeId && c.toPin === target.pinId);
-             if (!exists) {
-                 const clean = connections.filter(c => !(c.toNode === target.nodeId && c.toPin === target.pinId));
-                 setConnections([...clean, { id: crypto.randomUUID(), fromNode: source.nodeId, fromPin: source.pinId, toNode: target.nodeId, toPin: target.pinId }]);
-             }
-        }
-        setConnecting(null);
-    };
+        
+        setConnecting(prev => {
+            if (prev && prev.nodeId !== nodeId && prev.type !== type) {
+                const source = prev.type === 'output' ? prev : { nodeId, pinId };
+                const target = prev.type === 'input' ? prev : { nodeId, pinId };
+                
+                // Check Compatibility
+                const sourceType = getPortType(source.nodeId, source.pinId, 'output');
+                const targetType = getPortType(target.nodeId, target.pinId, 'input');
+                
+                if (!isCompatible(sourceType, targetType)) return null;
+                if (source.nodeId === target.nodeId) return null;
 
-    const handleMouseMove = (e: React.MouseEvent) => {
-        if (panning) {
-            setTransform(t => ({ ...t, x: t.x + e.movementX, y: t.y + e.movementY }));
-        }
-        if (connecting) {
-            const pos = screenToGraph(e.clientX, e.clientY);
-            setConnecting(prev => prev ? { ...prev, x: pos.x, y: pos.y } : null);
-        }
-    };
+                setConnections(curr => {
+                    const exists = curr.some(c => c.fromNode === source.nodeId && c.fromPin === source.pinId && c.toNode === target.nodeId && c.toPin === target.pinId);
+                    if (exists) return curr;
 
-    // --- Render ---
+                    const clean = curr.filter(c => !(c.toNode === target.nodeId && c.toPin === target.pinId));
+                    return [...clean, { id: crypto.randomUUID(), fromNode: source.nodeId, fromPin: source.pinId, toNode: target.nodeId, toPin: target.pinId }];
+                });
+            }
+            return null;
+        });
+    }, [getPortType, isCompatible]);
 
     const addNode = (type: string) => {
-         if(!contextMenu || !containerRef.current) return;
-         const rect = containerRef.current.getBoundingClientRect();
-         const pos = {
-             x: (contextMenu.x - rect.left - transform.x) / transform.k,
-             y: (contextMenu.y - rect.top - transform.y) / transform.k
-         };
-         setNodes(p => [...p, { id: crypto.randomUUID(), type, position: pos, data: {} }]);
-         setContextMenu(null);
-         setSearchFilter('');
+        if(!contextMenu || !containerRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
+        const pos = GraphMath.screenToWorld(contextMenu.x, contextMenu.y, rect, transformRef.current);
+        const newNodeId = crypto.randomUUID();
+        setNodes(p => [...p, { id: newNodeId, type, position: pos, data: {} }]);
+        setSelectedNodeIds(new Set([newNodeId])); // Select newly created node
+        setContextMenu(null);
+        setSearchFilter('');
     };
+
+    // --- Render Helpers ---
+
+    const renderPort = (nodeId: string, pinId: string, type: 'input'|'output', color?: string) => {
+        // Visual Guide Logic
+        let isActive = false;
+        let isCompatiblePort = false;
+
+        if (connecting && connecting.nodeId !== nodeId && connecting.type !== type) {
+            // This port is a valid candidate direction-wise
+            // Now check type compatibility
+            const myType = getPortType(nodeId, pinId, type);
+            if (isCompatible(connecting.dataType, myType)) {
+                isActive = true;
+                isCompatiblePort = true;
+            }
+        }
+
+        // Styles
+        let borderClass = 'border-black';
+        let bgStyle = color || '#fff';
+        let scaleClass = 'hover:scale-125';
+
+        if (isActive && isCompatiblePort) {
+            borderClass = 'border-emerald-500 ring-2 ring-emerald-400'; // Green Glow
+            scaleClass = 'scale-125';
+            bgStyle = '#fff';
+        }
+
+        return (
+            <div 
+                className={`absolute w-3 h-3 rounded-full border ${borderClass} ${scaleClass} transition-all cursor-crosshair z-10`}
+                style={{ 
+                    backgroundColor: bgStyle,
+                    [type === 'input' ? 'left' : 'right']: -LayoutConfig.PIN_RADIUS, 
+                    top: '50%',
+                    transform: 'translateY(-50%)'
+                }}
+                onMouseDown={(e) => handlePinDown(e, nodeId, pinId, type)}
+                onMouseUp={(e) => handlePinUp(e, nodeId, pinId, type)}
+            />
+        );
+    };
+
+    // --- Main Render ---
+
+    const renderedWires = useMemo(() => {
+        return connections.map(c => {
+            const fromNode = nodes.find(n => n.id === c.fromNode);
+            const toNode = nodes.find(n => n.id === c.toNode);
+            if (!fromNode || !toNode) return null;
+
+            const p1 = GraphMath.getPinPosition(fromNode, c.fromPin, 'output');
+            const p2 = GraphMath.getPinPosition(toNode, c.toPin, 'input');
+            const d = GraphMath.calculateCurve(p1.x, p1.y, p2.x, p2.y);
+            
+            const def = NodeRegistry[fromNode.type];
+            const port = def?.outputs.find(p => p.id === c.fromPin);
+            const color = port?.color || getTypeColor(port?.type || 'any');
+
+            return <path key={c.id} ref={el => { if(el) pathRefs.current.set(c.id, el) }} d={d} stroke={color} strokeWidth="2" fill="none" />;
+        });
+    }, [nodes, connections]);
 
     return (
         <div 
             ref={containerRef}
             className="w-full h-full bg-[#111] overflow-hidden relative select-none"
             onWheel={handleWheel}
-            onMouseDown={e => {
-                if(e.button===0 || e.button===1) setPanning(true);
-                if(e.button===2) setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
-                else setContextMenu(null);
-            }}
-            onMouseMove={handleMouseMove}
-            onMouseUp={() => { setPanning(false); setConnecting(null); }}
+            onMouseDown={handleMouseDown}
             onContextMenu={e => e.preventDefault()}
         >
-             {/* Grid */}
              <div className="absolute inset-0 pointer-events-none opacity-20"
-                style={{
-                    backgroundSize: `${GRID_SIZE * transform.k}px ${GRID_SIZE * transform.k}px`,
-                    backgroundPosition: `${transform.x}px ${transform.y}px`,
-                    backgroundImage: 'linear-gradient(#333 1px, transparent 1px), linear-gradient(90deg, #333 1px, transparent 1px)'
-                }}
+                style={{ backgroundImage: 'linear-gradient(#333 1px, transparent 1px), linear-gradient(90deg, #333 1px, transparent 1px)' }}
             />
 
-            <div style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.k})`, transformOrigin: '0 0' }} className="w-full h-full">
-                
-                {/* Wires */}
-                <svg className="absolute top-0 left-0 w-1 h-1 overflow-visible pointer-events-none">
-                    {connections.map(c => {
-                        const fromNode = nodes.find(n => n.id === c.fromNode);
-                        const toNode = nodes.find(n => n.id === c.toNode);
-                        if(!fromNode || !toNode) return null;
-
-                        // Use math-based offsets for stable rendering during transforms
-                        const p1 = getPinOffset(fromNode.position.x, fromNode.position.y, fromNode.type, c.fromPin, 'output');
-                        const p2 = getPinOffset(toNode.position.x, toNode.position.y, toNode.type, c.toPin, 'input');
-                        const d = calculateCurve(p1.x, p1.y, p2.x, p2.y);
-                        
-                        const def = NodeRegistry[fromNode.type];
-                        const port = def?.outputs.find(p => p.id === c.fromPin);
-                        const color = port?.color || getTypeColor(port?.type || 'any');
-
-                        return (
-                            <path 
-                                key={c.id} 
-                                ref={el => { if(el) pathRefs.current.set(c.id, el) }} 
-                                d={d} stroke={color} strokeWidth="2" fill="none" 
-                            />
-                        );
-                    })}
-                    
+            <div ref={viewRef} className="w-full h-full origin-top-left will-change-transform" style={{ transform: `translate3d(0px, 0px, 0) scale(1)` }}>
+                <svg className="absolute top-0 left-0 overflow-visible pointer-events-none w-1 h-1">
+                    {renderedWires}
                     {connecting && (() => {
                          const node = nodes.find(n => n.id === connecting.nodeId);
                          if(!node) return null;
-                         const p1 = getPinOffset(node.position.x, node.position.y, node.type, connecting.pinId, connecting.type);
+                         const p1 = GraphMath.getPinPosition(node, connecting.pinId, connecting.type);
                          const p2 = { x: connecting.x, y: connecting.y };
-                         // Always Source -> Target
                          const start = connecting.type === 'output' ? p1 : p2;
                          const end = connecting.type === 'output' ? p2 : p1;
-                         return <path d={calculateCurve(start.x, start.y, end.x, end.y)} stroke="#fff" strokeWidth="2" strokeDasharray="5,5" fill="none" />;
+                         const color = getTypeColor(connecting.dataType as any); // Color the drag line
+                         return <path d={GraphMath.calculateCurve(start.x, start.y, end.x, end.y)} stroke={color} strokeWidth="2" strokeDasharray="5,5" fill="none" />;
                     })()}
                 </svg>
 
-                {/* Nodes */}
                 {nodes.map(node => {
                     const def = NodeRegistry[node.type];
                     if(!def) return null;
                     const isReroute = node.type === 'Reroute';
+                    const isSelected = selectedNodeIds.has(node.id);
                     
+                    const borderStyle = isSelected ? 'ring-1 ring-accent border-accent' : 'border-black';
+
                     return (
                         <div
                             key={node.id}
                             ref={el => { if(el) nodeRefs.current.set(node.id, el) }}
-                            className={`absolute flex flex-col pointer-events-auto transition-shadow hover:shadow-2xl ${isReroute ? '' : 'rounded-md shadow-xl border border-black bg-[#1e1e1e]'}`}
+                            className={`absolute flex flex-col pointer-events-auto transition-shadow hover:shadow-2xl 
+                                ${isReroute ? '' : `rounded-md shadow-xl border bg-[#1e1e1e] ${borderStyle}`}`}
                             style={{ 
-                                left: node.position.x, top: node.position.y,
-                                width: isReroute ? REROUTE_SIZE : NODE_WIDTH, 
-                                height: isReroute ? REROUTE_SIZE : 'auto'
+                                transform: `translate(${node.position.x}px, ${node.position.y}px)`,
+                                width: isReroute ? LayoutConfig.REROUTE_SIZE : LayoutConfig.NODE_WIDTH, 
+                                height: isReroute ? LayoutConfig.REROUTE_SIZE : 'auto'
                             }}
                         >
                              {isReroute ? (
-                                <div className="w-full h-full rounded-full bg-gray-400 hover:bg-white cursor-move border border-black"
-                                    onMouseDown={(e) => handleNodeMouseDown(e, node)}
+                                <div className={`relative w-full h-full rounded-full cursor-move border ${isSelected ? 'bg-white border-accent' : 'bg-gray-400 hover:bg-white border-black'}`}
+                                    onMouseDown={(e) => handleNodeDragStart(e, node)}
                                 >
-                                    <div className="absolute inset-0 z-10" onMouseUp={(e) => handlePinUp(e, node.id, 'in', 'input')}/>
-                                    <div className="absolute inset-0 z-10" onMouseDown={(e) => handlePinDown(e, node.id, 'out', 'output')}/>
+                                    {renderPort(node.id, 'in', 'input')}
+                                    {renderPort(node.id, 'out', 'output')}
                                 </div>
                              ) : (
                                 <>
                                     <div 
-                                        className="h-9 px-3 flex items-center justify-between bg-white/5 border-b border-white/5 rounded-t-md cursor-grab active:cursor-grabbing"
-                                        onMouseDown={(e) => handleNodeMouseDown(e, node)}
+                                        className={`h-9 px-3 flex items-center justify-between border-b border-white/5 rounded-t-md cursor-grab active:cursor-grabbing ${isSelected ? 'bg-accent/20' : 'bg-white/5'}`}
+                                        onMouseDown={(e) => handleNodeDragStart(e, node)}
                                     >
-                                        <span className="text-xs font-bold text-gray-200">{def.title}</span>
+                                        <span className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-gray-200'}`}>{def.title}</span>
                                     </div>
                                     <div className="p-2 space-y-1">
                                         {def.inputs.map(input => (
                                             <div key={input.id} className="relative h-6 flex items-center">
-                                                <div 
-                                                    id={`pin-${node.id}-input-${input.id}`}
-                                                    className="w-3 h-3 rounded-full border border-black hover:scale-125 transition-transform cursor-crosshair -ml-3.5 z-10"
-                                                    style={{ backgroundColor: input.color || getTypeColor(input.type) }}
-                                                    onMouseDown={(e) => handlePinDown(e, node.id, input.id, 'input')}
-                                                    onMouseUp={(e) => handlePinUp(e, node.id, input.id, 'input')}
-                                                />
+                                                {renderPort(node.id, input.id, 'input', input.color || getTypeColor(input.type))}
                                                 <span className="text-[10px] text-gray-400 ml-2">{input.name}</span>
                                             </div>
                                         ))}
@@ -363,13 +617,7 @@ export const NodeGraph: React.FC = () => {
                                         {def.outputs.map(output => (
                                             <div key={output.id} className="relative h-6 flex items-center justify-end">
                                                 <span className="text-[10px] text-gray-400 mr-2">{output.name}</span>
-                                                <div 
-                                                    id={`pin-${node.id}-output-${output.id}`}
-                                                    className="w-3 h-3 rounded-full border border-black hover:scale-125 transition-transform cursor-crosshair -mr-3.5 z-10"
-                                                    style={{ backgroundColor: output.color || getTypeColor(output.type) }}
-                                                    onMouseDown={(e) => handlePinDown(e, node.id, output.id, 'output')}
-                                                    onMouseUp={(e) => handlePinUp(e, node.id, output.id, 'output')}
-                                                />
+                                                {renderPort(node.id, output.id, 'output', output.color || getTypeColor(output.type))}
                                             </div>
                                         ))}
                                     </div>
@@ -379,8 +627,20 @@ export const NodeGraph: React.FC = () => {
                     );
                 })}
             </div>
+            
+            {/* Selection Box Overlay */}
+            {selectionBox && (
+                <div 
+                    className="absolute border border-accent bg-accent/20 pointer-events-none z-50"
+                    style={{
+                        left: Math.min(selectionBox.startX, selectionBox.currentX),
+                        top: Math.min(selectionBox.startY, selectionBox.currentY),
+                        width: Math.abs(selectionBox.currentX - selectionBox.startX),
+                        height: Math.abs(selectionBox.currentY - selectionBox.startY)
+                    }}
+                />
+            )}
 
-            {/* Context Menu */}
             {contextMenu && contextMenu.visible && (
                 <div 
                     className="fixed w-48 bg-[#252525] border border-black shadow-2xl rounded text-xs flex flex-col z-50 overflow-hidden"
