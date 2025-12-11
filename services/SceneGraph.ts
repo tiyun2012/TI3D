@@ -1,3 +1,4 @@
+
 import { Entity, ComponentType } from '../types';
 import { Mat4, Mat4Utils } from './math';
 
@@ -10,6 +11,8 @@ export class SceneNode {
   localMatrix: Mat4 = Mat4Utils.create();
   worldMatrix: Mat4 = Mat4Utils.create();
   
+  isDirty: boolean = true;
+
   constructor(entityId: string) {
     this.entityId = entityId;
   }
@@ -18,7 +21,6 @@ export class SceneNode {
 export class SceneGraph {
   // Map entity ID to Node
   private nodes: Map<string, SceneNode> = new Map();
-  // Keep track of root nodes (nodes without parents) for iteration
   private rootIds: Set<string> = new Set();
 
   constructor() {}
@@ -31,42 +33,46 @@ export class SceneGraph {
     }
   }
 
-  /**
-   * Parents childEntity to parentEntity.
-   * If parentId is null, child becomes a root node.
-   */
   attach(childId: string, parentId: string | null) {
     const childNode = this.nodes.get(childId);
     if (!childNode) return;
 
-    // 1. Detach from old parent
     if (childNode.parentId) {
       const oldParent = this.nodes.get(childNode.parentId);
       if (oldParent) {
         oldParent.childrenIds = oldParent.childrenIds.filter(id => id !== childId);
       }
     } else {
-      // Was a root node, remove from roots
       this.rootIds.delete(childId);
     }
 
-    // 2. Attach to new parent
     if (parentId) {
       const newParent = this.nodes.get(parentId);
       if (newParent) {
         childNode.parentId = parentId;
         newParent.childrenIds.push(childId);
-        // Ensure child is NOT in rootIds (it has a parent now)
         this.rootIds.delete(childId);
       } else {
-        console.warn(`Parent ${parentId} not found, attaching ${childId} to root.`);
         childNode.parentId = null;
         this.rootIds.add(childId);
       }
     } else {
-      // Set as root
       childNode.parentId = null;
       this.rootIds.add(childId);
+    }
+    
+    // Hierarchy change requires update
+    this.setDirty(childId);
+  }
+
+  setDirty(entityId: string) {
+    const node = this.nodes.get(entityId);
+    if (node && !node.isDirty) {
+      node.isDirty = true;
+      // Propagate dirty to children
+      for(const childId of node.childrenIds) {
+          this.setDirty(childId);
+      }
     }
   }
 
@@ -89,49 +95,54 @@ export class SceneGraph {
   }
 
   /**
-   * Recalculates world matrices for the entire graph.
-   * Should be called once per frame before rendering.
+   * Recalculates world matrices for the graph.
+   * Only updates nodes marked as dirty.
+   * @param getTransformData callback to retrieve raw transform data (x,y,z, rx,ry,rz, sx,sy,sz)
    */
-  update(entities: Map<string, Entity>) {
-    // Iterate over all roots and traverse down
+  update(getTransformData: (id: string) => Float32Array | null) {
     this.rootIds.forEach(rootId => {
-      this.updateNodeRecursive(rootId, entities, null);
+      this.updateNodeRecursive(rootId, getTransformData, null, false);
     });
   }
 
-  private updateNodeRecursive(nodeId: string, entities: Map<string, Entity>, parentWorldMatrix: Mat4 | null) {
+  private updateNodeRecursive(
+      nodeId: string, 
+      getTransformData: (id: string) => Float32Array | null, 
+      parentWorldMatrix: Mat4 | null,
+      parentDirty: boolean
+  ) {
     const node = this.nodes.get(nodeId);
-    // Use unsafe access for speed, assuming sync
-    const entity = entities.get(nodeId);
-    
-    if (!node || !entity) return;
+    if (!node) return;
 
-    // 1. Calculate Local Matrix from ECS Transform Component
-    // Writes directly into node.localMatrix to avoid GC
-    const transform = entity.components[ComponentType.TRANSFORM];
-    if (transform) {
-      Mat4Utils.compose(
-        transform.position,
-        transform.rotation,
-        transform.scale,
-        node.localMatrix
-      );
+    const shouldUpdate = node.isDirty || parentDirty;
+
+    if (shouldUpdate) {
+        // 1. Calculate Local Matrix
+        const data = getTransformData(nodeId);
+        if (data) {
+            // data is [px, py, pz, rx, ry, rz, sx, sy, sz]
+            Mat4Utils.compose(
+                data[0], data[1], data[2], 
+                data[3], data[4], data[5], 
+                data[6], data[7], data[8], 
+                node.localMatrix
+            );
+        }
+
+        // 2. Calculate World Matrix
+        if (parentWorldMatrix) {
+             Mat4Utils.multiply(parentWorldMatrix, node.localMatrix, node.worldMatrix);
+        } else {
+             Mat4Utils.copy(node.worldMatrix, node.localMatrix);
+        }
+        
+        node.isDirty = false;
     }
 
-    // 2. Calculate World Matrix
-    // Writes directly into node.worldMatrix
-    if (parentWorldMatrix) {
-      // World = ParentWorld * Local
-      Mat4Utils.multiply(parentWorldMatrix, node.localMatrix, node.worldMatrix);
-    } else {
-      // No parent, World = Local
-      Mat4Utils.copy(node.worldMatrix, node.localMatrix);
-    }
-
-    // 3. Process Children
+    // 3. Process Children (Propagate dirty state if we updated)
     const children = node.childrenIds;
     for (let i = 0; i < children.length; i++) {
-        this.updateNodeRecursive(children[i], entities, node.worldMatrix);
+        this.updateNodeRecursive(children[i], getTransformData, node.worldMatrix, shouldUpdate);
     }
   }
 }

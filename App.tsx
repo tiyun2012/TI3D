@@ -120,7 +120,7 @@ const App: React.FC = () => {
 
   // Engine Sync
   const refreshState = useCallback(() => {
-    setEntities(Array.from(engineInstance.ecs.entities.values()));
+    setEntities(engineInstance.ecs.getAllProxies(engineInstance.sceneGraph));
   }, []);
 
   useEffect(() => {

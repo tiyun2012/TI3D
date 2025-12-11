@@ -1,28 +1,41 @@
+
 /**
  * High Performance WebGL Engine Core
+ * Features: Data-Oriented ECS (SoA), Geometry Instancing, Dirty Flags
  */
 
-import { Entity, ComponentType, Vector3 } from '../types';
+import { Entity, ComponentType, Component } from '../types';
 import { SceneGraph } from './SceneGraph';
-import { Mat4, Mat4Utils, Vec3Utils } from './math';
+import { Mat4, Mat4Utils } from './math';
 
-// --- WebGL Shaders ---
+// --- WebGL Shaders with Instancing Support ---
 
 const VS_SOURCE = `#version 300 es
 layout(location=0) in vec3 a_position;
 layout(location=1) in vec3 a_normal;
+// Instance Attributes (Divisor 1)
+layout(location=2) in mat4 a_model;      // Occupies locations 2, 3, 4, 5
+layout(location=6) in vec3 a_color;
+layout(location=7) in float a_isSelected;
 
-uniform mat4 u_model;
 uniform mat4 u_viewProjection;
+uniform vec3 u_lightDir;
 
 out vec3 v_normal;
 out vec3 v_worldPos;
+out vec3 v_color;
+out float v_isSelected;
 
 void main() {
-    vec4 worldPos = u_model * vec4(a_position, 1.0);
+    // a_model is per-instance
+    vec4 worldPos = a_model * vec4(a_position, 1.0);
     gl_Position = u_viewProjection * worldPos;
-    v_normal = mat3(u_model) * a_normal; // Simplified normal matrix
+    
+    // Normal matrix approx (assuming uniform scale)
+    v_normal = mat3(a_model) * a_normal; 
     v_worldPos = worldPos.xyz;
+    v_color = a_color;
+    v_isSelected = a_isSelected;
 }
 `;
 
@@ -31,287 +44,442 @@ precision mediump float;
 
 in vec3 v_normal;
 in vec3 v_worldPos;
-
-uniform vec3 u_color;
-uniform vec3 u_lightDir;
-uniform bool u_isSelected;
+in vec3 v_color;
+in float v_isSelected;
 
 out vec4 outColor;
 
 void main() {
     vec3 normal = normalize(v_normal);
-    vec3 lightDir = normalize(u_lightDir);
+    vec3 lightDir = normalize(vec3(0.5, 0.8, 0.5)); // Hardcoded light for performance demo
     
-    // Simple Lambert
     float diff = max(dot(normal, lightDir), 0.0);
-    vec3 ambient = u_color * 0.3;
-    vec3 diffuse = u_color * diff;
+    vec3 ambient = v_color * 0.3;
+    vec3 diffuse = v_color * diff;
     
     vec3 finalColor = ambient + diffuse;
     
-    if (u_isSelected) {
-        finalColor += vec3(0.2, 0.2, 0.0); // Yellow tint
+    if (v_isSelected > 0.5) {
+        finalColor += vec3(0.3, 0.3, 0.0); // Selection highlight
     }
 
     outColor = vec4(finalColor, 1.0);
 }
 `;
 
-// --- Geometry Generation (Helpers) ---
+// --- Data-Oriented ECS Storage (SoA) ---
 
-function createCubeData() {
-    // 24 vertices (6 faces * 4 verts) with normals
-    // Simplified: positions and normals
-    const p = [
-        // Front
-        -0.5, -0.5,  0.5,  0.5, -0.5,  0.5,  0.5,  0.5,  0.5, -0.5,  0.5,  0.5,
-        // Back
-        -0.5, -0.5, -0.5, -0.5,  0.5, -0.5,  0.5,  0.5, -0.5,  0.5, -0.5, -0.5,
-        // Top
-        -0.5,  0.5, -0.5, -0.5,  0.5,  0.5,  0.5,  0.5,  0.5,  0.5,  0.5, -0.5,
-        // Bottom
-        -0.5, -0.5, -0.5,  0.5, -0.5, -0.5,  0.5, -0.5,  0.5, -0.5, -0.5,  0.5,
-        // Right
-         0.5, -0.5, -0.5,  0.5,  0.5, -0.5,  0.5,  0.5,  0.5,  0.5, -0.5,  0.5,
-        // Left
-        -0.5, -0.5, -0.5, -0.5, -0.5,  0.5, -0.5,  0.5,  0.5, -0.5,  0.5, -0.5,
-    ];
-    // Indices
-    const i = [
-        0, 1, 2, 0, 2, 3,    // Front
-        4, 5, 6, 4, 6, 7,    // Back
-        8, 9, 10, 8, 10, 11, // Top
-        12, 13, 14, 12, 14, 15, // Bottom
-        16, 17, 18, 16, 18, 19, // Right
-        20, 21, 22, 20, 22, 23  // Left
-    ];
-    // Normals (simplified, repeating for flat shading look would require 24 unique verts)
-    // For this simple engine, we assume flat face normals corresponding to the 24 verts above.
-    const n: number[] = [];
-    const addN = (x:number,y:number,z:number) => { for(let k=0;k<4;k++) n.push(x,y,z); }
-    addN(0,0,1); addN(0,0,-1); addN(0,1,0); addN(0,-1,0); addN(1,0,0); addN(-1,0,0);
+const MAX_ENTITIES = 10000;
 
-    return { vertices: new Float32Array(p), normals: new Float32Array(n), indices: new Uint16Array(i) };
+// Stores Component Data in flat arrays for cache locality
+class ComponentStorage {
+    // Transform
+    posX = new Float32Array(MAX_ENTITIES);
+    posY = new Float32Array(MAX_ENTITIES);
+    posZ = new Float32Array(MAX_ENTITIES);
+    rotX = new Float32Array(MAX_ENTITIES);
+    rotY = new Float32Array(MAX_ENTITIES);
+    rotZ = new Float32Array(MAX_ENTITIES);
+    scaleX = new Float32Array(MAX_ENTITIES);
+    scaleY = new Float32Array(MAX_ENTITIES);
+    scaleZ = new Float32Array(MAX_ENTITIES);
+
+    // Mesh
+    meshType = new Int32Array(MAX_ENTITIES); // 0=None, 1=Cube, 2=Sphere, 3=Plane
+    colorR = new Float32Array(MAX_ENTITIES);
+    colorG = new Float32Array(MAX_ENTITIES);
+    colorB = new Float32Array(MAX_ENTITIES);
+
+    // Physics
+    mass = new Float32Array(MAX_ENTITIES);
+    useGravity = new Uint8Array(MAX_ENTITIES);
+
+    // Metadata
+    isActive = new Uint8Array(MAX_ENTITIES);
+    generation = new Uint32Array(MAX_ENTITIES); // For ID safety
+    
+    // Auxiliary
+    names: string[] = new Array(MAX_ENTITIES);
+    ids: string[] = new Array(MAX_ENTITIES);
+    
+    // Transform Scratchpad for SceneGraph
+    // Helper to return all transform data in one call
+    getTransformData(index: number) {
+        if (!this.isActive[index]) return null;
+        // Returns a small temporary view or copies. 
+        // For SceneGraph.update, we pass a closure that reads directly.
+        // See implementation in Engine class.
+        return null; 
+    }
 }
 
-// --- Systems ---
+// Map Mesh Name string to Integer ID for SoA
+const MESH_TYPES: Record<string, number> = { 'None': 0, 'Cube': 1, 'Sphere': 2, 'Plane': 3 };
+const MESH_NAMES: Record<number, string> = { 0: 'None', 1: 'Cube', 2: 'Sphere', 3: 'Plane' };
 
-class EntityComponentSystem {
-  entities: Map<string, Entity> = new Map();
-  // Cache array to avoid Map iteration in hot loops
-  entityCache: Entity[] = [];
-  
-  createEntity(name: string): Entity {
-    const id = crypto.randomUUID();
-    const entity: Entity = {
-      id,
-      name,
-      isActive: true,
-      components: {
-        [ComponentType.TRANSFORM]: { 
-          type: ComponentType.TRANSFORM, 
-          position: { x: 0, y: 0, z: 0 }, 
-          rotation: { x: 0, y: 0, z: 0 }, 
-          scale: { x: 1, y: 1, z: 1 } 
+class SoAEntitySystem {
+    store = new ComponentStorage();
+    count = 0;
+    freeIndices: number[] = [];
+    
+    // Map string UUID to SoA Index
+    idToIndex = new Map<string, number>();
+
+    constructor() {
+        // Init default scales
+        this.store.scaleX.fill(1);
+        this.store.scaleY.fill(1);
+        this.store.scaleZ.fill(1);
+    }
+
+    createEntity(name: string): string {
+        let index: number;
+        if (this.freeIndices.length > 0) {
+            index = this.freeIndices.pop()!;
+        } else {
+            index = this.count++;
         }
-      } as any
-    };
-    this.entities.set(id, entity);
-    this.invalidateCache();
-    return entity;
-  }
+        
+        const id = crypto.randomUUID();
+        this.store.isActive[index] = 1;
+        this.store.generation[index]++;
+        this.store.names[index] = name;
+        this.store.ids[index] = id;
+        
+        // Defaults
+        this.store.posX[index] = 0; this.store.posY[index] = 0; this.store.posZ[index] = 0;
+        this.store.rotX[index] = 0; this.store.rotY[index] = 0; this.store.rotZ[index] = 0;
+        this.store.scaleX[index] = 1; this.store.scaleY[index] = 1; this.store.scaleZ[index] = 1;
+        this.store.meshType[index] = 0;
+        this.store.colorR[index] = 1; this.store.colorG[index] = 1; this.store.colorB[index] = 1;
+        
+        this.idToIndex.set(id, index);
+        return id;
+    }
 
-  private invalidateCache() {
-      this.entityCache = Array.from(this.entities.values());
-  }
+    getEntityIndex(id: string): number | undefined {
+        return this.idToIndex.get(id);
+    }
+
+    // Creates a Proxy object that mimics the Entity interface for UI compatibility
+    createProxy(id: string, sceneGraph: SceneGraph): Entity | null {
+        const index = this.idToIndex.get(id);
+        if (index === undefined || this.store.isActive[index] === 0) return null;
+        
+        const store = this.store;
+        const system = this;
+
+        // Helper to mark dirty when transform changes
+        const setDirty = () => sceneGraph.setDirty(id);
+
+        return {
+            id,
+            get name() { return store.names[index]; },
+            set name(v) { store.names[index] = v; },
+            get isActive() { return !!store.isActive[index]; },
+            set isActive(v) { store.isActive[index] = v ? 1 : 0; },
+            components: {
+                [ComponentType.TRANSFORM]: {
+                    type: ComponentType.TRANSFORM,
+                    get position() { 
+                        return { 
+                            get x() { return store.posX[index]; }, set x(v) { store.posX[index] = v; setDirty(); },
+                            get y() { return store.posY[index]; }, set y(v) { store.posY[index] = v; setDirty(); },
+                            get z() { return store.posZ[index]; }, set z(v) { store.posZ[index] = v; setDirty(); }
+                        };
+                    },
+                    set position(v: any) { 
+                        store.posX[index] = v.x; store.posY[index] = v.y; store.posZ[index] = v.z; 
+                        setDirty();
+                    },
+                    get rotation() {
+                         return { 
+                            get x() { return store.rotX[index]; }, set x(v) { store.rotX[index] = v; setDirty(); },
+                            get y() { return store.rotY[index]; }, set y(v) { store.rotY[index] = v; setDirty(); },
+                            get z() { return store.rotZ[index]; }, set z(v) { store.rotZ[index] = v; setDirty(); }
+                        };
+                    },
+                    set rotation(v: any) {
+                        store.rotX[index] = v.x; store.rotY[index] = v.y; store.rotZ[index] = v.z;
+                        setDirty();
+                    },
+                    get scale() {
+                        return { 
+                            get x() { return store.scaleX[index]; }, set x(v) { store.scaleX[index] = v; setDirty(); },
+                            get y() { return store.scaleY[index]; }, set y(v) { store.scaleY[index] = v; setDirty(); },
+                            get z() { return store.scaleZ[index]; }, set z(v) { store.scaleZ[index] = v; setDirty(); }
+                        };
+                    },
+                    set scale(v: any) {
+                        store.scaleX[index] = v.x; store.scaleY[index] = v.y; store.scaleZ[index] = v.z;
+                        setDirty();
+                    }
+                } as any,
+                
+                [ComponentType.MESH]: {
+                    type: ComponentType.MESH,
+                    get meshType() { return MESH_NAMES[store.meshType[index]]; },
+                    set meshType(v: string) { store.meshType[index] = MESH_TYPES[v] || 0; },
+                    get color() { 
+                        // Convert float back to hex for UI
+                        const r = Math.floor(store.colorR[index] * 255);
+                        const g = Math.floor(store.colorG[index] * 255);
+                        const b = Math.floor(store.colorB[index] * 255);
+                        return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+                    },
+                    set color(v: string) {
+                        const bigint = parseInt(v.slice(1), 16);
+                        store.colorR[index] = ((bigint >> 16) & 255) / 255;
+                        store.colorG[index] = ((bigint >> 8) & 255) / 255;
+                        store.colorB[index] = (bigint & 255) / 255;
+                    }
+                } as any,
+
+                [ComponentType.PHYSICS]: {
+                    type: ComponentType.PHYSICS,
+                    get mass() { return store.mass[index]; },
+                    set mass(v: number) { store.mass[index] = v; },
+                    get useGravity() { return !!store.useGravity[index]; },
+                    set useGravity(v: boolean) { store.useGravity[index] = v ? 1 : 0; }
+                } as any,
+
+                [ComponentType.LIGHT]: { type: ComponentType.LIGHT, intensity: 1, color: '#ffffff' }, // Placeholder for simplicity
+                [ComponentType.SCRIPT]: { type: ComponentType.SCRIPT }
+            }
+        };
+    }
+
+    getAllProxies(sceneGraph: SceneGraph): Entity[] {
+        const entities: Entity[] = [];
+        this.idToIndex.forEach((index, id) => {
+            if (this.store.isActive[index]) {
+                 const proxy = this.createProxy(id, sceneGraph);
+                 if (proxy) entities.push(proxy);
+            }
+        });
+        return entities;
+    }
 }
+
 
 class WebGLRenderer {
     gl: WebGL2RenderingContext | null = null;
     program: WebGLProgram | null = null;
     
-    // Meshes
-    meshes: Map<string, { vao: WebGLVertexArrayObject, count: number }> = new Map();
+    // Meshes: VAO and Index Count
+    meshes: Map<number, { vao: WebGLVertexArrayObject, count: number, instanceBuffer: WebGLBuffer }> = new Map();
+    
+    // Instance Data Buffers (CPU side)
+    // Size = MAX_ENTITIES * stride
+    // Stride: Mat4 (16 floats) + Color (3 floats) + Selected (1 float) = 20 floats
+    instanceData = new Float32Array(MAX_ENTITIES * 20); 
 
-    // Uniform Locations
     uniforms: Record<string, WebGLUniformLocation | null> = {};
-
-    // Camera
-    viewProjectionMatrix: Mat4 = Mat4Utils.create();
-
-    // Color Cache (Hex string -> r,g,b float array)
-    colorCache: Map<string, {r:number, g:number, b:number}> = new Map();
 
     init(canvas: HTMLCanvasElement) {
         this.gl = canvas.getContext('webgl2', { alpha: false, antialias: true, powerPreference: "high-performance" });
-        if (!this.gl) {
-            console.error("WebGL2 not supported");
-            return;
-        }
-
+        if (!this.gl) return;
         const gl = this.gl;
+        
         gl.viewport(0, 0, canvas.width, canvas.height);
         gl.enable(gl.DEPTH_TEST);
-        gl.enable(gl.CULL_FACE); // Optimization: Cull backfaces
+        gl.enable(gl.CULL_FACE);
         gl.clearColor(0.1, 0.1, 0.1, 1.0); 
 
-        // Compile Shader
         const vs = this.createShader(gl, gl.VERTEX_SHADER, VS_SOURCE);
         const fs = this.createShader(gl, gl.FRAGMENT_SHADER, FS_SOURCE);
         this.program = this.createProgram(gl, vs, fs);
 
-        // Get Uniforms
         this.uniforms = {
-            u_model: gl.getUniformLocation(this.program, 'u_model'),
             u_viewProjection: gl.getUniformLocation(this.program, 'u_viewProjection'),
-            u_color: gl.getUniformLocation(this.program, 'u_color'),
             u_lightDir: gl.getUniformLocation(this.program, 'u_lightDir'),
-            u_isSelected: gl.getUniformLocation(this.program, 'u_isSelected'),
         };
 
-        // Create Default Meshes
-        this.createMesh('Cube', createCubeData());
-        this.createMesh('Sphere', createCubeData()); 
-        this.createMesh('Plane', createCubeData());
+        // Create Default Meshes with Instancing support
+        this.createMesh(MESH_TYPES['Cube'], this.createCubeData());
+        this.createMesh(MESH_TYPES['Sphere'], this.createCubeData()); // Reusing cube for demo simplicity
+        this.createMesh(MESH_TYPES['Plane'], this.createCubeData());
+    }
+    
+    createCubeData() {
+        const p = [
+            -0.5, -0.5,  0.5,  0.5, -0.5,  0.5,  0.5,  0.5,  0.5, -0.5,  0.5,  0.5, // Front
+            -0.5, -0.5, -0.5, -0.5,  0.5, -0.5,  0.5,  0.5, -0.5,  0.5, -0.5, -0.5, // Back
+            -0.5,  0.5, -0.5, -0.5,  0.5,  0.5,  0.5,  0.5,  0.5,  0.5,  0.5, -0.5, // Top
+            -0.5, -0.5, -0.5,  0.5, -0.5, -0.5,  0.5, -0.5,  0.5, -0.5, -0.5,  0.5, // Bottom
+             0.5, -0.5, -0.5,  0.5,  0.5, -0.5,  0.5,  0.5,  0.5,  0.5, -0.5,  0.5, // Right
+            -0.5, -0.5, -0.5, -0.5, -0.5,  0.5, -0.5,  0.5,  0.5, -0.5,  0.5, -0.5, // Left
+        ];
+        const i = [0,1,2,0,2,3, 4,5,6,4,6,7, 8,9,10,8,10,11, 12,13,14,12,14,15, 16,17,18,16,18,19, 20,21,22,20,22,23];
+        const n: number[] = [];
+        const addN = (x:number,y:number,z:number) => { for(let k=0;k<4;k++) n.push(x,y,z); }
+        addN(0,0,1); addN(0,0,-1); addN(0,1,0); addN(0,-1,0); addN(1,0,0); addN(-1,0,0);
+        return { vertices: new Float32Array(p), normals: new Float32Array(n), indices: new Uint16Array(i) };
     }
 
-    resize(width: number, height: number) {
-        if (this.gl) {
-            this.gl.canvas.width = width;
-            this.gl.canvas.height = height;
-            this.gl.viewport(0, 0, width, height);
-        }
-    }
-
-    render(entities: Entity[], sceneGraph: SceneGraph, selectedId: string | null) {
+    createMesh(typeId: number, data: { vertices: Float32Array, normals: Float32Array, indices: Uint16Array }) {
         if (!this.gl || !this.program) return;
         const gl = this.gl;
 
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-        gl.useProgram(this.program);
-
-        // Set Global Uniforms
-        gl.uniformMatrix4fv(this.uniforms.u_viewProjection, false, this.viewProjectionMatrix);
-        gl.uniform3f(this.uniforms.u_lightDir, 0.5, 0.8, 0.5);
-
-        // Draw Entities
-        // Use standard for loop for max performance
-        for (let i = 0; i < entities.length; i++) {
-            const entity = entities[i];
-            if (!entity.isActive) continue;
-
-            const meshComp = entity.components[ComponentType.MESH];
-            if (!meshComp) continue;
-
-            const mesh = this.meshes.get(meshComp.meshType);
-            if (!mesh) continue;
-
-            const worldMatrix = sceneGraph.getWorldMatrix(entity.id);
-            if (!worldMatrix) continue;
-
-            // Bind VAO
-            gl.bindVertexArray(mesh.vao);
-
-            // Set Entity Uniforms
-            gl.uniformMatrix4fv(this.uniforms.u_model, false, worldMatrix);
-            
-            // Cached Color Parse
-            const hex = meshComp.color || '#ffffff';
-            let c = this.colorCache.get(hex);
-            if (!c) {
-                c = this.hexToRgb(hex);
-                this.colorCache.set(hex, c);
-            }
-            gl.uniform3f(this.uniforms.u_color, c.r, c.g, c.b);
-
-            gl.uniform1i(this.uniforms.u_isSelected, entity.id === selectedId ? 1 : 0);
-
-            // Draw
-            gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
-        }
-    }
-
-    setCamera(vpMatrix: Mat4) {
-        this.viewProjectionMatrix = vpMatrix;
-    }
-
-    private createMesh(name: string, data: { vertices: Float32Array, normals: Float32Array, indices: Uint16Array }) {
-        if (!this.gl) return;
-        const gl = this.gl;
-
-        const vao = gl.createVertexArray();
+        const vao = gl.createVertexArray()!;
         gl.bindVertexArray(vao);
 
-        // Position VBO
+        // Standard Attributes
         const posBuffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, data.vertices, gl.STATIC_DRAW);
         gl.enableVertexAttribArray(0);
         gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
 
-        // Normal VBO
         const normBuffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, normBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, data.normals, gl.STATIC_DRAW);
         gl.enableVertexAttribArray(1);
         gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
 
-        // EBO
         const ebo = gl.createBuffer();
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data.indices, gl.STATIC_DRAW);
 
+        // Instanced Attributes Setup
+        // We create a buffer that will hold [Mat4 (16), Color (3), Selected (1)] per instance
+        const instanceBuffer = gl.createBuffer()!;
+        gl.bindBuffer(gl.ARRAY_BUFFER, instanceBuffer);
+        // Allocate simplified dynamic buffer
+        gl.bufferData(gl.ARRAY_BUFFER, this.instanceData.byteLength, gl.DYNAMIC_DRAW);
+
+        const stride = 20 * 4; // 20 floats * 4 bytes
+
+        // Mat4 is 4 vec4s
+        for (let i = 0; i < 4; i++) {
+            gl.enableVertexAttribArray(2 + i);
+            gl.vertexAttribPointer(2 + i, 4, gl.FLOAT, false, stride, i * 16);
+            gl.vertexAttribDivisor(2 + i, 1);
+        }
+
+        // Color
+        gl.enableVertexAttribArray(6);
+        gl.vertexAttribPointer(6, 3, gl.FLOAT, false, stride, 16 * 4);
+        gl.vertexAttribDivisor(6, 1);
+
+        // Selected
+        gl.enableVertexAttribArray(7);
+        gl.vertexAttribPointer(7, 1, gl.FLOAT, false, stride, 19 * 4);
+        gl.vertexAttribDivisor(7, 1);
+
         gl.bindVertexArray(null);
+        this.meshes.set(typeId, { vao, count: data.indices.length, instanceBuffer });
+    }
 
-        if (vao) {
-            this.meshes.set(name, { vao, count: data.indices.length });
+    render(
+        store: ComponentStorage, 
+        idToIndex: Map<string, number>, 
+        sceneGraph: SceneGraph, 
+        viewProjection: Mat4, 
+        selectedId: string | null
+    ) {
+        if (!this.gl || !this.program) return;
+        const gl = this.gl;
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        gl.useProgram(this.program);
+        gl.uniformMatrix4fv(this.uniforms.u_viewProjection, false, viewProjection);
+
+        const selectedIndex = selectedId ? idToIndex.get(selectedId) : -1;
+
+        // Group by MeshType and Build Instance Buffers
+        // Optimization: We iterate the SoA once and fill different regions of our temp buffer?
+        // Or render one mesh type at a time.
+        // Let's render one mesh type at a time to minimize VAO switches.
+
+        const meshTypes = [1, 2, 3]; // Cube, Sphere, Plane
+        
+        for (const typeId of meshTypes) {
+            const mesh = this.meshes.get(typeId);
+            if (!mesh) continue;
+
+            let instanceCount = 0;
+            // Iterate all entities
+            // Optimization: Maintain lists of indices per mesh type? 
+            // For now, simple loop over active entities is much faster than object loop.
+            // But checking MAX_ENTITIES is slow if mostly empty.
+            // Use SoA count or known max index.
+            // We'll iterate the idToIndex map to get active ones, or just loop if dense.
+            // Let's loop idToIndex for safety as indices might be sparse-ish.
+            
+            // Pointer to our CPU instance buffer
+            let dataPtr = 0;
+            
+            // Using Map iteration is slower than array. Ideally we use a dense list of active indices.
+            // For this implementation, we will iterate `idToIndex.values()`
+            for (const index of idToIndex.values()) {
+                if (store.isActive[index] && store.meshType[index] === typeId) {
+                    const worldMatrix = sceneGraph.getWorldMatrix(store.ids[index]);
+                    if (!worldMatrix) continue;
+
+                    // Copy Matrix (16 floats)
+                    for(let k=0; k<16; k++) this.instanceData[dataPtr++] = worldMatrix[k];
+                    
+                    // Copy Color (3 floats)
+                    this.instanceData[dataPtr++] = store.colorR[index];
+                    this.instanceData[dataPtr++] = store.colorG[index];
+                    this.instanceData[dataPtr++] = store.colorB[index];
+
+                    // Copy Selection (1 float)
+                    this.instanceData[dataPtr++] = (index === selectedIndex) ? 1.0 : 0.0;
+
+                    instanceCount++;
+                }
+            }
+
+            if (instanceCount > 0) {
+                gl.bindVertexArray(mesh.vao);
+                gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
+                // Upload only the used part
+                gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.instanceData.subarray(0, instanceCount * 20));
+                
+                gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, instanceCount);
+            }
         }
     }
 
-    private createShader(gl: WebGL2RenderingContext, type: number, source: string) {
-        const shader = gl.createShader(type)!;
-        gl.shaderSource(shader, source);
-        gl.compileShader(shader);
-        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-            console.error('Shader compile error:', gl.getShaderInfoLog(shader));
-            gl.deleteShader(shader);
-            throw new Error('Shader compile error');
+    resize(width: number, height: number) {
+        if(this.gl) {
+            this.gl.canvas.width = width;
+            this.gl.canvas.height = height;
+            this.gl.viewport(0, 0, width, height);
         }
-        return shader;
     }
 
+    // Shader Helpers
+    private createShader(gl: WebGL2RenderingContext, type: number, src: string) {
+        const s = gl.createShader(type)!;
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.error(gl.getShaderInfoLog(s)); return null; }
+        return s;
+    }
     private createProgram(gl: WebGL2RenderingContext, vs: WebGLShader, fs: WebGLShader) {
-        const program = gl.createProgram()!;
-        gl.attachShader(program, vs);
-        gl.attachShader(program, fs);
-        gl.linkProgram(program);
-        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-             console.error('Program link error:', gl.getProgramInfoLog(program));
-             throw new Error('Program link error');
-        }
-        return program;
-    }
-
-    private hexToRgb(hex: string) {
-        const bigint = parseInt(hex.slice(1), 16);
-        const r = (bigint >> 16) & 255;
-        const g = (bigint >> 8) & 255;
-        const b = bigint & 255;
-        return { r: r/255, g: g/255, b: b/255 };
+        const p = gl.createProgram()!;
+        gl.attachShader(p, vs!); gl.attachShader(p, fs!);
+        gl.linkProgram(p);
+        return p;
     }
 }
 
 class PhysicsSystem {
-  update(deltaTime: number, entities: Entity[]) {
-    // Optimization: use for-loop instead of forEach
-    for(let i=0; i<entities.length; i++) {
-        const entity = entities[i];
-        if (entity.components[ComponentType.PHYSICS]) {
-            const transform = entity.components[ComponentType.TRANSFORM];
-            // Simple mock gravity
-            if (transform.position.y > 0) {
-            // transform.position.y -= 9.8 * deltaTime * 0.1;
-            // if (transform.position.y < 0) transform.position.y = 0;
+  update(deltaTime: number, store: ComponentStorage, idToIndex: Map<string, number>) {
+    for (const index of idToIndex.values()) {
+        if (!store.isActive[index]) continue;
+        if (store.useGravity[index]) {
+            // Check bounds (simple floor check)
+            if (store.posY[index] > 0) {
+                 // store.posY[index] -= 9.8 * deltaTime * 0.1; 
+                 // We don't have dirty flag setting here if we access array directly!
+                 // In a real ECS, we'd mark dirty.
+                 // For now, let's assume SceneGraph updates handle transforms if we flag them.
+                 // But we are accessing raw arrays. 
+                 // The SceneGraph update needs to know that these changed.
+                 // We can return a list of modified indices, or just set dirty.
             }
         }
     }
@@ -321,124 +489,124 @@ class PhysicsSystem {
 // --- Main Engine Class ---
 
 export class Ti3DEngine {
-  ecs: EntityComponentSystem;
+  ecs: SoAEntitySystem;
   sceneGraph: SceneGraph;
   renderer: WebGLRenderer;
   physics: PhysicsSystem;
+  
   isPlaying: boolean = false;
   selectedId: string | null = null;
-  
   private listeners: (() => void)[] = [];
 
+  // Scratchpad for transform update callback
+  private tempTransformData = new Float32Array(9);
+
   constructor() {
-    this.ecs = new EntityComponentSystem();
+    this.ecs = new SoAEntitySystem();
     this.sceneGraph = new SceneGraph();
-    this.renderer = new WebGLRenderer(); // Now true WebGL
+    this.renderer = new WebGLRenderer();
     this.physics = new PhysicsSystem();
-    
     this.initDemoScene();
   }
 
-  initGL(canvas: HTMLCanvasElement) {
-      this.renderer.init(canvas);
-  }
-
-  resize(width: number, height: number) {
-      this.renderer.resize(width, height);
-  }
+  initGL(canvas: HTMLCanvasElement) { this.renderer.init(canvas); }
+  resize(width: number, height: number) { this.renderer.resize(width, height); }
 
   setSelected(id: string | null) {
       this.selectedId = id;
-      // Selection changes should notify UI
       this.notifyUI();
   }
 
+  viewProjectionMatrix = Mat4Utils.create();
   updateCamera(vpMatrix: Mat4) {
-      this.renderer.setCamera(vpMatrix);
+      Mat4Utils.copy(this.viewProjectionMatrix, vpMatrix);
   }
 
+  createEntity(name: string): Entity {
+      const id = this.ecs.createEntity(name);
+      this.sceneGraph.registerEntity(id);
+      this.notifyUI();
+      // Return proxy
+      return this.ecs.createProxy(id, this.sceneGraph)!;
+  }
+
+  // Helper to init scene with new API
   private initDemoScene() {
-    // 1. Create Player
-    const player = this.createEntity('Player Cube');
-    player.components[ComponentType.MESH] = { type: ComponentType.MESH, meshType: 'Cube', color: '#3b82f6' };
-    player.components[ComponentType.PHYSICS] = { type: ComponentType.PHYSICS, mass: 1, useGravity: true };
-    player.components[ComponentType.TRANSFORM].position = { x: 0, y: 0, z: 0 };
+      const p = this.createEntity('Player Cube');
+      // Use Proxy setters which handle SoA + Dirty
+      p.components[ComponentType.MESH].meshType = 'Cube';
+      p.components[ComponentType.MESH].color = '#3b82f6';
+      p.components[ComponentType.PHYSICS].useGravity = true;
 
-    // 2. Create a child object
-    const satellite = this.createEntity('Orbiting Satellite');
-    satellite.components[ComponentType.MESH] = { type: ComponentType.MESH, meshType: 'Sphere', color: '#ef4444' };
-    satellite.components[ComponentType.TRANSFORM].position = { x: 3, y: 0, z: 0 }; // Local offset
-    satellite.components[ComponentType.TRANSFORM].scale = { x: 0.5, y: 0.5, z: 0.5 };
-    
-    this.sceneGraph.attach(satellite.id, player.id);
+      const s = this.createEntity('Orbiting Satellite');
+      s.components[ComponentType.MESH].meshType = 'Sphere';
+      s.components[ComponentType.MESH].color = '#ef4444';
+      s.components[ComponentType.TRANSFORM].position = {x: 3, y: 0, z: 0};
+      s.components[ComponentType.TRANSFORM].scale = {x: 0.5, y: 0.5, z: 0.5};
+      this.sceneGraph.attach(s.id, p.id);
 
-    // 3. Environment
-    const floor = this.createEntity('Floor');
-    floor.components[ComponentType.MESH] = { type: ComponentType.MESH, meshType: 'Plane', color: '#4b5563' };
-    floor.components[ComponentType.TRANSFORM].position = { x: 0, y: -2, z: 0 };
-    floor.components[ComponentType.TRANSFORM].scale = { x: 10, y: 0.1, z: 10 };
-    
-    const light = this.createEntity('Directional Light');
-    light.components[ComponentType.LIGHT] = { type: ComponentType.LIGHT, intensity: 1.0, color: '#ffffff' };
-    light.components[ComponentType.TRANSFORM].position = { x: 5, y: 10, z: 5 };
+      const f = this.createEntity('Floor');
+      f.components[ComponentType.MESH].meshType = 'Plane';
+      f.components[ComponentType.MESH].color = '#4b5563';
+      f.components[ComponentType.TRANSFORM].position = {x: 0, y: -2, z: 0};
+      f.components[ComponentType.TRANSFORM].scale = {x: 10, y: 0.1, z: 10};
+
+      const l = this.createEntity('Directional Light');
+      l.components[ComponentType.LIGHT]!.intensity = 1.0;
   }
 
-  public createEntity(name: string): Entity {
-    const entity = this.ecs.createEntity(name);
-    this.sceneGraph.registerEntity(entity.id);
-    this.notifyUI(); // Structure changed, notify UI
-    return entity;
-  }
-
-  public subscribe(callback: () => void) {
-    this.listeners.push(callback);
-    return () => {
-      this.listeners = this.listeners.filter(cb => cb !== callback);
-    };
-  }
-
-  public notifyUI() {
-    this.listeners.forEach(cb => cb());
-  }
-
-  public tick(deltaTime: number) {
-    // Use Cached Entities Array
-    const entities = this.ecs.entityCache;
-
-    if (this.isPlaying) {
-      this.physics.update(deltaTime, entities);
-      
-      const satellite = entities.find(e => e.name === 'Orbiting Satellite');
-      if (satellite) {
-        // Rotate locally
-        satellite.components[ComponentType.TRANSFORM].rotation.y += deltaTime * 2.0;
-        satellite.components[ComponentType.TRANSFORM].rotation.x += deltaTime * 1.0;
+  tick(deltaTime: number) {
+      if (this.isPlaying) {
+          // Physics Update
+          // this.physics.update(deltaTime, this.ecs.store, this.ecs.idToIndex);
+          
+          // Simple Animation (Direct SoA access)
+          const sId = Array.from(this.ecs.idToIndex.entries()).find(x => this.ecs.store.names[x[1]] === 'Orbiting Satellite')?.[0];
+          if (sId) {
+              const idx = this.ecs.idToIndex.get(sId)!;
+              this.ecs.store.rotY[idx] += deltaTime * 2.0;
+              this.ecs.store.rotX[idx] += deltaTime * 1.0;
+              this.sceneGraph.setDirty(sId); // Explicit dirty
+          }
+          
+          const pId = Array.from(this.ecs.idToIndex.entries()).find(x => this.ecs.store.names[x[1]] === 'Player Cube')?.[0];
+          if (pId) {
+              const idx = this.ecs.idToIndex.get(pId)!;
+              this.ecs.store.rotY[idx] += deltaTime * 0.5;
+              this.sceneGraph.setDirty(pId);
+          }
       }
-      
-      const player = entities.find(e => e.name === 'Player Cube');
-      if (player) {
-         player.components[ComponentType.TRANSFORM].rotation.y += deltaTime * 0.5;
-      }
-    }
 
-    // Update Matrices (Optimized in SceneGraph)
-    this.sceneGraph.update(this.ecs.entities);
+      // Update Scene Graph
+      // Pass a callback that retrieves transform data from SoA
+      this.sceneGraph.update((id) => {
+          const idx = this.ecs.getEntityIndex(id);
+          if (idx === undefined || !this.ecs.store.isActive[idx]) return null;
+          
+          const s = this.ecs.store;
+          const t = this.tempTransformData;
+          t[0] = s.posX[idx]; t[1] = s.posY[idx]; t[2] = s.posZ[idx];
+          t[3] = s.rotX[idx]; t[4] = s.rotY[idx]; t[5] = s.rotZ[idx];
+          t[6] = s.scaleX[idx]; t[7] = s.scaleY[idx]; t[8] = s.scaleZ[idx];
+          return t;
+      });
 
-    // Render Scene (GPU)
-    this.renderer.render(entities, this.sceneGraph, this.selectedId);
-
-    // CRITICAL PERFORMANCE FIX: 
-    // Do NOT call notifyUI() here. 60 calls per second forces React to re-render the 
-    // entire Inspector/Hierarchy tree which destroys CPU performance.
-    // UI synchronization should be handled by polling or explicit events.
+      // Render
+      this.renderer.render(
+          this.ecs.store, 
+          this.ecs.idToIndex, 
+          this.sceneGraph, 
+          this.viewProjectionMatrix, 
+          this.selectedId
+      );
   }
-
-  public start() { this.isPlaying = true; this.notifyUI(); }
-  public pause() { this.isPlaying = false; this.notifyUI(); }
-  public stop() { 
-    this.isPlaying = false; 
-    this.notifyUI();
-  }
+  
+  start() { this.isPlaying = true; this.notifyUI(); }
+  pause() { this.isPlaying = false; this.notifyUI(); }
+  stop() { this.isPlaying = false; this.notifyUI(); }
+  
+  subscribe(cb: () => void) { this.listeners.push(cb); return () => this.listeners = this.listeners.filter(c => c !== cb); }
+  notifyUI() { this.listeners.forEach(cb => cb()); }
 }
 
 export const engineInstance = new Ti3DEngine();

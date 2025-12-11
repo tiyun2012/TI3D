@@ -1,7 +1,8 @@
+
 import React, { useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react';
 import { Entity, ComponentType, ToolType, Vector3 } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
-import { Mat4Utils, Vec3Utils } from '../services/math';
+import { Mat4Utils, Vec3Utils, Mat4 } from '../services/math';
 import { engineInstance } from '../services/engine';
 import { Icon } from './Icon';
 
@@ -19,7 +20,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
-  // Camera State
   const [camera, setCamera] = useState({
     target: { x: 0, y: 0, z: 0 },
     theta: Math.PI / 4, 
@@ -35,19 +35,16 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     startCamera: typeof camera;
   } | null>(null);
 
-  // Gizmo Interaction State
   const [gizmoDrag, setGizmoDrag] = useState<{
     axis: Axis;
     startX: number;
     startY: number;
-    startValue: Vector3; // The entity's initial pos/rot/scale
+    startValue: Vector3;
   } | null>(null);
 
-  // Initialize WebGL
   useLayoutEffect(() => {
     if (canvasRef.current) {
         engineInstance.initGL(canvasRef.current);
-        
         const resizeObserver = new ResizeObserver(() => {
             if (containerRef.current && canvasRef.current) {
                 const { width, height } = containerRef.current.getBoundingClientRect();
@@ -59,14 +56,13 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     }
   }, []);
 
-  // Update Engine Selection
   useEffect(() => {
       engineInstance.setSelected(selectedId);
   }, [selectedId]);
 
-  // Derived Camera Matrices & Gizmo Rendering Data
-  const { vpMatrix, width, height, camDir } = useMemo(() => {
-    if (!containerRef.current) return { vpMatrix: Mat4Utils.create(), width: 1, height: 1, camDir: {x:0,y:0,z:0} };
+  // Derived Camera Matrices
+  const { vpMatrix, width, height } = useMemo(() => {
+    if (!containerRef.current) return { vpMatrix: Mat4Utils.create(), width: 1, height: 1 };
     
     const rect = containerRef.current.getBoundingClientRect();
     const w = rect.width;
@@ -77,29 +73,27 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
     const eye = { x: eyeX, y: eyeY, z: eyeZ };
 
-    const viewMatrix = Mat4Utils.lookAt(eye, camera.target, { x: 0, y: 1, z: 0 });
+    const viewMatrix = Mat4Utils.create();
+    Mat4Utils.lookAt(eye, camera.target, { x: 0, y: 1, z: 0 }, viewMatrix);
+    
     const aspect = w / h;
-    const projMatrix = Mat4Utils.perspective(Math.PI / 4, aspect, 0.1, 1000);
-    const vp = Mat4Utils.multiply(projMatrix, viewMatrix);
+    const projMatrix = Mat4Utils.create();
+    Mat4Utils.perspective(Math.PI / 4, aspect, 0.1, 1000, projMatrix);
+    
+    const vp = Mat4Utils.create();
+    Mat4Utils.multiply(projMatrix, viewMatrix, vp);
 
-    const dir = Vec3Utils.normalize(Vec3Utils.subtract(camera.target, eye));
-
-    return { vpMatrix: vp, width: w, height: h, camDir: dir };
+    return { vpMatrix: vp, width: w, height: h };
   }, [camera, containerRef.current?.getBoundingClientRect().width, containerRef.current?.getBoundingClientRect().height]);
 
-  // Sync Camera to Engine
   useEffect(() => {
     if (width > 1) {
        engineInstance.updateCamera(vpMatrix);
     }
   }, [vpMatrix, width]);
 
-  // --- Interaction Handlers ---
-
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!e.altKey && tool === 'SELECT') {
-        // Simple selection via onSelect usually handled by raycast, 
-        // but here we just deselect if clicking background without alt
         if (e.target === canvasRef.current) onSelect(''); 
     }
     
@@ -123,24 +117,21 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     setCamera(prev => ({ ...prev, radius: Math.max(2, prev.radius + e.deltaY * 0.01) }));
   };
 
-  // Global Mouse Move for Camera & Gizmo
   useEffect(() => {
     const handleWindowMouseMove = (e: MouseEvent) => {
-      // 1. Gizmo Dragging
       if (gizmoDrag && selectedId) {
-          const entity = engineInstance.ecs.entities.get(selectedId);
+          const entity = entities.find(e => e.id === selectedId);
           if (!entity) return;
           const transform = entity.components[ComponentType.TRANSFORM];
           const dx = e.clientX - gizmoDrag.startX;
           const dy = e.clientY - gizmoDrag.startY;
           
-          // Sensitivity factor
           const factor = 0.02 * (camera.radius / 10); 
 
           if (tool === 'MOVE') {
               if (gizmoDrag.axis === 'X') transform.position.x = gizmoDrag.startValue.x + dx * factor;
-              if (gizmoDrag.axis === 'Y') transform.position.y = gizmoDrag.startValue.y - dy * factor; // Screen Y is inverted
-              if (gizmoDrag.axis === 'Z') transform.position.z = gizmoDrag.startValue.z - dx * factor; // Approx mapping
+              if (gizmoDrag.axis === 'Y') transform.position.y = gizmoDrag.startValue.y - dy * factor;
+              if (gizmoDrag.axis === 'Z') transform.position.z = gizmoDrag.startValue.z - dx * factor;
           } 
           else if (tool === 'ROTATE') {
               const angle = dx * 0.01;
@@ -159,7 +150,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           return;
       }
 
-      // 2. Camera Dragging
       if (!dragState || !dragState.isDragging) return;
 
       const dx = e.clientX - dragState.startX;
@@ -203,25 +193,17 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       window.removeEventListener('mousemove', handleWindowMouseMove);
       window.removeEventListener('mouseup', handleWindowMouseUp);
     };
-  }, [dragState, gizmoDrag, camera, selectedId, tool]);
+  }, [dragState, gizmoDrag, camera, selectedId, tool, entities]);
 
-
-  // --- Gizmo Render Logic ---
   const renderGizmos = () => {
       if (!selectedId || tool === 'SELECT') return null;
       
-      const entity = entities.find(e => e.id === selectedId);
-      if (!entity) return null;
-      
-      const transform = entity.components[ComponentType.TRANSFORM];
       const worldPos = sceneGraph.getWorldPosition(selectedId);
       
-      // Project Center
       const pCenter = Mat4Utils.transformPoint(worldPos, vpMatrix, width, height);
-      if (pCenter.w <= 0) return null; // Behind camera
+      if (pCenter.w <= 0) return null;
 
-      const axisLength = 1.5; // World units approx
-      // For simplicity, using world axes for Move/Scale, local could be added
+      const axisLength = 1.5;
       const axesPoints = {
           x: Mat4Utils.transformPoint({x: worldPos.x + axisLength, y: worldPos.y, z: worldPos.z}, vpMatrix, width, height),
           y: Mat4Utils.transformPoint({x: worldPos.x, y: worldPos.y + axisLength, z: worldPos.z}, vpMatrix, width, height),
@@ -231,6 +213,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       const startDrag = (e: React.MouseEvent, axis: Axis) => {
           e.stopPropagation();
           e.preventDefault();
+          const entity = entities.find(e => e.id === selectedId);
+          if (!entity) return;
+          const transform = entity.components[ComponentType.TRANSFORM];
           
           let startVal = { x:0, y:0, z:0 };
           if (tool === 'MOVE') startVal = { ...transform.position };
@@ -246,7 +231,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       };
 
       const renderAxis = (axis: Axis, color: string, endPoint: {x:number, y:number, z:number, w:number}) => {
-          if (endPoint.w <= 0) return null; // End point behind camera
+          if (endPoint.w <= 0) return null;
           
           const isActive = gizmoDrag?.axis === axis;
           const strokeColor = isActive ? '#fff' : color;
@@ -260,7 +245,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                       strokeWidth={isActive ? 4 : 2} 
                   />
                   {tool === 'MOVE' && (
-                       // Cone/Arrow Tip
                        <polygon 
                           points={`${endPoint.x},${endPoint.y-5} ${endPoint.x-5},${endPoint.y+5} ${endPoint.x+5},${endPoint.y+5}`}
                           fill={strokeColor}
@@ -288,14 +272,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       return (
           <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-10">
               <g className="pointer-events-auto">
-                {/* Z Axis (Blue) */}
                 {renderAxis('Z', '#3b82f6', axesPoints.z)}
-                {/* Y Axis (Green) */}
                 {renderAxis('Y', '#22c55e', axesPoints.y)}
-                {/* X Axis (Red) */}
                 {renderAxis('X', '#ef4444', axesPoints.x)}
-                
-                {/* Center Point */}
                 <circle cx={pCenter.x} cy={pCenter.y} r={4} fill="white" className="pointer-events-none opacity-50"/>
               </g>
           </svg>
@@ -310,43 +289,27 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         onWheel={handleWheel}
         onContextMenu={(e) => e.preventDefault()}
     >
-        {/* Background Gradient for Depth */}
         <div className="absolute inset-0 bg-gradient-to-b from-[#202020] to-[#101010] -z-10 pointer-events-none" />
-
-        <canvas 
-            ref={canvasRef} 
-            className="block w-full h-full outline-none"
-        />
-
-        {/* Gizmo Overlay */}
+        <canvas ref={canvasRef} className="block w-full h-full outline-none" />
         {renderGizmos()}
-
-        {/* Viewport Toolbar */}
+        
+        {/* Helper UI Overlays */}
         <div className="absolute top-3 left-3 flex gap-2 z-20">
             <div className="bg-black/40 backdrop-blur border border-white/5 rounded-md flex p-1 text-text-secondary">
-                 <button className="p-1 hover:text-white rounded hover:bg-white/10" title="Shaded"><Icon name="Box" size={14} /></button>
-                 <button className="p-1 hover:text-white rounded hover:bg-white/10" title="Wireframe"><Icon name="Grid" size={14} /></button>
-                 <div className="w-px bg-white/10 mx-1 my-0.5" />
-                 <button className="p-1 hover:text-white rounded hover:bg-white/10" title="Toggle Lighting"><Icon name="Sun" size={14} /></button>
+                 <button className="p-1 hover:text-white rounded hover:bg-white/10"><Icon name="Box" size={14} /></button>
+                 <button className="p-1 hover:text-white rounded hover:bg-white/10"><Icon name="Grid" size={14} /></button>
             </div>
-            
             <div className="bg-black/40 backdrop-blur border border-white/5 rounded-md flex items-center px-2 text-[10px] text-text-secondary">
                 <span>Perspective</span>
             </div>
         </div>
-
-        {/* Orientation Gizmo (Visual Only) */}
         <div className="absolute top-3 right-3 opacity-80 hover:opacity-100 transition-opacity cursor-pointer z-20">
              <div className="relative w-8 h-8">
                  <div className="absolute right-0 top-0 w-1 h-6 bg-green-500 rounded-full"></div>
                  <div className="absolute right-0 top-6 w-6 h-1 bg-red-500 rounded-full"></div>
                  <div className="absolute right-1 top-1 w-4 h-4 bg-blue-500 rounded-full z-10 border-2 border-[#151515]"></div>
-                 <span className="absolute -right-2 top-6 text-[8px] font-bold text-red-500">X</span>
-                 <span className="absolute right-0 -top-3 text-[8px] font-bold text-green-500">Y</span>
              </div>
         </div>
-
-        {/* Footer Info */}
         <div className="absolute bottom-2 right-2 text-[10px] text-text-secondary bg-black/40 px-2 py-0.5 rounded backdrop-blur border border-white/5 z-20">
             Cam: {camera.target.x.toFixed(1)}, {camera.target.y.toFixed(1)}, {camera.target.z.toFixed(1)}
         </div>
