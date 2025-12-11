@@ -4,12 +4,13 @@ import { Icon } from './Icon';
 import { engineInstance } from '../services/engine';
 import { NodeRegistry, getTypeColor } from '../services/NodeRegistry';
 
-// Constants for fallback only
+// Constants
 const GRID_SIZE = 20;
 const NODE_WIDTH = 180;
+const HEADER_HEIGHT = 36; // Approx height of header
+const PIN_HEIGHT = 24;    // Approx height per pin row
 const REROUTE_SIZE = 12;
 
-// ... (Keep INITIAL_NODES and INITIAL_CONNECTIONS as they were) ...
 const INITIAL_NODES: GraphNode[] = [
     { id: '1', type: 'Time', position: { x: 50, y: 100 } },
     { id: '2', type: 'Sine', position: { x: 280, y: 100 } },
@@ -32,8 +33,8 @@ export const NodeGraph: React.FC = () => {
     
     const containerRef = useRef<HTMLDivElement>(null);
     const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+    const pathRefs = useRef<Map<string, SVGPathElement>>(new Map()); // NEW: Ref for paths
     
-    // Interaction State
     const [connecting, setConnecting] = useState<{ nodeId: string, pinId: string, type: 'input'|'output', x: number, y: number } | null>(null);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, visible: boolean } | null>(null);
     const [searchFilter, setSearchFilter] = useState('');
@@ -43,8 +44,8 @@ export const NodeGraph: React.FC = () => {
         engineInstance.compileGraph(nodes, connections);
     }, [nodes, connections]);
 
-    // --- 1. Coordinate System Helper ---
-    // Converts a Screen Pixel coordinate (clientX/Y) to Graph Space (Node X/Y)
+    // --- Helpers ---
+
     const screenToGraph = (clientX: number, clientY: number) => {
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return { x: 0, y: 0 };
@@ -54,47 +55,48 @@ export const NodeGraph: React.FC = () => {
         };
     };
 
-    // --- 2. Dynamic Port Positioning ---
-    // Finds the real DOM center of a pin. If not rendered, falls back to estimation.
-    const getPinPosition = (node: GraphNode, pinId: string, type: 'input'|'output') => {
-        // Try to find the DOM element
-        const elementId = `pin-${node.id}-${type}-${pinId}`;
-        const el = document.getElementById(elementId);
-
-        if (el && containerRef.current) {
-            const rect = el.getBoundingClientRect();
-            const centerScreenX = rect.left + rect.width / 2;
-            const centerScreenY = rect.top + rect.height / 2;
-            return screenToGraph(centerScreenX, centerScreenY);
+    // Fast math-based pin lookup for dragging (avoids DOM thrashing)
+    const getPinOffset = (nodeX: number, nodeY: number, nodeType: string, pinId: string, type: 'input'|'output') => {
+        if (nodeType === 'Reroute') {
+            return { x: nodeX + REROUTE_SIZE/2, y: nodeY + REROUTE_SIZE/2 };
         }
+        
+        const def = NodeRegistry[nodeType];
+        if (!def) return { x: nodeX, y: nodeY };
 
-        // Fallback (Estimate)
-        const def = NodeRegistry[node.type];
-        if (!def) return { x: node.position.x, y: node.position.y };
-
-        // Simple estimate logic for when DOM isn't ready
+        // Header offset + index offset
         const list = type === 'input' ? def.inputs : def.outputs;
-        const index = list.findIndex(p => p.id === pinId);
-        const yOffset = 40 + (index * 24); // Magic numbers as backup only
+        const idx = list.findIndex(p => p.id === pinId);
+        // Approx standard offsets (matches CSS layout)
+        const yOffset = 36 + (idx * 24) + 12; 
+
         return {
-            x: node.position.x + (type === 'output' ? NODE_WIDTH : 0),
-            y: node.position.y + yOffset
+            x: nodeX + (type === 'output' ? NODE_WIDTH : 0),
+            y: nodeY + yOffset
         };
     };
 
-    // --- 3. Robust Bezier Curve Calculation ---
-    // Always draws from "Source" (Right side) to "Target" (Left side)
+    const getPinPosition = (node: GraphNode, pinId: string, type: 'input'|'output') => {
+        // Try DOM first for perfect alignment on render
+        const elementId = `pin-${node.id}-${type}-${pinId}`;
+        const el = document.getElementById(elementId);
+        if (el && containerRef.current) {
+            const rect = el.getBoundingClientRect();
+            // Center of pin
+            return screenToGraph(rect.left + rect.width/2, rect.top + rect.height/2);
+        }
+        // Fallback to math
+        return getPinOffset(node.position.x, node.position.y, node.type, pinId, type);
+    };
+
     const calculateCurve = (x1: number, y1: number, x2: number, y2: number) => {
-        const dist = Math.abs(x1 - x2) * 0.4; // 40% curvature
-        // Tangent 1: Always shoots RIGHT from Source
+        const dist = Math.abs(x1 - x2) * 0.4; 
         const cX1 = x1 + Math.max(dist, 50); 
-        // Tangent 2: Always shoots LEFT from Target (or enters from left)
         const cX2 = x2 - Math.max(dist, 50);
-        
         return `M ${x1} ${y1} C ${cX1} ${y1} ${cX2} ${y2} ${x2} ${y2}`;
     };
 
-    // --- Handlers ---
+    // --- Interaction ---
 
     const handleWheel = (e: React.WheelEvent) => {
         e.stopPropagation();
@@ -104,8 +106,7 @@ export const NodeGraph: React.FC = () => {
         const mouse = screenToGraph(e.clientX, e.clientY);
 
         setTransform(t => {
-            const newK = Math.min(Math.max(t.k * zoom, 0.2), 3); // Limit zoom levels
-            // Zoom towards mouse
+            const newK = Math.min(Math.max(t.k * zoom, 0.2), 3);
             return {
                 x: e.clientX - containerRef.current!.getBoundingClientRect().left - (mouse.x * newK),
                 y: e.clientY - containerRef.current!.getBoundingClientRect().top - (mouse.y * newK),
@@ -119,35 +120,86 @@ export const NodeGraph: React.FC = () => {
         const startMouse = { x: e.clientX, y: e.clientY };
         const startNodePos = { ...node.position };
 
+        // Cache related connections for fast updates
+        const connectedLines = connections
+            .filter(c => c.fromNode === node.id || c.toNode === node.id)
+            .map(c => {
+                const isOutput = c.fromNode === node.id;
+                
+                // Identify the other node to get its position
+                const otherNodeId = isOutput ? c.toNode : c.fromNode;
+                const otherNode = nodes.find(n => n.id === otherNodeId);
+                
+                // 1. Calculate the exact START position (on the dragged node) relative to the node
+                // We use getPinPosition to get the visual location, then subtract node pos to get offset.
+                // This ensures that when we drag, we apply this offset to the new node pos, maintaining visual lock.
+                const myPinPos = getPinPosition(node, isOutput ? c.fromPin : c.toPin, isOutput ? 'output' : 'input');
+                const offsetX = myPinPos.x - startNodePos.x;
+                const offsetY = myPinPos.y - startNodePos.y;
+
+                // 2. Calculate the exact END position (on the other node)
+                // This node is static, so we just cache its position.
+                let otherPinPos = { x: 0, y: 0 };
+                if (otherNode) {
+                    otherPinPos = getPinPosition(otherNode, isOutput ? c.toPin : c.fromPin, isOutput ? 'input' : 'output');
+                }
+
+                return {
+                    id: c.id,
+                    isOutput, 
+                    offsetX,
+                    offsetY,
+                    otherPinPos
+                };
+            });
+
         const handleWinMove = (ev: MouseEvent) => {
             const dx = (ev.clientX - startMouse.x) / transform.k;
             const dy = (ev.clientY - startMouse.y) / transform.k;
-            
-            // Fast DOM update for smoothness
+            const newX = startNodePos.x + dx;
+            const newY = startNodePos.y + dy;
+
+            // 1. Update Node Div
             const el = nodeRefs.current.get(node.id);
             if(el) {
-                el.style.left = `${startNodePos.x + dx}px`;
-                el.style.top = `${startNodePos.y + dy}px`;
+                el.style.left = `${newX}px`;
+                el.style.top = `${newY}px`;
             }
+
+            // 2. Update Wires Imperatively (Bypass React State)
+            connectedLines.forEach(link => {
+                const pathEl = pathRefs.current.get(link.id);
+                if(!pathEl) return;
+
+                // Calculate positions using cached offsets to prevent 'rubber banding'
+                // The moving pin is simply NewNodePos + CachedOffset
+                const movingPinX = newX + link.offsetX;
+                const movingPinY = newY + link.offsetY;
+
+                const start = link.isOutput ? { x: movingPinX, y: movingPinY } : link.otherPinPos;
+                const end = link.isOutput ? link.otherPinPos : { x: movingPinX, y: movingPinY };
+
+                const newD = calculateCurve(start.x, start.y, end.x, end.y);
+                pathEl.setAttribute('d', newD);
+            });
+        };
+
+        const handleWinUp = (ev: MouseEvent) => {
+            window.removeEventListener('mousemove', handleWinMove);
+            window.removeEventListener('mouseup', handleWinUp);
             
-            // Note: In a full implementation, we would also update 
-            // connected SVG paths here imperatively to avoid React render lag.
-            // For simplicity in this step, we'll let React catch up on MouseUp 
-            // or trigger a state update if you want live wires (costs performance).
-            
-            // Force re-render for live wires (optional trade-off)
+            // Final Sync to React State
+            const dx = (ev.clientX - startMouse.x) / transform.k;
+            const dy = (ev.clientY - startMouse.y) / transform.k;
             setNodes(prev => prev.map(n => n.id === node.id ? { ...n, position: { x: startNodePos.x + dx, y: startNodePos.y + dy } } : n));
         };
 
-        const handleWinUp = () => {
-            window.removeEventListener('mousemove', handleWinMove);
-            window.removeEventListener('mouseup', handleWinUp);
-        };
         window.addEventListener('mousemove', handleWinMove);
         window.addEventListener('mouseup', handleWinUp);
     };
 
-    // Connection Handling
+    // ... (rest of drag/drop connection logic remains same)
+
     const handlePinDown = (e: React.MouseEvent, nodeId: string, pinId: string, type: 'input'|'output') => {
         e.stopPropagation();
         const pos = screenToGraph(e.clientX, e.clientY);
@@ -156,37 +208,21 @@ export const NodeGraph: React.FC = () => {
 
     const handlePinUp = (e: React.MouseEvent, nodeId: string, pinId: string, type: 'input'|'output') => {
         e.stopPropagation();
-        if (connecting) {
-            // Ensure we are connecting Output -> Input
-            if (connecting.nodeId !== nodeId && connecting.type !== type) {
-                const source = connecting.type === 'output' ? connecting : { nodeId, pinId };
-                const target = connecting.type === 'input' ? connecting : { nodeId, pinId };
-                
-                // Check dupes
-                const exists = connections.some(c => 
-                    c.fromNode === source.nodeId && c.fromPin === source.pinId &&
-                    c.toNode === target.nodeId && c.toPin === target.pinId
-                );
-                
-                if (!exists) {
-                    // Logic: Input pins usually only accept ONE connection (except specialized arrays).
-                    // Remove existing connection to this input if replacing
-                    const cleanConnections = connections.filter(c => 
-                        !(c.toNode === target.nodeId && c.toPin === target.pinId)
-                    );
-                    
-                    setConnections([...cleanConnections, {
-                        id: crypto.randomUUID(),
-                        fromNode: source.nodeId, fromPin: source.pinId,
-                        toNode: target.nodeId, toPin: target.pinId
-                    }]);
-                }
-            }
+        if (connecting && connecting.nodeId !== nodeId && connecting.type !== type) {
+             const source = connecting.type === 'output' ? connecting : { nodeId, pinId };
+             const target = connecting.type === 'input' ? connecting : { nodeId, pinId };
+             
+             // Check duplicates
+             const exists = connections.some(c => c.fromNode === source.nodeId && c.fromPin === source.pinId && c.toNode === target.nodeId && c.toPin === target.pinId);
+             if (!exists) {
+                 const clean = connections.filter(c => !(c.toNode === target.nodeId && c.toPin === target.pinId));
+                 setConnections([...clean, { id: crypto.randomUUID(), fromNode: source.nodeId, fromPin: source.pinId, toNode: target.nodeId, toPin: target.pinId }]);
+             }
         }
         setConnecting(null);
     };
 
-    const handleBgMouseMove = (e: React.MouseEvent) => {
+    const handleMouseMove = (e: React.MouseEvent) => {
         if (panning) {
             setTransform(t => ({ ...t, x: t.x + e.movementX, y: t.y + e.movementY }));
         }
@@ -196,23 +232,36 @@ export const NodeGraph: React.FC = () => {
         }
     };
 
+    // --- Render ---
+
+    const addNode = (type: string) => {
+         if(!contextMenu || !containerRef.current) return;
+         const rect = containerRef.current.getBoundingClientRect();
+         const pos = {
+             x: (contextMenu.x - rect.left - transform.x) / transform.k,
+             y: (contextMenu.y - rect.top - transform.y) / transform.k
+         };
+         setNodes(p => [...p, { id: crypto.randomUUID(), type, position: pos, data: {} }]);
+         setContextMenu(null);
+         setSearchFilter('');
+    };
+
     return (
         <div 
             ref={containerRef}
             className="w-full h-full bg-[#111] overflow-hidden relative select-none"
             onWheel={handleWheel}
-            onMouseDown={(e) => {
-                if (e.button === 0 || e.button === 1) setPanning(true);
-                if (e.button === 2) setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
+            onMouseDown={e => {
+                if(e.button===0 || e.button===1) setPanning(true);
+                if(e.button===2) setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
                 else setContextMenu(null);
             }}
-            onMouseMove={handleBgMouseMove}
+            onMouseMove={handleMouseMove}
             onMouseUp={() => { setPanning(false); setConnecting(null); }}
             onContextMenu={e => e.preventDefault()}
         >
-            {/* Grid */}
-            <div 
-                className="absolute inset-0 pointer-events-none opacity-20"
+             {/* Grid */}
+             <div className="absolute inset-0 pointer-events-none opacity-20"
                 style={{
                     backgroundSize: `${GRID_SIZE * transform.k}px ${GRID_SIZE * transform.k}px`,
                     backgroundPosition: `${transform.x}px ${transform.y}px`,
@@ -220,19 +269,15 @@ export const NodeGraph: React.FC = () => {
                 }}
             />
 
-            {/* Content Layer (Scaled) */}
-            <div 
-                style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.k})`, transformOrigin: '0 0' }}
-                className="w-full h-full"
-            >
-                {/* SVG Connections Layer */}
+            <div style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.k})`, transformOrigin: '0 0' }} className="w-full h-full">
+                
+                {/* Wires */}
                 <svg className="absolute top-0 left-0 w-1 h-1 overflow-visible pointer-events-none">
-                    {/* Render Existing Connections */}
                     {connections.map(c => {
                         const fromNode = nodes.find(n => n.id === c.fromNode);
                         const toNode = nodes.find(n => n.id === c.toNode);
                         if(!fromNode || !toNode) return null;
-                        
+
                         const p1 = getPinPosition(fromNode, c.fromPin, 'output');
                         const p2 = getPinPosition(toNode, c.toPin, 'input');
                         const d = calculateCurve(p1.x, p1.y, p2.x, p2.y);
@@ -242,143 +287,113 @@ export const NodeGraph: React.FC = () => {
                         const color = port?.color || getTypeColor(port?.type || 'any');
 
                         return (
-                            <path key={c.id} d={d} stroke={color} strokeWidth="2" fill="none" />
+                            <path 
+                                key={c.id} 
+                                ref={el => { if(el) pathRefs.current.set(c.id, el) }} 
+                                d={d} stroke={color} strokeWidth="2" fill="none" 
+                            />
                         );
                     })}
-
-                    {/* Render Active Drag Line */}
+                    
                     {connecting && (() => {
-                         const startNode = nodes.find(n => n.id === connecting.nodeId);
-                         if(!startNode) return null;
-                         
-                         const fixedPos = getPinPosition(startNode, connecting.pinId, connecting.type);
-                         const mousePos = { x: connecting.x, y: connecting.y };
-
-                         // Determine flow direction based on what we are dragging FROM
-                         // If dragging from Output: Fixed -> Mouse
-                         // If dragging from Input: Mouse -> Fixed
-                         const pStart = connecting.type === 'output' ? fixedPos : mousePos;
-                         const pEnd   = connecting.type === 'output' ? mousePos : fixedPos;
-                         
-                         const def = NodeRegistry[startNode.type];
-                         const list = connecting.type === 'input' ? def.inputs : def.outputs;
-                         const port = list.find(p => p.id === connecting.pinId);
-                         const color = port?.color || getTypeColor(port?.type || 'any');
-
-                         return (
-                            <path 
-                                d={calculateCurve(pStart.x, pStart.y, pEnd.x, pEnd.y)} 
-                                stroke={color} strokeWidth="2" strokeDasharray="5,5" fill="none" 
-                            />
-                         );
+                         const node = nodes.find(n => n.id === connecting.nodeId);
+                         if(!node) return null;
+                         const p1 = getPinPosition(node, connecting.pinId, connecting.type);
+                         const p2 = { x: connecting.x, y: connecting.y };
+                         // Always Source -> Target
+                         const start = connecting.type === 'output' ? p1 : p2;
+                         const end = connecting.type === 'output' ? p2 : p1;
+                         return <path d={calculateCurve(start.x, start.y, end.x, end.y)} stroke="#fff" strokeWidth="2" strokeDasharray="5,5" fill="none" />;
                     })()}
                 </svg>
 
-                {/* Nodes Layer */}
+                {/* Nodes */}
                 {nodes.map(node => {
                     const def = NodeRegistry[node.type];
                     if(!def) return null;
                     const isReroute = node.type === 'Reroute';
-
+                    
                     return (
                         <div
                             key={node.id}
                             ref={el => { if(el) nodeRefs.current.set(node.id, el) }}
-                            className={`absolute flex flex-col pointer-events-auto transition-shadow hover:shadow-2xl
-                                ${isReroute ? '' : 'rounded-md shadow-xl border border-black bg-[#1e1e1e]'}
-                            `}
+                            className={`absolute flex flex-col pointer-events-auto transition-shadow hover:shadow-2xl ${isReroute ? '' : 'rounded-md shadow-xl border border-black bg-[#1e1e1e]'}`}
                             style={{ 
-                                left: node.position.x, 
-                                top: node.position.y,
-                                width: isReroute ? REROUTE_SIZE : NODE_WIDTH,
+                                left: node.position.x, top: node.position.y,
+                                width: isReroute ? REROUTE_SIZE : NODE_WIDTH, 
                                 height: isReroute ? REROUTE_SIZE : 'auto'
                             }}
                         >
-                            {/* Header / Title */}
-                            {!isReroute && (
-                                <div 
-                                    className="h-9 px-3 flex items-center justify-between bg-white/5 border-b border-white/5 rounded-t-md cursor-grab active:cursor-grabbing"
+                             {isReroute ? (
+                                <div className="w-full h-full rounded-full bg-gray-400 hover:bg-white cursor-move border border-black"
                                     onMouseDown={(e) => handleNodeMouseDown(e, node)}
                                 >
-                                    <span className="text-xs font-bold text-gray-200">{def.title}</span>
+                                    <div className="absolute inset-0 z-10" onMouseUp={(e) => handlePinUp(e, node.id, 'in', 'input')}/>
+                                    <div className="absolute inset-0 z-10" onMouseDown={(e) => handlePinDown(e, node.id, 'out', 'output')}/>
                                 </div>
-                            )}
-                            
-                            {/* Reroute Body */}
-                            {isReroute && (
-                                <div 
-                                    className="w-full h-full rounded-full bg-gray-400 hover:bg-white cursor-move border border-black"
-                                    onMouseDown={(e) => handleNodeMouseDown(e, node)}
-                                />
-                            )}
-
-                            {/* Inputs & Outputs */}
-                            <div className={`p-2 space-y-2 ${isReroute ? 'hidden' : ''}`}>
-                                {/* Inputs */}
-                                {def.inputs.map(input => (
-                                    <div key={input.id} className="relative h-6 flex items-center">
-                                        <div 
-                                            // ID for DOM lookup
-                                            id={`pin-${node.id}-input-${input.id}`}
-                                            className="w-3 h-3 rounded-full border border-black hover:scale-125 transition-transform cursor-crosshair -ml-3.5 z-10"
-                                            style={{ backgroundColor: input.color || getTypeColor(input.type) }}
-                                            onMouseDown={(e) => handlePinDown(e, node.id, input.id, 'input')}
-                                            onMouseUp={(e) => handlePinUp(e, node.id, input.id, 'input')}
-                                        />
-                                        <span className="text-[10px] text-gray-400 ml-2">{input.name}</span>
+                             ) : (
+                                <>
+                                    <div 
+                                        className="h-9 px-3 flex items-center justify-between bg-white/5 border-b border-white/5 rounded-t-md cursor-grab active:cursor-grabbing"
+                                        onMouseDown={(e) => handleNodeMouseDown(e, node)}
+                                    >
+                                        <span className="text-xs font-bold text-gray-200">{def.title}</span>
                                     </div>
-                                ))}
-                                
-                                {/* Node Content (Sliders etc) */}
-                                {def.type === 'Float' && (
-                                    <input 
-                                        type="number" className="w-full bg-black/40 text-xs text-white px-1 rounded border border-white/10"
-                                        value={node.data?.value || 0}
-                                        onChange={(e) => setNodes(prev => prev.map(n => n.id === node.id ? { ...n, data: { value: e.target.value } } : n))}
-                                        onMouseDown={e => e.stopPropagation()}
-                                    />
-                                )}
+                                    <div className="p-2 space-y-1">
+                                        {def.inputs.map(input => (
+                                            <div key={input.id} className="relative h-6 flex items-center">
+                                                <div 
+                                                    id={`pin-${node.id}-input-${input.id}`}
+                                                    className="w-3 h-3 rounded-full border border-black hover:scale-125 transition-transform cursor-crosshair -ml-3.5 z-10"
+                                                    style={{ backgroundColor: input.color || getTypeColor(input.type) }}
+                                                    onMouseDown={(e) => handlePinDown(e, node.id, input.id, 'input')}
+                                                    onMouseUp={(e) => handlePinUp(e, node.id, input.id, 'input')}
+                                                />
+                                                <span className="text-[10px] text-gray-400 ml-2">{input.name}</span>
+                                            </div>
+                                        ))}
+                                        
+                                        {def.type === 'Float' && (
+                                            <input 
+                                                type="number" className="w-full bg-black/40 text-xs text-white px-1 rounded border border-white/10"
+                                                value={node.data?.value || 0}
+                                                onChange={(e) => setNodes(p => p.map(n => n.id===node.id ? {...n, data: {value: e.target.value}} : n))}
+                                                onMouseDown={e => e.stopPropagation()}
+                                            />
+                                        )}
 
-                                {/* Outputs */}
-                                {def.outputs.map(output => (
-                                    <div key={output.id} className="relative h-6 flex items-center justify-end">
-                                        <span className="text-[10px] text-gray-400 mr-2">{output.name}</span>
-                                        <div 
-                                            id={`pin-${node.id}-output-${output.id}`}
-                                            className="w-3 h-3 rounded-full border border-black hover:scale-125 transition-transform cursor-crosshair -mr-3.5 z-10"
-                                            style={{ backgroundColor: output.color || getTypeColor(output.type) }}
-                                            onMouseDown={(e) => handlePinDown(e, node.id, output.id, 'output')}
-                                            onMouseUp={(e) => handlePinUp(e, node.id, output.id, 'output')}
-                                        />
+                                        {def.outputs.map(output => (
+                                            <div key={output.id} className="relative h-6 flex items-center justify-end">
+                                                <span className="text-[10px] text-gray-400 mr-2">{output.name}</span>
+                                                <div 
+                                                    id={`pin-${node.id}-output-${output.id}`}
+                                                    className="w-3 h-3 rounded-full border border-black hover:scale-125 transition-transform cursor-crosshair -mr-3.5 z-10"
+                                                    style={{ backgroundColor: output.color || getTypeColor(output.type) }}
+                                                    onMouseDown={(e) => handlePinDown(e, node.id, output.id, 'output')}
+                                                    onMouseUp={(e) => handlePinUp(e, node.id, output.id, 'output')}
+                                                />
+                                            </div>
+                                        ))}
                                     </div>
-                                ))}
-                            </div>
+                                </>
+                             )}
                         </div>
                     );
                 })}
             </div>
-            
-            {/* Context Menu (Simplified) */}
+
+            {/* Context Menu */}
             {contextMenu && contextMenu.visible && (
                 <div 
-                    className="fixed w-48 bg-[#252525] border border-black shadow-2xl rounded text-xs z-50"
+                    className="fixed w-48 bg-[#252525] border border-black shadow-2xl rounded text-xs flex flex-col z-50 overflow-hidden"
                     style={{ left: contextMenu.x, top: contextMenu.y }}
+                    onMouseDown={e => e.stopPropagation()}
                 >
-                    <div className="p-1">
-                        {Object.values(NodeRegistry).map(def => (
-                            <div 
-                                key={def.type}
-                                className="px-3 py-2 hover:bg-blue-600 cursor-pointer text-gray-200"
-                                onClick={() => {
-                                    const rect = containerRef.current!.getBoundingClientRect();
-                                    const pos = screenToGraph(contextMenu.x, contextMenu.y);
-                                    setNodes(p => [...p, { id: crypto.randomUUID(), type: def.type, position: pos, data: {} }]);
-                                    setContextMenu(null);
-                                }}
-                            >
-                                {def.title}
-                            </div>
-                        ))}
+                    <input autoFocus placeholder="Search..." className="p-2 bg-[#1a1a1a] text-white outline-none border-b border-black/50" value={searchFilter} onChange={e => setSearchFilter(e.target.value)} />
+                    <div className="max-h-64 overflow-y-auto">
+                         {Object.values(NodeRegistry).filter(d => d.title.toLowerCase().includes(searchFilter.toLowerCase())).map(def => (
+                             <button key={def.type} className="w-full text-left px-3 py-2 text-gray-300 hover:bg-blue-600 hover:text-white" onClick={() => addNode(def.type)}>{def.title}</button>
+                         ))}
                     </div>
                 </div>
             )}
