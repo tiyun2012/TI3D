@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useContext } from 'react';
-import DockLayout, { LayoutData, TabData, BoxData } from 'rc-dock';
+import DockLayout, { LayoutData, TabData, BoxData, PanelData } from 'rc-dock';
 import { engineInstance } from './services/engine';
 import { Entity, ToolType } from './types';
 import { EditorContext } from './contexts/EditorContext';
@@ -176,14 +176,14 @@ const App: React.FC = () => {
 
   // Initialize Layout with Icons
   const [layout] = useState(() => {
-     const process = (box: BoxData): BoxData => {
-         if (box.children) {
-             return { ...box, children: box.children.map(process) };
+     const process = (box: BoxData | PanelData): BoxData | PanelData => {
+         if ('children' in box && box.children) {
+             return { ...box, children: box.children.map(process as any) };
          }
-         // Cast to any because BoxData definition might not include tabs (e.g. if it's a discriminated union or interface is limited)
-         const panel = box as any;
+         
+         const panel = box as PanelData;
          if (panel.tabs) {
-             return { ...box, tabs: panel.tabs.map((t: TabData) => {
+             return { ...panel, tabs: panel.tabs.map((t: TabData) => {
                  const loaded = loadTab(t);
                  // Dynamically assign icon for initial layout
                  const iconName = 
@@ -208,7 +208,10 @@ const App: React.FC = () => {
          }
          return box;
      };
-     return { dockbox: process(DEFAULT_LAYOUT.dockbox) };
+     
+     if (!DEFAULT_LAYOUT.dockbox) return { dockbox: { mode: 'horizontal', children: [] } };
+
+     return { dockbox: process(DEFAULT_LAYOUT.dockbox) as BoxData };
   });
 
   return (
