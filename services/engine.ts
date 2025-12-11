@@ -1,12 +1,147 @@
 
+
 /**
  * High Performance WebGL Engine Core
- * Features: Data-Oriented ECS (SoA), Geometry Instancing, Dirty Flags, Texture Arrays, Save/Load, Undo/Redo
+ * Features: Data-Oriented ECS (SoA), Geometry Instancing, Dirty Flags, Texture Arrays, Save/Load, Undo/Redo, Debug Graph
  */
 
 import { Entity, ComponentType, Component } from '../types';
 import { SceneGraph } from './SceneGraph';
 import { Mat4, Mat4Utils, RayUtils, Vec3Utils, TMP_MAT4_1, TMP_MAT4_2 } from './math';
+
+// --- Debug Renderer (Instanced Lines) ---
+
+class DebugRenderer {
+    gl: WebGL2RenderingContext | null = null;
+    program: WebGLProgram | null = null;
+    
+    // Buffer for line vertices: [x,y,z, r,g,b] * 2 per line
+    maxLines = 20000;
+    lineBufferData = new Float32Array(this.maxLines * 12); 
+    lineCount = 0;
+    
+    vao: WebGLVertexArrayObject | null = null;
+    vbo: WebGLBuffer | null = null;
+    uniforms: { u_vp: WebGLUniformLocation | null } = { u_vp: null };
+
+    init(gl: WebGL2RenderingContext) {
+        this.gl = gl;
+        
+        const vs = `#version 300 es
+        layout(location=0) in vec3 a_pos;
+        layout(location=1) in vec3 a_color;
+        uniform mat4 u_vp;
+        out vec3 v_color;
+        void main() { gl_Position = u_vp * vec4(a_pos, 1.0); v_color = a_color; }`;
+        
+        const fs = `#version 300 es
+        precision mediump float;
+        in vec3 v_color;
+        out vec4 color;
+        void main() { color = vec4(v_color, 1.0); }`;
+        
+        const createShader = (type: number, src: string) => {
+            const s = gl.createShader(type)!;
+            gl.shaderSource(s, src);
+            gl.compileShader(s);
+            if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+            return s;
+        };
+        
+        const p = gl.createProgram()!;
+        gl.attachShader(p, createShader(gl.VERTEX_SHADER, vs));
+        gl.attachShader(p, createShader(gl.FRAGMENT_SHADER, fs));
+        gl.linkProgram(p);
+        this.program = p;
+        
+        this.uniforms.u_vp = gl.getUniformLocation(p, 'u_vp');
+        
+        this.vao = gl.createVertexArray();
+        this.vbo = gl.createBuffer();
+        
+        gl.bindVertexArray(this.vao);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+        gl.bufferData(gl.ARRAY_BUFFER, this.lineBufferData.byteLength, gl.DYNAMIC_DRAW);
+        
+        // Pos
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0); // 6 floats * 4 bytes = 24 stride
+        // Color
+        gl.enableVertexAttribArray(1);
+        gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
+        
+        gl.bindVertexArray(null);
+    }
+
+    begin() { this.lineCount = 0; }
+
+    drawLine(p1: {x:number, y:number, z:number}, p2: {x:number, y:number, z:number}, color: {r:number, g:number, b:number}) {
+        if (this.lineCount >= this.maxLines) return;
+        const i = this.lineCount * 12;
+        this.lineBufferData[i] = p1.x; this.lineBufferData[i+1] = p1.y; this.lineBufferData[i+2] = p1.z;
+        this.lineBufferData[i+3] = color.r; this.lineBufferData[i+4] = color.g; this.lineBufferData[i+5] = color.b;
+        
+        this.lineBufferData[i+6] = p2.x; this.lineBufferData[i+7] = p2.y; this.lineBufferData[i+8] = p2.z;
+        this.lineBufferData[i+9] = color.r; this.lineBufferData[i+10] = color.g; this.lineBufferData[i+11] = color.b;
+        this.lineCount++;
+    }
+
+    render(viewProjection: Float32Array) {
+        if (this.lineCount === 0 || !this.gl || !this.program) return;
+        const gl = this.gl;
+        
+        gl.useProgram(this.program);
+        gl.uniformMatrix4fv(this.uniforms.u_vp, false, viewProjection);
+        
+        gl.bindVertexArray(this.vao);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.lineBufferData.subarray(0, this.lineCount * 12));
+        
+        gl.drawArrays(gl.LINES, 0, this.lineCount * 2);
+        gl.bindVertexArray(null);
+    }
+}
+
+// --- Logic Graph Runtime (Data-Oriented) ---
+
+type NodeExecutor = (inputs: any[], engine: Ti3DEngine) => any;
+
+const NODE_EXECUTORS: Record<string, NodeExecutor> = {
+    // Producer: Returns stream of all active entity indices
+    'AllEntities': (inputs, engine) => {
+        const count = engine.ecs.count;
+        const { isActive } = engine.ecs.store;
+        // In a real engine, we'd cache this query or use a persistent query list
+        const indices = new Int32Array(count);
+        let c = 0;
+        for(let i=0; i<count; i++) {
+            if(isActive[i]) indices[c++] = i;
+        }
+        return { indices: indices.subarray(0, c), count: c };
+    },
+    
+    // Consumer: Draws axes for each entity in the stream
+    'DrawAxes': (inputs, engine) => {
+        const stream = inputs[0]; // Expecting { indices, count }
+        if(!stream || !stream.indices) return;
+        
+        const { indices, count } = stream;
+        const { posX, posY, posZ } = engine.ecs.store;
+        const size = 1.0;
+        
+        for(let k=0; k<count; k++) {
+            const i = indices[k];
+            const x = posX[i], y = posY[i], z = posZ[i];
+            
+            // X Axis (Red)
+            engine.debugRenderer.drawLine({x,y,z}, {x:x+size,y,z}, {r:1,g:0,b:0});
+            // Y Axis (Green)
+            engine.debugRenderer.drawLine({x,y,z}, {x,y:y+size,z}, {r:0,g:1,b:0});
+            // Z Axis (Blue)
+            engine.debugRenderer.drawLine({x,y,z}, {x,y,z:z+size}, {r:0,g:0,b:1});
+        }
+    }
+};
 
 // --- WebGL Shaders with Instancing & Texture Array Support ---
 
@@ -234,10 +369,6 @@ class SoAEntitySystem {
             sceneGraph.setDirty(id);
         };
         
-        // Wrap property setter to trigger history?
-        // For high freq updates (dragging), we handle history manually in SceneView
-        // For inspector updates, we can handle it here or in Inspector
-
         return {
             id,
             get name() { return store.names[index]; },
@@ -392,10 +523,6 @@ class SoAEntitySystem {
             this.store.ids = new Array(MAX_ENTITIES);
             fill(this.store.ids, data.store.ids);
 
-            // Rebuild SceneGraph
-            // In a real scenario, parent/child relationships should be saved in SoA or dedicated arrays
-            // For this demo, we assume flat hierarchy on load or need to save SceneGraph state too
-            // Let's reset SceneGraph and re-register
             this.idToIndex.forEach((idx, id) => {
                 if (this.store.isActive[idx]) sceneGraph.registerEntity(id);
                 sceneGraph.setDirty(id);
@@ -759,6 +886,7 @@ export class Ti3DEngine {
   ecs: SoAEntitySystem;
   sceneGraph: SceneGraph;
   renderer: WebGLRenderer;
+  debugRenderer: DebugRenderer; // New Debug Renderer
   physics: PhysicsSystem;
   history: HistorySystem;
   
@@ -766,12 +894,17 @@ export class Ti3DEngine {
   selectedIds: Set<string> = new Set();
   private listeners: (() => void)[] = [];
 
+  // Logic Graph State
+  private executionList: Array<{ id: string, type: string, inputNodeIds: string[] }> = [];
+  private nodeResults = new Map<string, any>(); 
+
   private tempTransformData = new Float32Array(9);
 
   constructor() {
     this.ecs = new SoAEntitySystem();
     this.sceneGraph = new SceneGraph();
     this.renderer = new WebGLRenderer();
+    this.debugRenderer = new DebugRenderer();
     this.physics = new PhysicsSystem();
     this.history = new HistorySystem();
     this.initDemoScene();
@@ -803,12 +936,35 @@ export class Ti3DEngine {
       this.notifyUI();
   }
 
-  initGL(canvas: HTMLCanvasElement) { this.renderer.init(canvas); }
+  initGL(canvas: HTMLCanvasElement) { 
+      this.renderer.init(canvas); 
+      this.debugRenderer.init(this.renderer.gl!);
+  }
   resize(width: number, height: number) { this.renderer.resize(width, height); }
 
   setSelected(ids: string[]) {
       this.selectedIds = new Set(ids);
       this.notifyUI();
+  }
+
+  // Logic Graph "Compiler"
+  updateGraph(nodes: any[], connections: any[]) {
+      this.executionList = [];
+      const logicNodes = nodes.filter((n: any) => NODE_EXECUTORS[n.type]);
+      
+      // Simple Topological Sort for demo: Producers -> Consumers
+      const producers = logicNodes.filter((n: any) => n.type === 'AllEntities');
+      const consumers = logicNodes.filter((n: any) => n.type === 'DrawAxes');
+      
+      producers.forEach((n: any) => {
+           this.executionList.push({ id: n.id, type: n.type, inputNodeIds: [] });
+      });
+      
+      consumers.forEach((n: any) => {
+          const inputConns = connections.filter((c: any) => c.toNode === n.id);
+          const inputs = inputConns.map((c: any) => c.fromNode);
+          this.executionList.push({ id: n.id, type: n.type, inputNodeIds: inputs });
+      });
   }
 
   viewProjectionMatrix = Mat4Utils.create();
@@ -937,6 +1093,18 @@ export class Ti3DEngine {
           t[6] = s.scaleX[idx]; t[7] = s.scaleY[idx]; t[8] = s.scaleZ[idx];
           return t;
       });
+      
+      // --- Logic Graph Execution ---
+      this.debugRenderer.begin();
+      this.nodeResults.clear();
+      for(const step of this.executionList) {
+          const exec = NODE_EXECUTORS[step.type];
+          if(exec) {
+              const inputs = step.inputNodeIds.map(id => this.nodeResults.get(id));
+              const result = exec(inputs, this);
+              this.nodeResults.set(step.id, result);
+          }
+      }
 
       this.renderer.render(
           this.ecs.store, 
@@ -945,6 +1113,9 @@ export class Ti3DEngine {
           this.viewProjectionMatrix, 
           this.selectedIds
       );
+      
+      // Render Debug Layer
+      this.debugRenderer.render(this.viewProjectionMatrix);
   }
   
   start() { this.isPlaying = true; this.notifyUI(); }

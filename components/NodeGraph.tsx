@@ -1,10 +1,29 @@
+
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { GraphNode, GraphConnection } from '../types';
 import { Icon } from './Icon';
+import { engineInstance } from '../services/engine';
 
-// --- Shader Node Definitions ---
+// --- Node Definitions ---
 
 const NODE_DEFINITIONS: Record<string, Partial<GraphNode>> = {
+  // --- Data Logic Nodes (New) ---
+  'AllEntities': {
+      type: 'AllEntities',
+      category: 'Logic',
+      title: 'All Entities',
+      inputs: [],
+      outputs: [{ id: 'out', name: 'Entities', type: 'stream' }]
+  },
+  'DrawAxes': {
+      type: 'DrawAxes',
+      category: 'Logic',
+      title: 'Draw Axes',
+      inputs: [{ id: 'in', name: 'Entities', type: 'stream', defaultValue: null }],
+      outputs: []
+  },
+  
+  // --- Shader Nodes (Existing) ---
   'Master': {
     type: 'Master',
     category: 'Master',
@@ -336,6 +355,11 @@ export const NodeGraph: React.FC = () => {
   
   // Context Menu
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, visible: boolean } | null>(null);
+
+  // --- Compile Graph for Engine (Logic Nodes) ---
+  useEffect(() => {
+     engineInstance.updateGraph(nodes, connections);
+  }, [nodes, connections]);
 
   // --- GLSL Generation Logic ---
   const generateGLSL = useMemo(() => {
@@ -695,7 +719,8 @@ export const NodeGraph: React.FC = () => {
           <div
             key={node.id}
             className={`absolute w-48 rounded shadow-xl border pointer-events-auto flex flex-col transition-shadow hover:shadow-2xl
-              ${node.type === 'Master' ? 'border-gray-500 bg-[#1a1a1a]' : 'border-black bg-[#252525]'}
+              ${node.category === 'Logic' ? 'border-purple-600 bg-[#252030]' : 
+                node.type === 'Master' ? 'border-gray-500 bg-[#1a1a1a]' : 'border-black bg-[#252525]'}
               ${node.type === 'Utility' ? 'w-96' : ''}
               ${node.title === 'Wave Viewer' ? 'w-56' : ''}
               ${dragNodeId === node.id ? 'ring-2 ring-blue-500 z-10' : ''}
@@ -705,6 +730,7 @@ export const NodeGraph: React.FC = () => {
           >
             {/* Header */}
             <div className={`px-2 py-1 text-xs font-bold text-gray-200 border-b border-black rounded-t select-none
+                ${node.category === 'Logic' ? 'bg-purple-900/50' : ''}
                 ${node.category === 'Math' ? 'bg-blue-900/50' : ''}
                 ${node.category === 'Input' ? 'bg-red-900/50' : ''}
                 ${node.category === 'Vector' ? 'bg-purple-900/50' : ''}
@@ -728,14 +754,14 @@ export const NodeGraph: React.FC = () => {
                     <div key={input.id} className="relative flex items-center h-5">
                     {/* Pin Circle */}
                     <div 
-                        className="w-2 h-2 rounded-full bg-gray-500 hover:bg-white cursor-pointer -ml-3 mr-2 border border-black"
+                        className={`w-2 h-2 rounded-full hover:bg-white cursor-pointer -ml-3 mr-2 border border-black ${input.type === 'stream' ? 'bg-purple-500' : 'bg-gray-500'}`}
                         onMouseDown={(e) => handleMouseDown(e, node.id, input.id, 'input')}
                         onMouseUp={(e) => handleMouseUp(e, node.id, input.id, 'input')}
                     />
                     <span className="text-[10px] text-gray-300 mr-2 select-none">{input.name}</span>
                     
                     {/* Inline Editor */}
-                    {!isConnected && input.type !== 'vec3' && input.type !== 'vec2' && input.type !== 'vec4' && (
+                    {!isConnected && input.type !== 'vec3' && input.type !== 'vec2' && input.type !== 'vec4' && input.type !== 'stream' && (
                         <div className="flex-1">
                             {node.title === 'Color' && input.id === 'dummy' ? null : 
                              node.title === 'Float' ? 
@@ -768,7 +794,7 @@ export const NodeGraph: React.FC = () => {
                 <div key={output.id} className="relative flex items-center justify-end h-5">
                   <span className="text-[10px] text-gray-300 mr-2 select-none">{output.name}</span>
                   <div 
-                    className="w-2 h-2 rounded-full bg-gray-500 hover:bg-white cursor-pointer -mr-3 border border-black"
+                    className={`w-2 h-2 rounded-full hover:bg-white cursor-pointer -mr-3 border border-black ${output.type === 'stream' ? 'bg-purple-500' : 'bg-gray-500'}`}
                     onMouseDown={(e) => handleMouseDown(e, node.id, output.id, 'output')}
                     onMouseUp={(e) => handleMouseUp(e, node.id, output.id, 'output')}
                   />
@@ -814,10 +840,10 @@ export const NodeGraph: React.FC = () => {
       {/* Overlay UI */}
       <div className="absolute top-4 left-4 pointer-events-none">
          <div className="bg-black/70 text-white px-3 py-1 rounded text-sm backdrop-blur-sm border border-white/10 shadow-lg">
-            Shader Graph: PlayerController
+            Shader & Logic Graph
          </div>
          <div className="text-[10px] text-gray-400 mt-1 bg-black/50 p-1 rounded inline-block">
-            Wheel: Zoom | Middle Mouse: Pan | Right Click: Add Node
+            Try adding "All Entities" and connecting to "Draw Axes"
          </div>
       </div>
 
