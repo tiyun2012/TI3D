@@ -14,7 +14,7 @@ interface SceneViewProps {
   tool: ToolType;
 }
 
-type Axis = 'X' | 'Y' | 'Z';
+type Axis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'UNIFORM';
 
 export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSelect, selectedIds, tool }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -44,12 +44,15 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     isSelecting: boolean;
   } | null>(null);
 
+  const [hoverAxis, setHoverAxis] = useState<Axis | null>(null);
+
   const [gizmoDrag, setGizmoDrag] = useState<{
     axis: Axis;
     startX: number;
     startY: number;
     startValue: Vector3;
     hasMoved: boolean;
+    screenAxis: { x: number, y: number }; // Normalized screen space vector for axis projection
   } | null>(null);
 
   useLayoutEffect(() => {
@@ -203,15 +206,36 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           const dx = e.clientX - gizmoDrag.startX;
           const dy = e.clientY - gizmoDrag.startY;
           
-          // Mark that we moved
           gizmoDrag.hasMoved = true;
 
+          // Scale sensitivity based on distance from camera roughly
           const factor = 0.02 * (camera.radius / 10); 
 
           if (tool === 'MOVE') {
-              if (gizmoDrag.axis === 'X') transform.position.x = gizmoDrag.startValue.x + dx * factor;
-              if (gizmoDrag.axis === 'Y') transform.position.y = gizmoDrag.startValue.y - dy * factor;
-              if (gizmoDrag.axis === 'Z') transform.position.z = gizmoDrag.startValue.z - dx * factor;
+              // Vector Projection Logic for Axis Move
+              if (['X', 'Y', 'Z'].includes(gizmoDrag.axis)) {
+                  // Project mouse delta onto the screen-space axis vector
+                  // This ensures movement follows the mouse visually and fixes inversion issues
+                  const proj = dx * gizmoDrag.screenAxis.x + dy * gizmoDrag.screenAxis.y;
+                  const moveAmount = proj * factor;
+
+                  if (gizmoDrag.axis === 'X') transform.position.x = gizmoDrag.startValue.x + moveAmount;
+                  if (gizmoDrag.axis === 'Y') transform.position.y = gizmoDrag.startValue.y + moveAmount;
+                  if (gizmoDrag.axis === 'Z') transform.position.z = gizmoDrag.startValue.z + moveAmount;
+              }
+              // Plane Moves (Simplified 2D mapping)
+              else if (gizmoDrag.axis === 'XZ') {
+                  transform.position.x = gizmoDrag.startValue.x + dx * factor;
+                  transform.position.z = gizmoDrag.startValue.z + dy * factor; // Y on screen maps to Z depth
+              }
+              else if (gizmoDrag.axis === 'XY') {
+                  transform.position.x = gizmoDrag.startValue.x + dx * factor;
+                  transform.position.y = gizmoDrag.startValue.y - dy * factor;
+              }
+              else if (gizmoDrag.axis === 'YZ') {
+                  transform.position.z = gizmoDrag.startValue.z + dx * factor; // X on screen maps to Z
+                  transform.position.y = gizmoDrag.startValue.y - dy * factor;
+              }
           } 
           else if (tool === 'ROTATE') {
               const angle = dx * 0.01;
@@ -221,6 +245,11 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           }
           else if (tool === 'SCALE') {
               const scaleDelta = dx * 0.05;
+              if (gizmoDrag.axis === 'UNIFORM') {
+                   transform.scale.x = gizmoDrag.startValue.x + scaleDelta;
+                   transform.scale.y = gizmoDrag.startValue.y + scaleDelta;
+                   transform.scale.z = gizmoDrag.startValue.z + scaleDelta;
+              }
               if (gizmoDrag.axis === 'X') transform.scale.x = gizmoDrag.startValue.x + scaleDelta;
               if (gizmoDrag.axis === 'Y') transform.scale.y = gizmoDrag.startValue.y - dy * 0.05;
               if (gizmoDrag.axis === 'Z') transform.scale.z = gizmoDrag.startValue.z + scaleDelta;
@@ -266,7 +295,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const handleWindowMouseUp = () => {
         setDragState(null);
         if (gizmoDrag) {
-            // Push undo state only if we actually moved something
             if (gizmoDrag.hasMoved) {
                 engineInstance.pushUndoState();
             }
@@ -297,11 +325,14 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       const pCenter = Mat4Utils.transformPoint(worldPos, vpMatrix, width, height);
       if (pCenter.w <= 0) return null;
 
-      const axisLength = 1.5;
-      const axesPoints = {
-          x: Mat4Utils.transformPoint({x: worldPos.x + axisLength, y: worldPos.y, z: worldPos.z}, vpMatrix, width, height),
-          y: Mat4Utils.transformPoint({x: worldPos.x, y: worldPos.y + axisLength, z: worldPos.z}, vpMatrix, width, height),
-          z: Mat4Utils.transformPoint({x: worldPos.x, y: worldPos.y, z: worldPos.z + axisLength}, vpMatrix, width, height)
+      const axisLen = 1.5;
+      const origin = { x: worldPos.x, y: worldPos.y, z: worldPos.z };
+      
+      // Calculate Axis End Points
+      const axes = {
+          x: Mat4Utils.transformPoint({x: worldPos.x + axisLen, y: worldPos.y, z: worldPos.z}, vpMatrix, width, height),
+          y: Mat4Utils.transformPoint({x: worldPos.x, y: worldPos.y + axisLen, z: worldPos.z}, vpMatrix, width, height),
+          z: Mat4Utils.transformPoint({x: worldPos.x, y: worldPos.y, z: worldPos.z + axisLen}, vpMatrix, width, height)
       };
 
       const startDrag = (e: React.MouseEvent, axis: Axis) => {
@@ -316,46 +347,132 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           if (tool === 'ROTATE') startVal = { ...transform.rotation };
           if (tool === 'SCALE') startVal = { ...transform.scale };
 
+          // Calculate Screen Axis Vector for projection dragging
+          let screenAxis = { x: 1, y: 0 }; 
+          
+          if (tool === 'MOVE') {
+              const originScreen = pCenter;
+              let targetScreen = { x: originScreen.x, y: originScreen.y };
+              
+              if (axis === 'X') targetScreen = axes.x;
+              if (axis === 'Y') targetScreen = axes.y;
+              if (axis === 'Z') targetScreen = axes.z;
+
+              const dx = targetScreen.x - originScreen.x;
+              const dy = targetScreen.y - originScreen.y;
+              const len = Math.sqrt(dx*dx + dy*dy);
+              
+              // Normalize
+              if (len > 0.001) {
+                  screenAxis = { x: dx/len, y: dy/len };
+              }
+          }
+
           setGizmoDrag({
               axis,
               startX: e.clientX,
               startY: e.clientY,
               startValue: startVal,
-              hasMoved: false
+              hasMoved: false,
+              screenAxis
           });
       };
 
+      // --- Helper: Project Circle Ring ---
+      const projectRing = (axis: 'X' | 'Y' | 'Z', radius: number, segments = 32) => {
+          const points: string[] = [];
+          for (let i = 0; i <= segments; i++) {
+              const theta = (i / segments) * Math.PI * 2;
+              let pt = { x: 0, y: 0, z: 0 };
+              if (axis === 'X') pt = { x: 0, y: Math.cos(theta) * radius, z: Math.sin(theta) * radius };
+              if (axis === 'Y') pt = { x: Math.cos(theta) * radius, y: 0, z: Math.sin(theta) * radius };
+              if (axis === 'Z') pt = { x: Math.cos(theta) * radius, y: Math.sin(theta) * radius, z: 0 };
+              
+              const world = { x: origin.x + pt.x, y: origin.y + pt.y, z: origin.z + pt.z };
+              const screen = Mat4Utils.transformPoint(world, vpMatrix, width, height);
+              points.push(`${screen.x},${screen.y}`);
+          }
+          return points.join(' ');
+      };
+
+      // --- Helper: Render Plane Handle ---
+      const renderPlane = (axis1: 'X'|'Y'|'Z', axis2: 'X'|'Y'|'Z', color: string, type: Axis) => {
+          const planeOffset = 0.5;
+          const p1 = { ...origin };
+          const p2 = { ...origin };
+          const p3 = { ...origin };
+          
+          if (axis1 === 'X') p1.x += planeOffset; if (axis1 === 'Y') p1.y += planeOffset; if (axis1 === 'Z') p1.z += planeOffset;
+          if (axis2 === 'X') p2.x += planeOffset; if (axis2 === 'Y') p2.y += planeOffset; if (axis2 === 'Z') p2.z += planeOffset;
+          
+          p3.x = p1.x + (p2.x - origin.x);
+          p3.y = p1.y + (p2.y - origin.y);
+          p3.z = p1.z + (p2.z - origin.z);
+
+          const s1 = Mat4Utils.transformPoint(p1, vpMatrix, width, height);
+          const s2 = Mat4Utils.transformPoint(p3, vpMatrix, width, height);
+          const s3 = Mat4Utils.transformPoint(p2, vpMatrix, width, height);
+          
+          const isActive = gizmoDrag?.axis === type;
+          const isHover = hoverAxis === type;
+          
+          return (
+              <polygon 
+                  points={`${pCenter.x},${pCenter.y} ${s1.x},${s1.y} ${s2.x},${s2.y} ${s3.x},${s3.y}`} 
+                  fill={color} 
+                  fillOpacity={isActive || isHover ? 0.8 : 0.4}
+                  stroke={color}
+                  strokeWidth={1}
+                  className="cursor-pointer"
+                  onMouseDown={(e) => startDrag(e, type)}
+                  onMouseEnter={() => setHoverAxis(type)}
+                  onMouseLeave={() => setHoverAxis(null)}
+              />
+          );
+      };
+
+      // --- Helper: Render Axis Line & Tip ---
       const renderAxis = (axis: Axis, color: string, endPoint: {x:number, y:number, z:number, w:number}) => {
           if (endPoint.w <= 0) return null;
           const isActive = gizmoDrag?.axis === axis;
-          const strokeColor = isActive ? '#fff' : color;
+          const isHover = hoverAxis === axis;
+          const strokeColor = isActive || isHover ? '#fff' : color;
+          const thickness = isActive || isHover ? 4 : 2;
           
+          const angle = Math.atan2(endPoint.y - pCenter.y, endPoint.x - pCenter.x) * 180 / Math.PI;
+
           return (
-              <g className="cursor-pointer" onMouseDown={(e) => startDrag(e, axis)}>
+              <g 
+                  className="cursor-pointer" 
+                  onMouseDown={(e) => startDrag(e, axis)}
+                  onMouseEnter={() => setHoverAxis(axis)}
+                  onMouseLeave={() => setHoverAxis(null)}
+              >
+                  {/* Invisible Hit Area for easier selection */}
+                  <line 
+                      x1={pCenter.x} y1={pCenter.y} 
+                      x2={endPoint.x} y2={endPoint.y} 
+                      stroke="transparent" 
+                      strokeWidth={12} 
+                  />
+                  
                   <line 
                       x1={pCenter.x} y1={pCenter.y} 
                       x2={endPoint.x} y2={endPoint.y} 
                       stroke={strokeColor} 
-                      strokeWidth={isActive ? 4 : 2} 
+                      strokeWidth={thickness} 
                   />
                   {tool === 'MOVE' && (
-                       <polygon 
-                          points={`${endPoint.x},${endPoint.y-5} ${endPoint.x-5},${endPoint.y+5} ${endPoint.x+5},${endPoint.y+5}`}
-                          fill={strokeColor}
-                          transform={`rotate(${Math.atan2(endPoint.y - pCenter.y, endPoint.x - pCenter.x) * 180 / Math.PI + 90}, ${endPoint.x}, ${endPoint.y})`}
-                       />
+                     <path 
+                        d={`M ${endPoint.x} ${endPoint.y} l -10 -4 l 0 8 z`}
+                        fill={strokeColor}
+                        transform={`rotate(${angle}, ${endPoint.x}, ${endPoint.y})`}
+                     />
                   )}
                   {tool === 'SCALE' && (
                       <rect 
-                          x={endPoint.x - 4} y={endPoint.y - 4} 
-                          width={8} height={8} 
-                          fill={strokeColor} 
-                      />
-                  )}
-                  {tool === 'ROTATE' && (
-                      <circle 
-                          cx={endPoint.x} cy={endPoint.y} 
-                          r={6} 
+                          x={endPoint.x - 5} y={endPoint.y - 5} 
+                          width={10} height={10} 
                           fill={strokeColor} 
                       />
                   )}
@@ -363,13 +480,75 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           );
       };
 
+      const renderRing = (axis: Axis, color: string) => {
+          const isActive = gizmoDrag?.axis === axis;
+          const isHover = hoverAxis === axis;
+          const strokeColor = isActive || isHover ? '#fff' : color;
+          const thickness = isActive || isHover ? 4 : 2;
+
+          return (
+              <polyline 
+                  points={projectRing(axis as any, 1.5)} 
+                  fill="none" 
+                  stroke={strokeColor} 
+                  strokeWidth={thickness} 
+                  className="cursor-pointer" 
+                  onMouseDown={(e) => startDrag(e, axis)}
+                  onMouseEnter={() => setHoverAxis(axis)}
+                  onMouseLeave={() => setHoverAxis(null)}
+              />
+          );
+      };
+
       return (
           <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-10">
               <g className="pointer-events-auto">
-                {renderAxis('Z', '#3b82f6', axesPoints.z)}
-                {renderAxis('Y', '#22c55e', axesPoints.y)}
-                {renderAxis('X', '#ef4444', axesPoints.x)}
-                <circle cx={pCenter.x} cy={pCenter.y} r={4} fill="white" className="pointer-events-none opacity-50"/>
+                {/* 1. Planes (Draw first so they are behind lines usually, though strict sorting requires distance check) */}
+                {tool === 'MOVE' && (
+                    <>
+                        {/* XZ Plane (Greenish - Floor) */}
+                        {renderPlane('X', 'Z', '#22c55e', 'XZ')}
+                        {/* XY Plane (Blueish) */}
+                        {renderPlane('X', 'Y', '#3b82f6', 'XY')}
+                        {/* YZ Plane (Reddish) */}
+                        {renderPlane('Y', 'Z', '#ef4444', 'YZ')}
+                    </>
+                )}
+
+                {/* 2. Rotation Rings */}
+                {tool === 'ROTATE' && (
+                    <>
+                         {renderRing('X', '#ef4444')}
+                         {renderRing('Y', '#22c55e')}
+                         {renderRing('Z', '#3b82f6')}
+                         {/* Semi-transparent inner sphere hint */}
+                         <circle cx={pCenter.x} cy={pCenter.y} r={30} fill="white" fillOpacity="0.05" className="pointer-events-none"/>
+                    </>
+                )}
+
+                {/* 3. Axis Lines */}
+                {(tool === 'MOVE' || tool === 'SCALE') && (
+                    <>
+                        {renderAxis('Z', '#3b82f6', axes.z)}
+                        {renderAxis('Y', '#22c55e', axes.y)}
+                        {renderAxis('X', '#ef4444', axes.x)}
+                    </>
+                )}
+
+                {/* 4. Center Handle */}
+                {tool === 'SCALE' && (
+                    <rect 
+                        x={pCenter.x - 6} y={pCenter.y - 6} width={12} height={12} fill="white" 
+                        className="cursor-pointer hover:fill-yellow-400"
+                        onMouseDown={(e) => startDrag(e, 'UNIFORM')}
+                        onMouseEnter={() => setHoverAxis('UNIFORM')}
+                        onMouseLeave={() => setHoverAxis(null)}
+                    />
+                )}
+                {tool !== 'SCALE' && (
+                     <circle cx={pCenter.x} cy={pCenter.y} r={4} fill="white" className="pointer-events-none opacity-50"/>
+                )}
+
               </g>
           </svg>
       );
