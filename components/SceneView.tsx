@@ -53,6 +53,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     startValue: Vector3;
     hasMoved: boolean;
     screenAxis: { x: number, y: number }; // Normalized screen space vector for axis projection
+    rotationStartAngle?: number; 
   } | null>(null);
 
   useLayoutEffect(() => {
@@ -250,11 +251,28 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                   transform.position.y = gizmoDrag.startValue.y - dy * factor;
               }
           } 
-          else if (tool === 'ROTATE') {
-              const angle = dx * 0.01;
-              if (gizmoDrag.axis === 'X') transform.rotation.x = gizmoDrag.startValue.x + angle;
-              if (gizmoDrag.axis === 'Y') transform.rotation.y = gizmoDrag.startValue.y + angle;
-              if (gizmoDrag.axis === 'Z') transform.rotation.z = gizmoDrag.startValue.z + angle;
+          else if (tool === 'ROTATE' && gizmoDrag.rotationStartAngle !== undefined) {
+             const rect = containerRef.current?.getBoundingClientRect();
+             if (rect) {
+                 // Calculate current angle based on mouse position relative to object center
+                 const pCenter = Mat4Utils.transformPoint(worldPos, vpMatrix, width, height);
+                 const cx = rect.left + pCenter.x;
+                 const cy = rect.top + pCenter.y;
+                 
+                 const currentAngle = Math.atan2(e.clientY - cy, e.clientX - cx);
+                 let delta = currentAngle - gizmoDrag.rotationStartAngle;
+                 
+                 if (e.shiftKey) {
+                     const snap = Math.PI / 12; // 15 degrees
+                     delta = Math.round(delta / snap) * snap;
+                 }
+                 
+                 // Subtract delta for intuitive "trackball-like" feel
+                 const v = gizmoDrag.startValue;
+                 if (gizmoDrag.axis === 'X') transform.rotation.x = v.x - delta;
+                 if (gizmoDrag.axis === 'Y') transform.rotation.y = v.y - delta;
+                 if (gizmoDrag.axis === 'Z') transform.rotation.z = v.z - delta;
+             }
           }
           else if (tool === 'SCALE') {
               const scaleDelta = dx * 0.05;
@@ -386,6 +404,17 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
               const len = Math.sqrt(dx*dx+dy*dy);
               if (len > 0.001) screenAxis = { x: dx/len, y: dy/len };
           }
+          
+          // Calculate initial angle for Rotation Tool
+          let rotationStartAngle = 0;
+          if (tool === 'ROTATE') {
+               const rect = containerRef.current?.getBoundingClientRect();
+               if(rect) {
+                   const cx = rect.left + pCenter.x;
+                   const cy = rect.top + pCenter.y;
+                   rotationStartAngle = Math.atan2(e.clientY - cy, e.clientX - cx);
+               }
+          }
 
           setGizmoDrag({
               axis,
@@ -393,7 +422,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
               startY: e.clientY,
               startValue,
               hasMoved: false,
-              screenAxis
+              screenAxis,
+              rotationStartAngle
           });
       };
 
