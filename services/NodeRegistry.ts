@@ -1,4 +1,3 @@
-
 import { Ti3DEngine } from './engine';
 import { Mat4Utils } from './math';
 
@@ -76,6 +75,16 @@ export const NodeRegistry: Record<string, NodeDef> = {
             engine.debugRenderer.drawLine({x,y,z}, {x,y,z:z+1}, {r:0,g:0,b:1});
         }
     }
+  },
+
+  // --- Utility ---
+  'Reroute': {
+    type: 'Reroute',
+    category: 'Utility',
+    title: 'Reroute',
+    inputs: [{ id: 'in', name: '', type: 'any', color: '#fff' }],
+    outputs: [{ id: 'out', name: '', type: 'any', color: '#fff' }],
+    execute: (inputs) => inputs[0]
   },
 
   // --- Input ---
