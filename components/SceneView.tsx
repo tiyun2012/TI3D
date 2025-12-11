@@ -105,6 +105,13 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     }
   }, [vpMatrix, width, height]);
 
+  const getCameraPosition = () => {
+    const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta);
+    const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
+    const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
+    return { x: eyeX, y: eyeY, z: eyeZ };
+  };
+
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
@@ -208,14 +215,20 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           
           gizmoDrag.hasMoved = true;
 
-          // Scale sensitivity based on distance from camera roughly
-          const factor = 0.02 * (camera.radius / 10); 
+          // Scale sensitivity based on distance for consistent feel
+          const worldPos = sceneGraph.getWorldPosition(selectedId);
+          const camPos = getCameraPosition();
+          const dist = Math.sqrt(
+              Math.pow(camPos.x - worldPos.x, 2) + 
+              Math.pow(camPos.y - worldPos.y, 2) + 
+              Math.pow(camPos.z - worldPos.z, 2)
+          );
+          const factor = dist * 0.002; 
 
           if (tool === 'MOVE') {
               // Vector Projection Logic for Axis Move
               if (['X', 'Y', 'Z'].includes(gizmoDrag.axis)) {
                   // Project mouse delta onto the screen-space axis vector
-                  // This ensures movement follows the mouse visually and fixes inversion issues
                   const proj = dx * gizmoDrag.screenAxis.x + dy * gizmoDrag.screenAxis.y;
                   const moveAmount = proj * factor;
 
@@ -322,17 +335,34 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       const selectedId = selectedIds[0];
       const worldPos = sceneGraph.getWorldPosition(selectedId);
       
+      // --- 1. Calculate View-Dependent Scale ---
+      const camPos = getCameraPosition();
+      const dist = Math.sqrt(
+          Math.pow(camPos.x - worldPos.x, 2) + 
+          Math.pow(camPos.y - worldPos.y, 2) + 
+          Math.pow(camPos.z - worldPos.z, 2)
+      );
+      // Constant screen size factor
+      const scale = dist * 0.15; 
+
       const pCenter = Mat4Utils.transformPoint(worldPos, vpMatrix, width, height);
       if (pCenter.w <= 0) return null;
 
-      const axisLen = 1.5;
+      // Axis length in World Units, scaled by distance
+      const axisLen = 1.0 * scale; 
+      const handleLen = 0.3 * scale; // For Planar handles
       const origin = { x: worldPos.x, y: worldPos.y, z: worldPos.z };
       
-      // Calculate Axis End Points
+      // Calculate Axis End Points (World Space -> Screen Space)
+      const project = (offset: Vector3) => Mat4Utils.transformPoint(
+          { x: origin.x + offset.x, y: origin.y + offset.y, z: origin.z + offset.z }, 
+          vpMatrix, width, height
+      );
+
       const axes = {
-          x: Mat4Utils.transformPoint({x: worldPos.x + axisLen, y: worldPos.y, z: worldPos.z}, vpMatrix, width, height),
-          y: Mat4Utils.transformPoint({x: worldPos.x, y: worldPos.y + axisLen, z: worldPos.z}, vpMatrix, width, height),
-          z: Mat4Utils.transformPoint({x: worldPos.x, y: worldPos.y, z: worldPos.z + axisLen}, vpMatrix, width, height)
+          x: project({ x: axisLen, y: 0, z: 0 }),
+          y: project({ x: 0, y: axisLen, z: 0 }),
+          z: project({ x: 0, y: 0, z: axisLen })
       };
 
       const startDrag = (e: React.MouseEvent, axis: Axis) => {
@@ -342,37 +372,26 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           if (!entity) return;
           const transform = entity.components[ComponentType.TRANSFORM];
           
-          let startVal = { x:0, y:0, z:0 };
-          if (tool === 'MOVE') startVal = { ...transform.position };
-          if (tool === 'ROTATE') startVal = { ...transform.rotation };
-          if (tool === 'SCALE') startVal = { ...transform.scale };
+          let startValue = { x: 0, y: 0, z: 0 };
+          if (tool === 'MOVE') startValue = { ...transform.position };
+          else if (tool === 'ROTATE') startValue = { ...transform.rotation };
+          else if (tool === 'SCALE') startValue = { ...transform.scale };
 
-          // Calculate Screen Axis Vector for projection dragging
-          let screenAxis = { x: 1, y: 0 }; 
-          
-          if (tool === 'MOVE') {
-              const originScreen = pCenter;
-              let targetScreen = { x: originScreen.x, y: originScreen.y };
-              
-              if (axis === 'X') targetScreen = axes.x;
-              if (axis === 'Y') targetScreen = axes.y;
-              if (axis === 'Z') targetScreen = axes.z;
-
-              const dx = targetScreen.x - originScreen.x;
-              const dy = targetScreen.y - originScreen.y;
-              const len = Math.sqrt(dx*dx + dy*dy);
-              
-              // Normalize
-              if (len > 0.001) {
-                  screenAxis = { x: dx/len, y: dy/len };
-              }
+          // Store current mouse projection for improved dragging feel
+          let screenAxis = { x: 1, y: 0 };
+          if (tool === 'MOVE' && ['X','Y','Z'].includes(axis)) {
+              const target = axis === 'X' ? axes.x : axis === 'Y' ? axes.y : axes.z;
+              const dx = target.x - pCenter.x;
+              const dy = target.y - pCenter.y;
+              const len = Math.sqrt(dx*dx+dy*dy);
+              if (len > 0.001) screenAxis = { x: dx/len, y: dy/len };
           }
 
           setGizmoDrag({
               axis,
               startX: e.clientX,
               startY: e.clientY,
-              startValue: startVal,
+              startValue,
               hasMoved: false,
               screenAxis
           });
@@ -396,34 +415,37 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       };
 
       // --- Helper: Render Plane Handle ---
-      const renderPlane = (axis1: 'X'|'Y'|'Z', axis2: 'X'|'Y'|'Z', color: string, type: Axis) => {
-          const planeOffset = 0.5;
-          const p1 = { ...origin };
-          const p2 = { ...origin };
-          const p3 = { ...origin };
-          
-          if (axis1 === 'X') p1.x += planeOffset; if (axis1 === 'Y') p1.y += planeOffset; if (axis1 === 'Z') p1.z += planeOffset;
-          if (axis2 === 'X') p2.x += planeOffset; if (axis2 === 'Y') p2.y += planeOffset; if (axis2 === 'Z') p2.z += planeOffset;
-          
-          p3.x = p1.x + (p2.x - origin.x);
-          p3.y = p1.y + (p2.y - origin.y);
-          p3.z = p1.z + (p2.z - origin.z);
+      const renderPlaneHandle = (type: Axis, color: string) => {
+          // Calculate corners of the plane handle in World Space
+          const p1 = { ...origin }; // Origin
+          const p2 = { ...origin }; // Axis A endpoint
+          const p3 = { ...origin }; // Corner
+          const p4 = { ...origin }; // Axis B endpoint
+
+          if (type === 'XY') {
+              p2.x += handleLen; p3.x += handleLen; p3.y += handleLen; p4.y += handleLen;
+          } else if (type === 'XZ') {
+              p2.x += handleLen; p3.x += handleLen; p3.z += handleLen; p4.z += handleLen;
+          } else if (type === 'YZ') {
+              p2.y += handleLen; p3.y += handleLen; p3.z += handleLen; p4.z += handleLen;
+          }
 
           const s1 = Mat4Utils.transformPoint(p1, vpMatrix, width, height);
-          const s2 = Mat4Utils.transformPoint(p3, vpMatrix, width, height);
-          const s3 = Mat4Utils.transformPoint(p2, vpMatrix, width, height);
-          
+          const s2 = Mat4Utils.transformPoint(p2, vpMatrix, width, height);
+          const s3 = Mat4Utils.transformPoint(p3, vpMatrix, width, height);
+          const s4 = Mat4Utils.transformPoint(p4, vpMatrix, width, height);
+
           const isActive = gizmoDrag?.axis === type;
           const isHover = hoverAxis === type;
-          
+
           return (
-              <polygon 
-                  points={`${pCenter.x},${pCenter.y} ${s1.x},${s1.y} ${s2.x},${s2.y} ${s3.x},${s3.y}`} 
-                  fill={color} 
+              <path 
+                  d={`M ${s1.x} ${s1.y} L ${s2.x} ${s2.y} L ${s3.x} ${s3.y} L ${s4.x} ${s4.y} Z`}
+                  fill={color}
                   fillOpacity={isActive || isHover ? 0.8 : 0.4}
                   stroke={color}
                   strokeWidth={1}
-                  className="cursor-pointer"
+                  className="cursor-pointer transition-opacity"
                   onMouseDown={(e) => startDrag(e, type)}
                   onMouseEnter={() => setHoverAxis(type)}
                   onMouseLeave={() => setHoverAxis(null)}
@@ -431,49 +453,39 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           );
       };
 
-      // --- Helper: Render Axis Line & Tip ---
-      const renderAxis = (axis: Axis, color: string, endPoint: {x:number, y:number, z:number, w:number}) => {
+      const renderAxisLine = (axis: Axis, color: string, endPoint: {x:number, y:number, w:number}) => {
           if (endPoint.w <= 0) return null;
           const isActive = gizmoDrag?.axis === axis;
           const isHover = hoverAxis === axis;
-          const strokeColor = isActive || isHover ? '#fff' : color;
-          const thickness = isActive || isHover ? 4 : 2;
-          
-          const angle = Math.atan2(endPoint.y - pCenter.y, endPoint.x - pCenter.x) * 180 / Math.PI;
+          const strokeColor = isActive || isHover ? '#ffffff' : color;
+          const lineWidth = isActive || isHover ? 4 : 2;
 
           return (
               <g 
-                  className="cursor-pointer" 
+                  className="cursor-pointer group"
                   onMouseDown={(e) => startDrag(e, axis)}
                   onMouseEnter={() => setHoverAxis(axis)}
                   onMouseLeave={() => setHoverAxis(null)}
               >
-                  {/* Invisible Hit Area for easier selection */}
-                  <line 
-                      x1={pCenter.x} y1={pCenter.y} 
-                      x2={endPoint.x} y2={endPoint.y} 
-                      stroke="transparent" 
-                      strokeWidth={12} 
-                  />
+                  {/* Invisible fat line for easier clicking */}
+                  <line x1={pCenter.x} y1={pCenter.y} x2={endPoint.x} y2={endPoint.y} stroke="transparent" strokeWidth={15} />
                   
-                  <line 
-                      x1={pCenter.x} y1={pCenter.y} 
-                      x2={endPoint.x} y2={endPoint.y} 
-                      stroke={strokeColor} 
-                      strokeWidth={thickness} 
-                  />
+                  {/* Visible Line */}
+                  <line x1={pCenter.x} y1={pCenter.y} x2={endPoint.x} y2={endPoint.y} stroke={strokeColor} strokeWidth={lineWidth} />
+                  
+                  {/* Cone Tip for Move Tool */}
                   {tool === 'MOVE' && (
-                     <path 
-                        d={`M ${endPoint.x} ${endPoint.y} l -10 -4 l 0 8 z`}
-                        fill={strokeColor}
-                        transform={`rotate(${angle}, ${endPoint.x}, ${endPoint.y})`}
-                     />
+                      <polygon 
+                          points={`${endPoint.x},${endPoint.y-5} ${endPoint.x-5},${endPoint.y+10} ${endPoint.x+5},${endPoint.y+10}`}
+                          fill={strokeColor}
+                          transform={`rotate(${Math.atan2(endPoint.y - pCenter.y, endPoint.x - pCenter.x) * 180 / Math.PI + 90}, ${endPoint.x}, ${endPoint.y})`}
+                      />
                   )}
+                  {/* Cube Tip for Scale Tool */}
                   {tool === 'SCALE' && (
                       <rect 
-                          x={endPoint.x - 5} y={endPoint.y - 5} 
-                          width={10} height={10} 
-                          fill={strokeColor} 
+                          x={endPoint.x - 4} y={endPoint.y - 4} width={8} height={8} 
+                          fill={strokeColor}
                       />
                   )}
               </g>
@@ -488,7 +500,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
 
           return (
               <polyline 
-                  points={projectRing(axis as any, 1.5)} 
+                  points={projectRing(axis as any, 1.0 * scale)} 
                   fill="none" 
                   stroke={strokeColor} 
                   strokeWidth={thickness} 
@@ -503,15 +515,12 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       return (
           <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-10">
               <g className="pointer-events-auto">
-                {/* 1. Planes (Draw first so they are behind lines usually, though strict sorting requires distance check) */}
+                {/* 1. Planes (Draw first so they are behind lines usually) */}
                 {tool === 'MOVE' && (
                     <>
-                        {/* XZ Plane (Greenish - Floor) */}
-                        {renderPlane('X', 'Z', '#22c55e', 'XZ')}
-                        {/* XY Plane (Blueish) */}
-                        {renderPlane('X', 'Y', '#3b82f6', 'XY')}
-                        {/* YZ Plane (Reddish) */}
-                        {renderPlane('Y', 'Z', '#ef4444', 'YZ')}
+                        {renderPlaneHandle('XZ', '#22c55e')}
+                        {renderPlaneHandle('XY', '#3b82f6')}
+                        {renderPlaneHandle('YZ', '#ef4444')}
                     </>
                 )}
 
@@ -522,16 +531,16 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                          {renderRing('Y', '#22c55e')}
                          {renderRing('Z', '#3b82f6')}
                          {/* Semi-transparent inner sphere hint */}
-                         <circle cx={pCenter.x} cy={pCenter.y} r={30} fill="white" fillOpacity="0.05" className="pointer-events-none"/>
+                         <circle cx={pCenter.x} cy={pCenter.y} r={30 * scale} fill="white" fillOpacity="0.05" className="pointer-events-none"/>
                     </>
                 )}
 
                 {/* 3. Axis Lines */}
                 {(tool === 'MOVE' || tool === 'SCALE') && (
                     <>
-                        {renderAxis('Z', '#3b82f6', axes.z)}
-                        {renderAxis('Y', '#22c55e', axes.y)}
-                        {renderAxis('X', '#ef4444', axes.x)}
+                        {renderAxisLine('Z', '#3b82f6', axes.z)}
+                        {renderAxisLine('Y', '#22c55e', axes.y)}
+                        {renderAxisLine('X', '#ef4444', axes.x)}
                     </>
                 )}
 
@@ -546,7 +555,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     />
                 )}
                 {tool !== 'SCALE' && (
-                     <circle cx={pCenter.x} cy={pCenter.y} r={4} fill="white" className="pointer-events-none opacity-50"/>
+                     <circle cx={pCenter.x} cy={pCenter.y} r={5} fill="white" className="pointer-events-none shadow-sm opacity-80"/>
                 )}
 
               </g>
