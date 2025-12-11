@@ -1,3 +1,4 @@
+
 import React, { useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react';
 import { Entity, ComponentType, ToolType, Vector3, PerformanceMetrics } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
@@ -431,7 +432,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       if (pCenter.w <= 0) return null;
 
       const axisLen = 1.0 * scale; 
-      const handleLen = 0.3 * scale; 
       const origin = { x: worldPos.x, y: worldPos.y, z: worldPos.z };
       
       const projectAxis = (axisVec: Vector3, len: number) => Mat4Utils.transformPoint(
@@ -521,54 +521,90 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           return points.join(' ');
       };
 
-      const renderPlaneHandle = (type: Axis, color: string) => {
-          const scaleHandle = handleLen;
-          const pOrigin = { ...origin };
-          let p2 = { ...origin }, p3 = { ...origin }, p4 = { ...origin };
+      const renderPlaneBracket = (type: Axis, axis1: Vector3, axis2: Vector3, color: string) => {
+          const dist = 0.25 * scale;
+          const size = 0.15 * scale; 
+          
+          // The "Corner" point in 3D (where the two bracket arms meet)
+          const corner = {
+              x: origin.x + (axis1.x + axis2.x) * dist,
+              y: origin.y + (axis1.y + axis2.y) * dist,
+              z: origin.z + (axis1.z + axis2.z) * dist
+          };
 
-          if (type === 'XY') {
-              p2 = { x: origin.x + xAxis.x * scaleHandle, y: origin.y + xAxis.y * scaleHandle, z: origin.z + xAxis.z * scaleHandle };
-              p4 = { x: origin.x + yAxis.x * scaleHandle, y: origin.y + yAxis.y * scaleHandle, z: origin.z + yAxis.z * scaleHandle };
-              p3 = { x: p2.x + yAxis.x * scaleHandle, y: p2.y + yAxis.y * scaleHandle, z: p2.z + yAxis.z * scaleHandle };
-          } else if (type === 'XZ') {
-              p2 = { x: origin.x + xAxis.x * scaleHandle, y: origin.y + xAxis.y * scaleHandle, z: origin.z + xAxis.z * scaleHandle };
-              p4 = { x: origin.x + zAxis.x * scaleHandle, y: origin.y + zAxis.y * scaleHandle, z: origin.z + zAxis.z * scaleHandle };
-              p3 = { x: p2.x + zAxis.x * scaleHandle, y: p2.y + zAxis.y * scaleHandle, z: p2.z + zAxis.z * scaleHandle };
-          } else if (type === 'YZ') {
-              p2 = { x: origin.x + yAxis.x * scaleHandle, y: origin.y + yAxis.y * scaleHandle, z: origin.z + yAxis.z * scaleHandle };
-              p4 = { x: origin.x + zAxis.x * scaleHandle, y: origin.y + zAxis.y * scaleHandle, z: origin.z + zAxis.z * scaleHandle };
-              p3 = { x: p2.x + zAxis.x * scaleHandle, y: p2.y + zAxis.y * scaleHandle, z: p2.z + zAxis.z * scaleHandle };
-          }
+          // The ends of the bracket arms
+          const p1 = {
+              x: corner.x - axis2.x * size,
+              y: corner.y - axis2.y * size,
+              z: corner.z - axis2.z * size
+          };
+          const p2 = {
+              x: corner.x - axis1.x * size,
+              y: corner.y - axis1.y * size,
+              z: corner.z - axis1.z * size
+          };
+          
+          // Quad for hit testing (transparent fill)
+          const hitP1 = Mat4Utils.transformPoint({
+                x: origin.x + axis1.x * dist,
+                y: origin.y + axis1.y * dist,
+                z: origin.z + axis1.z * dist
+            }, vpMatrix, viewport.width, viewport.height);
 
-          const s1 = Mat4Utils.transformPoint(pOrigin, vpMatrix, viewport.width, viewport.height);
+          const hitP2 = Mat4Utils.transformPoint({
+                x: origin.x + axis2.x * dist,
+                y: origin.y + axis2.y * dist,
+                z: origin.z + axis2.z * dist
+            }, vpMatrix, viewport.width, viewport.height);
+
+          const sCorner = Mat4Utils.transformPoint(corner, vpMatrix, viewport.width, viewport.height);
+          const s1 = Mat4Utils.transformPoint(p1, vpMatrix, viewport.width, viewport.height);
           const s2 = Mat4Utils.transformPoint(p2, vpMatrix, viewport.width, viewport.height);
-          const s3 = Mat4Utils.transformPoint(p3, vpMatrix, viewport.width, viewport.height);
-          const s4 = Mat4Utils.transformPoint(p4, vpMatrix, viewport.width, viewport.height);
+          const sOrigin = Mat4Utils.transformPoint(origin, vpMatrix, viewport.width, viewport.height);
+
+          if (sCorner.w <= 0 || s1.w <= 0 || s2.w <= 0) return null;
 
           const isActive = gizmoDrag?.axis === type;
           const isHover = hoverAxis === type;
+          const finalColor = isActive || isHover ? '#ffffff' : color;
+          // Thin brackets (1.2 normal, 2.5 active)
+          const strokeWidth = isActive || isHover ? 2.5 : 1.2;
 
           return (
-              <path 
-                  d={`M ${s1.x} ${s1.y} L ${s2.x} ${s2.y} L ${s3.x} ${s3.y} L ${s4.x} ${s4.y} Z`}
-                  fill={color}
-                  fillOpacity={isActive || isHover ? 0.8 : 0.4}
-                  stroke={color}
-                  strokeWidth={1}
-                  className="cursor-pointer transition-opacity"
+              <g 
                   onMouseDown={(e) => startDrag(e, type)}
                   onMouseEnter={() => setHoverAxis(type)}
                   onMouseLeave={() => setHoverAxis(null)}
-              />
+                  className="cursor-pointer"
+              >
+                  {/* Invisible Hit Area */}
+                  <path 
+                      d={`M ${sOrigin.x} ${sOrigin.y} L ${hitP1.x} ${hitP1.y} L ${sCorner.x} ${sCorner.y} L ${hitP2.x} ${hitP2.y} Z`} 
+                      fill={color} 
+                      stroke="none"
+                      fillOpacity={isActive || isHover ? 0.4 : 0.01} 
+                  />
+                  
+                  {/* The Bracket */}
+                  <polyline 
+                      points={`${s1.x},${s1.y} ${sCorner.x},${sCorner.y} ${s2.x},${s2.y}`}
+                      fill="none"
+                      stroke={finalColor}
+                      strokeWidth={strokeWidth}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                  />
+              </g>
           );
       };
 
-      const renderAxisLine = (axis: Axis, color: string, endPoint: {x:number, y:number, w:number}) => {
+      const renderAxisHandle = (axis: Axis, color: string, endPoint: {x:number, y:number, w:number}, type: 'ARROW' | 'CUBE') => {
           if (endPoint.w <= 0) return null;
           const isActive = gizmoDrag?.axis === axis;
           const isHover = hoverAxis === axis;
           const strokeColor = isActive || isHover ? '#ffffff' : color;
-          const lineWidth = isActive || isHover ? 4 : 2;
+          
+          const angle = Math.atan2(endPoint.y - pCenter.y, endPoint.x - pCenter.x) * 180 / Math.PI;
 
           return (
               <g 
@@ -577,22 +613,24 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                   onMouseEnter={() => setHoverAxis(axis)}
                   onMouseLeave={() => setHoverAxis(null)}
               >
+                  {/* Invisible Hit Area */}
                   <line x1={pCenter.x} y1={pCenter.y} x2={endPoint.x} y2={endPoint.y} stroke="transparent" strokeWidth={15} />
-                  <line x1={pCenter.x} y1={pCenter.y} x2={endPoint.x} y2={endPoint.y} stroke={strokeColor} strokeWidth={lineWidth} />
                   
-                  {tool === 'MOVE' && (
-                      <polygon 
-                          points={`${endPoint.x},${endPoint.y-5} ${endPoint.x-5},${endPoint.y+10} ${endPoint.x+5},${endPoint.y+10}`}
-                          fill={strokeColor}
-                          transform={`rotate(${Math.atan2(endPoint.y - pCenter.y, endPoint.x - pCenter.x) * 180 / Math.PI + 90}, ${endPoint.x}, ${endPoint.y})`}
-                      />
-                  )}
-                  {tool === 'SCALE' && (
-                      <rect 
-                          x={endPoint.x - 4} y={endPoint.y - 4} width={8} height={8} 
-                          fill={strokeColor}
-                      />
-                  )}
+                  {/* Visible Axis Line - Thinned to 1px */}
+                  <line x1={pCenter.x} y1={pCenter.y} x2={endPoint.x} y2={endPoint.y} stroke={strokeColor} strokeWidth={1} />
+                  
+                  {/* Handle Tip */}
+                  <g transform={`translate(${endPoint.x}, ${endPoint.y}) rotate(${angle})`}>
+                    {type === 'ARROW' && (
+                        // Wider arrow head: width 10 (-5 to 5), length 12
+                        // "narrow should thicker than edge 2.2" -> 5+5 = 10, which is > 1px edge
+                        <polygon points="0,0 -12,-5 -12,5" fill={strokeColor} />
+                    )}
+                    {type === 'CUBE' && (
+                        // Centered Cube visual (size 8x8)
+                        <rect x="-8" y="-4" width="8" height="8" fill={strokeColor} stroke="none" />
+                    )}
+                  </g>
               </g>
           );
       };
@@ -601,7 +639,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           const isActive = gizmoDrag?.axis === axis;
           const isHover = hoverAxis === axis;
           const strokeColor = isActive || isHover ? '#fff' : color;
-          const thickness = isActive || isHover ? 4 : 2;
+          // Thin ring (1.5 normal, 2.5 active)
+          const thickness = isActive || isHover ? 2.5 : 1.5;
 
           return (
               <polyline 
@@ -622,16 +661,17 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
               <g className="pointer-events-auto">
                 {tool === 'MOVE' && (
                     <>
-                        {renderPlaneHandle('XZ', '#22c55e')}
-                        {renderPlaneHandle('XY', '#3b82f6')}
-                        {renderPlaneHandle('YZ', '#ef4444')}
+                        {/* Brackets for Planes with Neon Secondary Colors */}
+                        {renderPlaneBracket('XY', xAxis, yAxis, '#ffff00')}
+                        {renderPlaneBracket('XZ', xAxis, zAxis, '#ff00ff')}
+                        {renderPlaneBracket('YZ', yAxis, zAxis, '#00ffff')}
                     </>
                 )}
 
                 {tool === 'ROTATE' && (
                     <>
                          {renderRing('X', '#ef4444')}
-                         {renderRing('Y', '#22c55e')}
+                         {renderRing('Y', '#0adb50')}
                          {renderRing('Z', '#3b82f6')}
                          <circle cx={pCenter.x} cy={pCenter.y} r={30 * scale} fill="white" fillOpacity="0.05" className="pointer-events-none"/>
                     </>
@@ -639,13 +679,14 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
 
                 {(tool === 'MOVE' || tool === 'SCALE') && (
                     <>
-                        {renderAxisLine('Z', '#3b82f6', axes.z)}
-                        {renderAxisLine('Y', '#22c55e', axes.y)}
-                        {renderAxisLine('X', '#ef4444', axes.x)}
+                        {renderAxisHandle('Z', '#3b82f6', axes.z, tool === 'MOVE' ? 'ARROW' : 'CUBE')}
+                        {renderAxisHandle('Y', '#0adb50', axes.y, tool === 'MOVE' ? 'ARROW' : 'CUBE')}
+                        {renderAxisHandle('X', '#ef4444', axes.x, tool === 'MOVE' ? 'ARROW' : 'CUBE')}
                     </>
                 )}
 
                 {tool === 'SCALE' && (
+                    // Center Uniform Scale Handle (Cube)
                     <rect 
                         x={pCenter.x - 6} y={pCenter.y - 6} width={12} height={12} fill="white" 
                         className="cursor-pointer hover:fill-yellow-400"
@@ -654,8 +695,15 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                         onMouseLeave={() => setHoverAxis(null)}
                     />
                 )}
-                {tool !== 'SCALE' && (
-                     <circle cx={pCenter.x} cy={pCenter.y} r={5} fill="white" className="pointer-events-none shadow-sm opacity-80"/>
+                {/* Center Cube for Move Tool (Reduced size 10 -> 8) */}
+                {tool === 'MOVE' && (
+                     <rect 
+                        x={pCenter.x - 4} y={pCenter.y - 4} 
+                        width={8} height={8} 
+                        fill="#ffffff" fillOpacity="0.8"
+                        stroke="#000000" strokeWidth="1"
+                        className="pointer-events-none shadow-sm"
+                    />
                 )}
 
               </g>
