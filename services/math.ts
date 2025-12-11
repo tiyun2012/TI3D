@@ -86,92 +86,156 @@ export const Mat4Utils = {
     return out;
   },
 
-  compose: (posX: number, posY: number, posZ: number, rotX: number, rotY: number, rotZ: number, scaleX: number, scaleY: number, scaleZ: number, out: Mat4): Mat4 => {
-    const c1 = Math.cos(rotX), s1 = Math.sin(rotX);
-    const c2 = Math.cos(rotY), s2 = Math.sin(rotY);
-    const c3 = Math.cos(rotZ), s3 = Math.sin(rotZ);
+  invert: (a: Mat4, out: Mat4): Mat4 | null => {
+    const a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+    const a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+    const a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+    const a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
 
-    out[0] = (c2 * c3) * scaleX;
-    out[1] = (c2 * s3) * scaleX;
-    out[2] = (-s2) * scaleX;
-    out[3] = 0;
+    const b00 = a00 * a11 - a01 * a10;
+    const b01 = a00 * a12 - a02 * a10;
+    const b02 = a00 * a13 - a03 * a10;
+    const b03 = a01 * a12 - a02 * a11;
+    const b04 = a01 * a13 - a03 * a11;
+    const b05 = a02 * a13 - a03 * a12;
+    const b06 = a20 * a31 - a21 * a30;
+    const b07 = a20 * a32 - a22 * a30;
+    const b08 = a20 * a33 - a23 * a30;
+    const b09 = a21 * a32 - a22 * a31;
+    const b10 = a21 * a33 - a23 * a31;
+    const b11 = a22 * a33 - a23 * a32;
 
-    out[4] = (s1 * s2 * c3 - c1 * s3) * scaleY;
-    out[5] = (s1 * s2 * s3 + c1 * c3) * scaleY;
-    out[6] = (s1 * c2) * scaleY;
-    out[7] = 0;
+    let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
 
-    out[8] = (c1 * s2 * c3 + s1 * s3) * scaleZ;
-    out[9] = (c1 * s2 * s3 - s1 * c3) * scaleZ;
-    out[10] = (c1 * c2) * scaleZ;
-    out[11] = 0;
+    if (!det) {
+      return null;
+    }
+    det = 1.0 / det;
 
-    out[12] = posX;
-    out[13] = posY;
-    out[14] = posZ;
-    out[15] = 1;
+    out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+    out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+    out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+    out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+    out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+    out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+    out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+    out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+    out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+    out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+    out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+    out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+    out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+    out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+    out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+    out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
 
     return out;
-  },
-
-  getTranslation: (m: Mat4): Vec3 => {
-    return { x: m[12], y: m[13], z: m[14] };
   },
 
   lookAt: (eye: Vec3, center: Vec3, up: Vec3, out: Mat4): Mat4 => {
-    const z = TMP_VEC3_1; // Borrow global scratch
-    Vec3Utils.subtract(eye, center, z);
-    Vec3Utils.normalize(z, z);
+      const eyex = eye.x, eyey = eye.y, eyez = eye.z;
+      const upx = up.x, upy = up.y, upz = up.z;
+      const centerx = center.x, centery = center.y, centerz = center.z;
 
-    const x = TMP_VEC3_2; // Borrow global scratch
-    Vec3Utils.cross(up, z, x);
-    Vec3Utils.normalize(x, x);
+      if (Math.abs(eyex - centerx) < 0.000001 &&
+          Math.abs(eyey - centery) < 0.000001 &&
+          Math.abs(eyez - centerz) < 0.000001) {
+        return Mat4Utils.identity(out);
+      }
 
-    const y = { x: 0, y: 0, z: 0 }; // Need local or 3rd scratch.
-    // Optimization: Just inline cross product for Y
-    y.x = z.y * x.z - z.z * x.y;
-    y.y = z.z * x.x - z.x * x.z;
-    y.z = z.x * x.y - z.y * x.x;
+      let z0 = eyex - centerx;
+      let z1 = eyey - centery;
+      let z2 = eyez - centerz;
+      let len = 1 / Math.sqrt(z0 * z0 + z1 * z1 + z2 * z2);
+      z0 *= len; z1 *= len; z2 *= len;
 
-    out[0] = x.x; out[1] = y.x; out[2] = z.x; out[3] = 0;
-    out[4] = x.y; out[5] = y.y; out[6] = z.y; out[7] = 0;
-    out[8] = x.z; out[9] = y.z; out[10] = z.z; out[11] = 0;
-    out[12] = -Vec3Utils.dot(x, eye);
-    out[13] = -Vec3Utils.dot(y, eye);
-    out[14] = -Vec3Utils.dot(z, eye);
-    out[15] = 1;
-    return out;
+      let x0 = upy * z2 - upz * z1;
+      let x1 = upz * z0 - upx * z2;
+      let x2 = upx * z1 - upy * z0;
+      len = Math.sqrt(x0 * x0 + x1 * x1 + x2 * x2);
+      if (!len) { x0 = 0; x1 = 0; x2 = 0; }
+      else { len = 1 / len; x0 *= len; x1 *= len; x2 *= len; }
+
+      let y0 = z1 * x2 - z2 * x1;
+      let y1 = z2 * x0 - z0 * x2;
+      let y2 = z0 * x1 - z1 * x0;
+      len = Math.sqrt(y0 * y0 + y1 * y1 + y2 * y2);
+      if (!len) { y0 = 0; y1 = 0; y2 = 0; }
+      else { len = 1 / len; y0 *= len; y1 *= len; y2 *= len; }
+
+      out[0] = x0; out[1] = y0; out[2] = z0; out[3] = 0;
+      out[4] = x1; out[5] = y1; out[6] = z1; out[7] = 0;
+      out[8] = x2; out[9] = y2; out[10] = z2; out[11] = 0;
+      out[12] = -(x0 * eyex + x1 * eyey + x2 * eyez);
+      out[13] = -(y0 * eyex + y1 * eyey + y2 * eyez);
+      out[14] = -(z0 * eyex + z1 * eyey + z2 * eyez);
+      out[15] = 1;
+
+      return out;
   },
 
   perspective: (fovy: number, aspect: number, near: number, far: number, out: Mat4): Mat4 => {
-    const f = 1.0 / Math.tan(fovy / 2);
-    const nf = 1 / (near - far);
-    
-    out[0] = f / aspect; out[1] = 0; out[2] = 0; out[3] = 0;
-    out[4] = 0; out[5] = f; out[6] = 0; out[7] = 0;
-    out[8] = 0; out[9] = 0; out[10] = (far + near) * nf; out[11] = -1;
-    out[12] = 0; out[13] = 0; out[14] = (2 * far * near) * nf; out[15] = 0;
-    return out;
+      const f = 1.0 / Math.tan(fovy / 2);
+      out[0] = f / aspect; out[1] = 0; out[2] = 0; out[3] = 0;
+      out[4] = 0; out[5] = f; out[6] = 0; out[7] = 0;
+      out[8] = 0; out[9] = 0; out[11] = -1; out[15] = 0;
+      if (far != null && far !== Infinity) {
+          const nf = 1 / (near - far);
+          out[10] = (far + near) * nf;
+          out[14] = (2 * far * near) * nf;
+      } else {
+          out[10] = -1;
+          out[14] = -2 * near;
+      }
+      return out;
   },
 
-  transformPoint: (v: Vec3, m: Mat4, width: number, height: number): { x: number, y: number, z: number, w: number } => {
-    const x = v.x, y = v.y, z = v.z;
-    const w = x * m[3] + y * m[7] + z * m[11] + m[15];
-    const outX = x * m[0] + y * m[4] + z * m[8] + m[12];
-    const outY = x * m[1] + y * m[5] + z * m[9] + m[13];
-    const outZ = x * m[2] + y * m[6] + z * m[10] + m[14];
+  getTranslation: (mat: Mat4): Vec3 => {
+      return { x: mat[12], y: mat[13], z: mat[14] };
+  },
+  
+  // Creates matrix from Translate, Euler XYZ Rotate, Scale
+  compose: (
+      tx: number, ty: number, tz: number,
+      rx: number, ry: number, rz: number,
+      sx: number, sy: number, sz: number,
+      out: Mat4
+  ): Mat4 => {
+      const cx = Math.cos(rx), sx_val = Math.sin(rx);
+      const cy = Math.cos(ry), sy_val = Math.sin(ry);
+      const cz = Math.cos(rz), sz_val = Math.sin(rz);
 
-    if (w === 0) return { x: 0, y: 0, z: 0, w: 0 };
-    
-    const ndcX = outX / w;
-    const ndcY = outY / w;
-    const ndcZ = outZ / w;
+      const m00 = cy * cz;
+      const m01 = cz * sx_val * sy_val - cx * sz_val;
+      const m02 = cx * cz * sy_val + sx_val * sz_val;
+      const m10 = cy * sz_val;
+      const m11 = cx * cz + sx_val * sy_val * sz_val;
+      const m12 = -cz * sx_val + cx * sy_val * sz_val;
+      const m20 = -sy_val;
+      const m21 = cy * sx_val;
+      const m22 = cx * cy;
 
-    return {
-      x: (ndcX + 1) * width * 0.5,
-      y: (1 - ndcY) * height * 0.5,
-      z: ndcZ,
-      w: w
-    };
+      out[0] = m00 * sx; out[1] = m10 * sx; out[2] = m20 * sx; out[3] = 0;
+      out[4] = m01 * sy; out[5] = m11 * sy; out[6] = m21 * sy; out[7] = 0;
+      out[8] = m02 * sz; out[9] = m12 * sz; out[10] = m22 * sz; out[11] = 0;
+      out[12] = tx; out[13] = ty; out[14] = tz; out[15] = 1;
+      return out;
+  },
+
+  // Transforms a point by matrix and projects to screen coordinates
+  transformPoint: (v: {x:number, y:number, z:number}, m: Mat4, width: number, height: number) => {
+      const x = v.x, y = v.y, z = v.z;
+      const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+      const resX = m[0] * x + m[4] * y + m[8] * z + m[12];
+      const resY = m[1] * x + m[5] * y + m[9] * z + m[13];
+      const resZ = m[2] * x + m[6] * y + m[10] * z + m[14];
+
+      const ndcX = resX / w;
+      const ndcY = resY / w;
+      
+      const screenX = (ndcX + 1) * 0.5 * width;
+      const screenY = (1 - ndcY) * 0.5 * height;
+
+      return { x: screenX, y: screenY, z: resZ, w: w };
   }
 };
