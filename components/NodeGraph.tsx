@@ -7,8 +7,6 @@ import { NodeRegistry, getTypeColor } from '../services/NodeRegistry';
 // Constants
 const GRID_SIZE = 20;
 const NODE_WIDTH = 180;
-const HEADER_HEIGHT = 36; // Approx height of header
-const PIN_HEIGHT = 24;    // Approx height per pin row
 const REROUTE_SIZE = 12;
 
 const INITIAL_NODES: GraphNode[] = [
@@ -33,7 +31,7 @@ export const NodeGraph: React.FC = () => {
     
     const containerRef = useRef<HTMLDivElement>(null);
     const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-    const pathRefs = useRef<Map<string, SVGPathElement>>(new Map()); // NEW: Ref for paths
+    const pathRefs = useRef<Map<string, SVGPathElement>>(new Map());
     
     const [connecting, setConnecting] = useState<{ nodeId: string, pinId: string, type: 'input'|'output', x: number, y: number } | null>(null);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, visible: boolean } | null>(null);
@@ -55,7 +53,7 @@ export const NodeGraph: React.FC = () => {
         };
     };
 
-    // Fast math-based pin lookup for dragging (avoids DOM thrashing)
+    // Robust math-based pin lookup. Matches CSS layout exactly to prevent visual jitter during zoom/pan.
     const getPinOffset = (nodeX: number, nodeY: number, nodeType: string, pinId: string, type: 'input'|'output') => {
         if (nodeType === 'Reroute') {
             return { x: nodeX + REROUTE_SIZE/2, y: nodeY + REROUTE_SIZE/2 };
@@ -64,29 +62,38 @@ export const NodeGraph: React.FC = () => {
         const def = NodeRegistry[nodeType];
         if (!def) return { x: nodeX, y: nodeY };
 
-        // Header offset + index offset
-        const list = type === 'input' ? def.inputs : def.outputs;
-        const idx = list.findIndex(p => p.id === pinId);
-        // Approx standard offsets (matches CSS layout)
-        const yOffset = 36 + (idx * 24) + 12; 
+        // Determine vertical stack index
+        // Order: Inputs -> [Float Input] -> Outputs
+        let index = 0;
+        if (type === 'output') {
+            index += def.inputs.length;
+            if (nodeType === 'Float') index += 1;
+            const outIdx = def.outputs.findIndex(p => p.id === pinId);
+            index += outIdx !== -1 ? outIdx : 0;
+        } else {
+            const inIdx = def.inputs.findIndex(p => p.id === pinId);
+            index += inIdx !== -1 ? inIdx : 0;
+        }
+
+        // Layout Constants (Tailwind & CSS Logic)
+        const HEADER_HEIGHT = 36; // h-9
+        const PADDING_TOP = 8;    // p-2 (top part)
+        const ITEM_HEIGHT = 24;   // h-6
+        const GAP = 4;            // space-y-1
+        const BORDER = 1;         // border width (border-black)
+
+        // Y Position: Top Border + Header + Body Padding + Stack Index * (Item + Gap) + Half Item
+        const yOffset = BORDER + HEADER_HEIGHT + PADDING_TOP + (index * (ITEM_HEIGHT + GAP)) + (ITEM_HEIGHT / 2);
+        
+        // X Position:
+        // Input: 1px (Border) - 6px (Pin Center Offset from Content Start) + 6px (Pin Radius) = 1px (Inside Left Border)
+        // Output: NODE_WIDTH - 1px (Border) = 179px (Inside Right Border)
+        const xOffset = type === 'output' ? (NODE_WIDTH - BORDER) : BORDER;
 
         return {
-            x: nodeX + (type === 'output' ? NODE_WIDTH : 0),
+            x: nodeX + xOffset,
             y: nodeY + yOffset
         };
-    };
-
-    const getPinPosition = (node: GraphNode, pinId: string, type: 'input'|'output') => {
-        // Try DOM first for perfect alignment on render
-        const elementId = `pin-${node.id}-${type}-${pinId}`;
-        const el = document.getElementById(elementId);
-        if (el && containerRef.current) {
-            const rect = el.getBoundingClientRect();
-            // Center of pin
-            return screenToGraph(rect.left + rect.width/2, rect.top + rect.height/2);
-        }
-        // Fallback to math
-        return getPinOffset(node.position.x, node.position.y, node.type, pinId, type);
     };
 
     const calculateCurve = (x1: number, y1: number, x2: number, y2: number) => {
@@ -125,23 +132,18 @@ export const NodeGraph: React.FC = () => {
             .filter(c => c.fromNode === node.id || c.toNode === node.id)
             .map(c => {
                 const isOutput = c.fromNode === node.id;
-                
-                // Identify the other node to get its position
                 const otherNodeId = isOutput ? c.toNode : c.fromNode;
                 const otherNode = nodes.find(n => n.id === otherNodeId);
                 
-                // 1. Calculate the exact START position (on the dragged node) relative to the node
-                // We use getPinPosition to get the visual location, then subtract node pos to get offset.
-                // This ensures that when we drag, we apply this offset to the new node pos, maintaining visual lock.
-                const myPinPos = getPinPosition(node, isOutput ? c.fromPin : c.toPin, isOutput ? 'output' : 'input');
+                // Calculate static offsets relative to the moving node
+                const myPinPos = getPinOffset(node.position.x, node.position.y, node.type, isOutput ? c.fromPin : c.toPin, isOutput ? 'output' : 'input');
                 const offsetX = myPinPos.x - startNodePos.x;
                 const offsetY = myPinPos.y - startNodePos.y;
 
-                // 2. Calculate the exact END position (on the other node)
-                // This node is static, so we just cache its position.
+                // Calculate absolute pos of the other node's pin
                 let otherPinPos = { x: 0, y: 0 };
                 if (otherNode) {
-                    otherPinPos = getPinPosition(otherNode, isOutput ? c.toPin : c.fromPin, isOutput ? 'input' : 'output');
+                    otherPinPos = getPinOffset(otherNode.position.x, otherNode.position.y, otherNode.type, isOutput ? c.toPin : c.fromPin, isOutput ? 'input' : 'output');
                 }
 
                 return {
@@ -159,28 +161,25 @@ export const NodeGraph: React.FC = () => {
             const newX = startNodePos.x + dx;
             const newY = startNodePos.y + dy;
 
-            // 1. Update Node Div
+            // 1. Update Node Div directly (bypass React Render)
             const el = nodeRefs.current.get(node.id);
             if(el) {
                 el.style.left = `${newX}px`;
                 el.style.top = `${newY}px`;
             }
 
-            // 2. Update Wires Imperatively (Bypass React State)
+            // 2. Update Wires Imperatively
             connectedLines.forEach(link => {
                 const pathEl = pathRefs.current.get(link.id);
                 if(!pathEl) return;
 
-                // Calculate positions using cached offsets to prevent 'rubber banding'
-                // The moving pin is simply NewNodePos + CachedOffset
                 const movingPinX = newX + link.offsetX;
                 const movingPinY = newY + link.offsetY;
 
                 const start = link.isOutput ? { x: movingPinX, y: movingPinY } : link.otherPinPos;
                 const end = link.isOutput ? link.otherPinPos : { x: movingPinX, y: movingPinY };
 
-                const newD = calculateCurve(start.x, start.y, end.x, end.y);
-                pathEl.setAttribute('d', newD);
+                pathEl.setAttribute('d', calculateCurve(start.x, start.y, end.x, end.y));
             });
         };
 
@@ -188,7 +187,7 @@ export const NodeGraph: React.FC = () => {
             window.removeEventListener('mousemove', handleWinMove);
             window.removeEventListener('mouseup', handleWinUp);
             
-            // Final Sync to React State
+            // Sync final position to React State
             const dx = (ev.clientX - startMouse.x) / transform.k;
             const dy = (ev.clientY - startMouse.y) / transform.k;
             setNodes(prev => prev.map(n => n.id === node.id ? { ...n, position: { x: startNodePos.x + dx, y: startNodePos.y + dy } } : n));
@@ -197,8 +196,6 @@ export const NodeGraph: React.FC = () => {
         window.addEventListener('mousemove', handleWinMove);
         window.addEventListener('mouseup', handleWinUp);
     };
-
-    // ... (rest of drag/drop connection logic remains same)
 
     const handlePinDown = (e: React.MouseEvent, nodeId: string, pinId: string, type: 'input'|'output') => {
         e.stopPropagation();
@@ -278,8 +275,9 @@ export const NodeGraph: React.FC = () => {
                         const toNode = nodes.find(n => n.id === c.toNode);
                         if(!fromNode || !toNode) return null;
 
-                        const p1 = getPinPosition(fromNode, c.fromPin, 'output');
-                        const p2 = getPinPosition(toNode, c.toPin, 'input');
+                        // Use math-based offsets for stable rendering during transforms
+                        const p1 = getPinOffset(fromNode.position.x, fromNode.position.y, fromNode.type, c.fromPin, 'output');
+                        const p2 = getPinOffset(toNode.position.x, toNode.position.y, toNode.type, c.toPin, 'input');
                         const d = calculateCurve(p1.x, p1.y, p2.x, p2.y);
                         
                         const def = NodeRegistry[fromNode.type];
@@ -298,7 +296,7 @@ export const NodeGraph: React.FC = () => {
                     {connecting && (() => {
                          const node = nodes.find(n => n.id === connecting.nodeId);
                          if(!node) return null;
-                         const p1 = getPinPosition(node, connecting.pinId, connecting.type);
+                         const p1 = getPinOffset(node.position.x, node.position.y, node.type, connecting.pinId, connecting.type);
                          const p2 = { x: connecting.x, y: connecting.y };
                          // Always Source -> Target
                          const start = connecting.type === 'output' ? p1 : p2;
@@ -355,7 +353,7 @@ export const NodeGraph: React.FC = () => {
                                         
                                         {def.type === 'Float' && (
                                             <input 
-                                                type="number" className="w-full bg-black/40 text-xs text-white px-1 rounded border border-white/10"
+                                                type="number" className="w-full h-6 bg-black/40 text-xs text-white px-1 rounded border border-white/10"
                                                 value={node.data?.value || 0}
                                                 onChange={(e) => setNodes(p => p.map(n => n.id===node.id ? {...n, data: {value: e.target.value}} : n))}
                                                 onMouseDown={e => e.stopPropagation()}
