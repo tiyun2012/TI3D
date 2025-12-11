@@ -6,7 +6,7 @@
 
 import { Entity, ComponentType, Component } from '../types';
 import { SceneGraph } from './SceneGraph';
-import { Mat4, Mat4Utils } from './math';
+import { Mat4, Mat4Utils, RayUtils, Vec3Utils, TMP_MAT4_1, TMP_MAT4_2 } from './math';
 
 // --- WebGL Shaders with Instancing Support ---
 
@@ -387,10 +387,6 @@ class WebGLRenderer {
         const selectedIndex = selectedId ? idToIndex.get(selectedId) : -1;
 
         // Group by MeshType and Build Instance Buffers
-        // Optimization: We iterate the SoA once and fill different regions of our temp buffer?
-        // Or render one mesh type at a time.
-        // Let's render one mesh type at a time to minimize VAO switches.
-
         const meshTypes = [1, 2, 3]; // Cube, Sphere, Plane
         
         for (const typeId of meshTypes) {
@@ -398,19 +394,10 @@ class WebGLRenderer {
             if (!mesh) continue;
 
             let instanceCount = 0;
-            // Iterate all entities
-            // Optimization: Maintain lists of indices per mesh type? 
-            // For now, simple loop over active entities is much faster than object loop.
-            // But checking MAX_ENTITIES is slow if mostly empty.
-            // Use SoA count or known max index.
-            // We'll iterate the idToIndex map to get active ones, or just loop if dense.
-            // Let's loop idToIndex for safety as indices might be sparse-ish.
             
             // Pointer to our CPU instance buffer
             let dataPtr = 0;
             
-            // Using Map iteration is slower than array. Ideally we use a dense list of active indices.
-            // For this implementation, we will iterate `idToIndex.values()`
             for (const index of idToIndex.values()) {
                 if (store.isActive[index] && store.meshType[index] === typeId) {
                     const worldMatrix = sceneGraph.getWorldMatrix(store.ids[index]);
@@ -474,12 +461,6 @@ class PhysicsSystem {
             // Check bounds (simple floor check)
             if (store.posY[index] > 0) {
                  // store.posY[index] -= 9.8 * deltaTime * 0.1; 
-                 // We don't have dirty flag setting here if we access array directly!
-                 // In a real ECS, we'd mark dirty.
-                 // For now, let's assume SceneGraph updates handle transforms if we flag them.
-                 // But we are accessing raw arrays. 
-                 // The SceneGraph update needs to know that these changed.
-                 // We can return a list of modified indices, or just set dirty.
             }
         }
     }
@@ -520,6 +501,70 @@ export class Ti3DEngine {
   viewProjectionMatrix = Mat4Utils.create();
   updateCamera(vpMatrix: Mat4) {
       Mat4Utils.copy(this.viewProjectionMatrix, vpMatrix);
+  }
+
+  // --- High Performance Selection System ---
+  selectEntityAt(x: number, y: number, width: number, height: number): string | null {
+      // 1. Unproject Screen to World Ray
+      // We need the inverse ViewProjection.
+      // NOTE: This uses shared scratchpads TMP_MAT4_1, TMP_MAT4_2. 
+      // Do not use them in nested calls inside this block if possible.
+      if (!Mat4Utils.invert(this.viewProjectionMatrix, TMP_MAT4_1)) return null;
+      
+      const ray = RayUtils.create();
+      RayUtils.fromScreen(x, y, width, height, TMP_MAT4_1, ray);
+
+      let closestId: string | null = null;
+      let minDist = Infinity;
+
+      // Temporary Reusable Objects
+      const localRay = RayUtils.create();
+      const invWorld = TMP_MAT4_2;
+
+      // 2. Iterate Active Entities
+      // Optimization: This loop is synchronous, ensuring "datalock" (no concurrent updates)
+      for (const [id, index] of this.ecs.idToIndex) {
+          if (!this.ecs.store.isActive[index]) continue;
+          
+          // Only select entities with a mesh
+          const meshType = this.ecs.store.meshType[index];
+          if (meshType === 0) continue; 
+
+          const worldMatrix = this.sceneGraph.getWorldMatrix(id);
+          if (!worldMatrix) continue;
+
+          // 3. Narrow Phase: Transform Ray to Local Object Space
+          // Instead of transforming "Huge Vertices", we transform 1 Ray.
+          if (!Mat4Utils.invert(worldMatrix, invWorld)) continue;
+
+          // Transform Ray Origin
+          Vec3Utils.transformMat4(ray.origin, invWorld, localRay.origin);
+          
+          // Transform Ray Direction (as Vector, w=0)
+          // Note: We do NOT normalize here. This allows 't' to remain in World Space units
+          // if we consider the scaling factor embedded in the direction vector.
+          Vec3Utils.transformMat4Normal(ray.direction, invWorld, localRay.direction);
+
+          // 4. Test against Unit Primitives (Local Space)
+          let t: number | null = null;
+          
+          // Sphere (Radius 0.5) vs Cube/Plane (Box -0.5 to 0.5)
+          if (meshType === 2) { // Sphere
+              t = RayUtils.intersectSphere(localRay, {x:0, y:0, z:0}, 0.5);
+          } else {
+              // Cube(1) or Plane(3) -> Treat as AABB (-0.5 to 0.5)
+              t = RayUtils.intersectBox(localRay, {x:-0.5, y:-0.5, z:-0.5}, {x:0.5, y:0.5, z:0.5});
+          }
+
+          // 5. Smart Sort (Depth Test)
+          if (t !== null && t > 0) {
+              if (t < minDist) {
+                  minDist = t;
+                  closestId = id;
+              }
+          }
+      }
+      return closestId;
   }
 
   createEntity(name: string): Entity {

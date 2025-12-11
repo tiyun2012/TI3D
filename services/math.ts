@@ -5,6 +5,11 @@
 export type Mat4 = Float32Array;
 export type Vec3 = { x: number, y: number, z: number };
 
+export interface Ray {
+    origin: Vec3;
+    direction: Vec3;
+}
+
 // Global scratchpads to minimize GC during intermediate calculations
 export const TMP_MAT4_1 = new Float32Array(16);
 export const TMP_MAT4_2 = new Float32Array(16);
@@ -33,6 +38,106 @@ export const Vec3Utils = {
     return out;
   },
   dot: (a: Vec3, b: Vec3): number => a.x * b.x + a.y * b.y + a.z * b.z,
+  
+  // Transform Point (w=1 implied)
+  transformMat4: (v: Vec3, m: Mat4, out: Vec3): Vec3 => {
+    const x = v.x, y = v.y, z = v.z;
+    const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+    const s = w !== 0 ? 1.0 / w : 1.0;
+    out.x = (m[0] * x + m[4] * y + m[8] * z + m[12]) * s;
+    out.y = (m[1] * x + m[5] * y + m[9] * z + m[13]) * s;
+    out.z = (m[2] * x + m[6] * y + m[10] * z + m[14]) * s;
+    return out;
+  },
+
+  // Transform Vector (w=0 implied)
+  transformMat4Normal: (v: Vec3, m: Mat4, out: Vec3): Vec3 => {
+    const x = v.x, y = v.y, z = v.z;
+    out.x = m[0] * x + m[4] * y + m[8] * z;
+    out.y = m[1] * x + m[5] * y + m[9] * z;
+    out.z = m[2] * x + m[6] * y + m[10] * z;
+    return out;
+  }
+};
+
+export const RayUtils = {
+  create: (): Ray => ({ origin: {x:0, y:0, z:0}, direction: {x:0, y:0, z:1} }),
+  
+  // Calculate Ray from Screen Coordinates (NDC -> World)
+  fromScreen: (x: number, y: number, width: number, height: number, invViewProj: Mat4, out: Ray) => {
+    // NDC
+    const ndcX = (x / width) * 2 - 1;
+    const ndcY = 1 - (y / height) * 2; // Flip Y
+
+    const start = { x: ndcX, y: ndcY, z: -1 }; // Near plane
+    const end = { x: ndcX, y: ndcY, z: 1 };    // Far plane
+
+    // Unproject
+    const worldStart = Vec3Utils.create();
+    const worldEnd = Vec3Utils.create();
+    
+    Vec3Utils.transformMat4(start, invViewProj, worldStart);
+    Vec3Utils.transformMat4(end, invViewProj, worldEnd);
+
+    // Set Origin
+    Vec3Utils.copy(out.origin, worldStart);
+
+    // Set Direction
+    Vec3Utils.subtract(worldEnd, worldStart, out.direction);
+    Vec3Utils.normalize(out.direction, out.direction);
+  },
+
+  // Ray-Sphere Intersection
+  intersectSphere: (ray: Ray, center: Vec3, radius: number): number | null => {
+    const ocX = ray.origin.x - center.x;
+    const ocY = ray.origin.y - center.y;
+    const ocZ = ray.origin.z - center.z;
+    
+    const a = Vec3Utils.dot(ray.direction, ray.direction);
+    const b = 2.0 * (ocX * ray.direction.x + ocY * ray.direction.y + ocZ * ray.direction.z);
+    const c = (ocX*ocX + ocY*ocY + ocZ*ocZ) - radius*radius;
+    
+    const discriminant = b*b - 4*a*c;
+    if (discriminant < 0) return null;
+    
+    // Return smallest positive t
+    const t1 = (-b - Math.sqrt(discriminant)) / (2.0*a);
+    if (t1 > 0) return t1;
+    
+    const t2 = (-b + Math.sqrt(discriminant)) / (2.0*a);
+    return t2 > 0 ? t2 : null;
+  },
+
+  // Ray-AABB Intersection (Slab Method)
+  intersectBox: (ray: Ray, min: Vec3, max: Vec3): number | null => {
+    let tmin = (min.x - ray.origin.x) / ray.direction.x;
+    let tmax = (max.x - ray.origin.x) / ray.direction.x;
+
+    if (tmin > tmax) [tmin, tmax] = [tmax, tmin];
+
+    let tymin = (min.y - ray.origin.y) / ray.direction.y;
+    let tymax = (max.y - ray.origin.y) / ray.direction.y;
+
+    if (tymin > tymax) [tymin, tymax] = [tymax, tymin];
+
+    if ((tmin > tymax) || (tymin > tmax)) return null;
+
+    if (tymin > tmin) tmin = tymin;
+    if (tymax < tmax) tmax = tymax;
+
+    let tzmin = (min.z - ray.origin.z) / ray.direction.z;
+    let tzmax = (max.z - ray.origin.z) / ray.direction.z;
+
+    if (tzmin > tzmax) [tzmin, tzmax] = [tzmax, tzmin];
+
+    if ((tmin > tzmax) || (tzmin > tmax)) return null;
+
+    if (tzmin > tmin) tmin = tzmin;
+    if (tzmax < tmax) tmax = tzmax;
+
+    if (tmax < 0) return null; // Behind
+    return tmin > 0 ? tmin : tmax;
+  }
 };
 
 export const Mat4Utils = {
@@ -194,7 +299,6 @@ export const Mat4Utils = {
       return { x: mat[12], y: mat[13], z: mat[14] };
   },
   
-  // Creates matrix from Translate, Euler XYZ Rotate, Scale
   compose: (
       tx: number, ty: number, tz: number,
       rx: number, ry: number, rz: number,
@@ -222,7 +326,6 @@ export const Mat4Utils = {
       return out;
   },
 
-  // Transforms a point by matrix and projects to screen coordinates
   transformPoint: (v: {x:number, y:number, z:number}, m: Mat4, width: number, height: number) => {
       const x = v.x, y = v.y, z = v.z;
       const w = m[3] * x + m[7] * y + m[11] * z + m[15];

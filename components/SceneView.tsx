@@ -93,15 +93,32 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   }, [vpMatrix, width]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (!e.altKey && tool === 'SELECT') {
-        if (e.target === canvasRef.current) onSelect(''); 
+    // Selection Logic: Left Click + No Alt (Not orbiting)
+    // Maya Style: Alt is reserved for camera navigation
+    if (!e.altKey && e.button === 0) {
+        if (canvasRef.current && containerRef.current) {
+            const rect = containerRef.current.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const hitId = engineInstance.selectEntityAt(x, y, rect.width, rect.height);
+            onSelect(hitId || '');
+        }
     }
     
-    if (e.altKey || tool === 'SELECT') {
+    // Navigation Logic: Alt + Mouse Buttons OR explicitly using tools
+    if (e.altKey || (tool !== 'SELECT' && tool !== 'MOVE' && tool !== 'ROTATE' && tool !== 'SCALE')) {
         e.preventDefault();
         let mode: 'ORBIT' | 'PAN' | 'ZOOM' = 'ORBIT';
-        if (e.button === 1) mode = 'PAN';
-        if (e.button === 2) mode = 'ZOOM';
+        if (e.button === 1 || (e.altKey && e.button === 1)) mode = 'PAN';
+        if (e.button === 2 || (e.altKey && e.button === 2)) mode = 'ZOOM';
+        
+        // Maya Style: Alt + Left = Orbit, Alt + Middle = Pan, Alt + Right = Zoom
+        if (e.altKey) {
+            if (e.button === 0) mode = 'ORBIT';
+            if (e.button === 1) mode = 'PAN';
+            if (e.button === 2) mode = 'ZOOM';
+        }
 
         setDragState({
           isDragging: true,
@@ -169,12 +186,16 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         }));
       } else if (dragState.mode === 'PAN') {
         const panSpeed = dragState.startCamera.radius * 0.002;
+        // Simple panning relative to camera orientation approx
+        const sinT = Math.sin(dragState.startCamera.theta);
+        const cosT = Math.cos(dragState.startCamera.theta);
+        
         setCamera(prev => ({
             ...prev,
             target: {
-                x: dragState.startCamera.target.x - dx * panSpeed,
-                y: dragState.startCamera.target.y + dy * panSpeed,
-                z: dragState.startCamera.target.z 
+                x: dragState.startCamera.target.x - (dx * cosT - dy * sinT) * panSpeed,
+                y: dragState.startCamera.target.y + dy * panSpeed, // Simplified Y Pan
+                z: dragState.startCamera.target.z - (dx * sinT + dy * cosT) * panSpeed
             }
         }));
       }
