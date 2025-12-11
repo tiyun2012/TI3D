@@ -32,9 +32,7 @@ const HierarchyWrapper = () => {
 const InspectorWrapper = () => {
   const ctx = useContext(EditorContext);
   if (!ctx) return null;
-  // Inspect the first selected entity, or null
   const entity = ctx.selectedIds.length > 0 ? ctx.entities.find(e => e.id === ctx.selectedIds[0]) || null : null;
-  // Pass count for UI feedback
   return <InspectorPanel entity={entity} selectionCount={ctx.selectedIds.length} />;
 };
 
@@ -71,8 +69,8 @@ const ConsoleWrapper = () => (
         </div>
         <div className="p-2 text-gray-400 space-y-1">
             <div className="text-emerald-500">[System] Ti3D Engine initialized v1.0.0</div>
-            <div>[System] WebGL2 Context created successfully.</div>
-            <div>[Loader] Loaded 45 assets in 120ms.</div>
+            <div>[System] WebGL2 Texture Array created (4 layers).</div>
+            <div>[System] Undo/Redo System Ready.</div>
         </div>
     </div>
 );
@@ -126,6 +124,36 @@ const App: React.FC = () => {
     setEntities(engineInstance.ecs.getAllProxies(engineInstance.sceneGraph));
   }, []);
 
+  // Keyboard Shortcuts
+  useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+          // Undo/Redo
+          if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+              if (e.shiftKey) {
+                  engineInstance.redo();
+              } else {
+                  engineInstance.undo();
+              }
+              e.preventDefault();
+          }
+          else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+              engineInstance.redo();
+              e.preventDefault();
+          }
+          // Save
+          else if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+              e.preventDefault();
+              const json = engineInstance.saveScene();
+              localStorage.setItem('ti3d_scene', json);
+              console.log("Scene Saved to LocalStorage");
+              alert("Scene Saved!");
+          }
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   useEffect(() => {
     refreshState();
     const unsubscribe = engineInstance.subscribe(refreshState);
@@ -150,11 +178,19 @@ const App: React.FC = () => {
   const handlePause = () => { engineInstance.pause(); setIsPlaying(false); };
   const handleStop = () => { engineInstance.stop(); setIsPlaying(false); };
 
-  // Tab Loading Logic
+  const handleLoad = () => {
+      const json = localStorage.getItem('ti3d_scene');
+      if (json) {
+          engineInstance.loadScene(json);
+          alert("Scene Loaded!");
+      } else {
+          alert("No saved scene found.");
+      }
+  };
+
   const loadTab = (data: TabData): TabData => {
     let content;
     let icon = 'Box';
-
     switch (data.id) {
         case 'hierarchy': content = <HierarchyWrapper />; icon = 'ListTree'; break;
         case 'project': content = <ProjectWrapper />; icon = 'FolderOpen'; break;
@@ -165,7 +201,6 @@ const App: React.FC = () => {
         case 'console': content = <ConsoleWrapper />; icon = 'Terminal'; break;
         default: content = <div>Missing Panel</div>;
     }
-
     return {
       id: data.id,
       title: data.title, 
@@ -177,43 +212,25 @@ const App: React.FC = () => {
     };
   };
 
-  // Initialize Layout with Icons
   const [layout] = useState(() => {
      const process = (box: BoxData | PanelData): BoxData | PanelData => {
-         if ('children' in box && box.children) {
-             return { ...box, children: box.children.map(process as any) };
-         }
-         
+         if ('children' in box && box.children) return { ...box, children: box.children.map(process as any) };
          const panel = box as PanelData;
-         if (panel.tabs) {
-             return { ...panel, tabs: panel.tabs.map((t: TabData) => {
-                 const loaded = loadTab(t);
-                 // Dynamically assign icon for initial layout
-                 const iconName = 
-                    t.id === 'hierarchy' ? 'ListTree' :
-                    t.id === 'project' ? 'FolderOpen' :
-                    t.id === 'scene' ? 'Cuboid' :
-                    t.id === 'game' ? 'Gamepad2' :
-                    t.id === 'graph' ? 'Workflow' :
-                    t.id === 'inspector' ? 'Settings2' :
-                    t.id === 'console' ? 'Terminal' : 'Box';
-                 
-                 return {
-                     ...loaded,
-                     title: (
-                        <div className="flex items-center gap-2">
-                           <Icon name={iconName as any} size={14} className={t.id === 'scene' ? 'text-accent' : 'text-text-secondary'}/>
-                           <span>{t.title as string}</span>
-                        </div>
-                     )
-                 };
-             })};
-         }
+         if (panel.tabs) return { ...panel, tabs: panel.tabs.map((t: TabData) => {
+             const loaded = loadTab(t);
+             const iconName = 
+                t.id === 'hierarchy' ? 'ListTree' :
+                t.id === 'project' ? 'FolderOpen' :
+                t.id === 'scene' ? 'Cuboid' :
+                t.id === 'game' ? 'Gamepad2' :
+                t.id === 'graph' ? 'Workflow' :
+                t.id === 'inspector' ? 'Settings2' :
+                t.id === 'console' ? 'Terminal' : 'Box';
+             return { ...loaded, title: (<div className="flex items-center gap-2"><Icon name={iconName as any} size={14} className={t.id === 'scene' ? 'text-accent' : 'text-text-secondary'}/><span>{t.title as string}</span></div>) };
+         })};
          return box;
      };
-     
      if (!DEFAULT_LAYOUT.dockbox) return { dockbox: { mode: 'horizontal', children: [] } };
-
      return { dockbox: process(DEFAULT_LAYOUT.dockbox) as BoxData };
   });
 
@@ -235,7 +252,16 @@ const App: React.FC = () => {
             Ti3D ENGINE
           </div>
           <div className="flex gap-4 text-text-secondary font-medium">
-              {['File', 'Edit', 'Assets', 'GameObject', 'Window', 'Help'].map(m => (
+              <span className="hover:text-white cursor-pointer transition-colors" onClick={() => {
+                  const json = engineInstance.saveScene();
+                  localStorage.setItem('ti3d_scene', json);
+                  alert("Saved to LocalStorage");
+              }}>Save</span>
+              <span className="hover:text-white cursor-pointer transition-colors" onClick={handleLoad}>Load</span>
+              <span className="hover:text-white cursor-pointer transition-colors" onClick={() => engineInstance.undo()}>Undo</span>
+              <span className="hover:text-white cursor-pointer transition-colors" onClick={() => engineInstance.redo()}>Redo</span>
+              <div className="w-px h-4 bg-white/10 mx-2"/>
+              {['Assets', 'GameObject', 'Window', 'Help'].map(m => (
                   <span key={m} className="hover:text-white cursor-pointer transition-colors">{m}</span>
               ))}
           </div>
@@ -266,8 +292,8 @@ const App: React.FC = () => {
               <span className="font-bold flex items-center gap-1"><Icon name="CheckCircle2" size={10} /> Ready</span>
           </div>
           <div className="flex items-center gap-4 font-mono opacity-80">
-              <span>MEM: 42MB</span>
-              <span>GPU: 2.1ms</span>
+              <span>MEM: 48MB</span>
+              <span>GPU: 2.4ms</span>
               <span>FPS: 60.0</span>
           </div>
         </div>

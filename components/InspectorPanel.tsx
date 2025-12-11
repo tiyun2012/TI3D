@@ -15,9 +15,10 @@ const DraggableNumber: React.FC<{
   label: string; 
   value: number; 
   onChange: (val: number) => void; 
+  onCommit?: () => void;
   color?: string;
   step?: number;
-}> = ({ label, value, onChange, color, step = 0.1 }) => {
+}> = ({ label, value, onChange, onCommit, color, step = 0.1 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const startX = useRef(0);
   const startVal = useRef(0);
@@ -30,8 +31,11 @@ const DraggableNumber: React.FC<{
       onChange(parseFloat(newVal.toFixed(3)));
     };
     const handleUp = () => {
-      setIsDragging(false);
-      document.body.style.cursor = 'default';
+      if(isDragging) {
+          setIsDragging(false);
+          document.body.style.cursor = 'default';
+          onCommit?.();
+      }
     };
 
     if (isDragging) {
@@ -43,7 +47,7 @@ const DraggableNumber: React.FC<{
         window.removeEventListener('mousemove', handleMove);
         window.removeEventListener('mouseup', handleUp);
     };
-  }, [isDragging, onChange, step]);
+  }, [isDragging, onChange, onCommit, step]);
 
   return (
     <div className="flex items-center bg-input-bg rounded overflow-hidden border border-transparent focus-within:border-accent group">
@@ -62,19 +66,20 @@ const DraggableNumber: React.FC<{
         className="flex-1 bg-transparent text-xs p-1 outline-none text-white min-w-0" 
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
+        onBlur={onCommit}
         step={step}
       />
     </div>
   );
 };
 
-const Vector3Input: React.FC<{ label: string; value: Vector3; onChange?: (v: Vector3) => void }> = ({ label, value, onChange }) => (
+const Vector3Input: React.FC<{ label: string; value: Vector3; onChange?: (v: Vector3) => void; onCommit?: () => void }> = ({ label, value, onChange, onCommit }) => (
   <div className="flex flex-col gap-1 mb-3">
     <div className="text-[10px] uppercase text-text-secondary font-semibold tracking-wider ml-1">{label}</div>
     <div className="grid grid-cols-3 gap-1">
-      <DraggableNumber label="X" value={value.x} onChange={(v) => onChange?.({...value, x: v})} color="text-red-500 hover:bg-red-500/20" />
-      <DraggableNumber label="Y" value={value.y} onChange={(v) => onChange?.({...value, y: v})} color="text-green-500 hover:bg-green-500/20" />
-      <DraggableNumber label="Z" value={value.z} onChange={(v) => onChange?.({...value, z: v})} color="text-blue-500 hover:bg-blue-500/20" />
+      <DraggableNumber label="X" value={value.x} onChange={(v) => onChange?.({...value, x: v})} onCommit={onCommit} color="text-red-500 hover:bg-red-500/20" />
+      <DraggableNumber label="Y" value={value.y} onChange={(v) => onChange?.({...value, y: v})} onCommit={onCommit} color="text-green-500 hover:bg-green-500/20" />
+      <DraggableNumber label="Z" value={value.z} onChange={(v) => onChange?.({...value, z: v})} onCommit={onCommit} color="text-blue-500 hover:bg-blue-500/20" />
     </div>
   </div>
 );
@@ -85,7 +90,8 @@ const ComponentCard: React.FC<{
   icon: string; 
   onRemove?: () => void;
   onUpdate: (field: string, value: any) => void;
-}> = ({ component, title, icon, onUpdate }) => {
+  onCommit: () => void;
+}> = ({ component, title, icon, onUpdate, onCommit }) => {
   const [open, setOpen] = useState(true);
 
   return (
@@ -110,9 +116,9 @@ const ComponentCard: React.FC<{
       {open && <div className="p-3 bg-panel border-t border-black/10 text-xs space-y-3">
         {component.type === ComponentType.TRANSFORM && (
           <>
-            <Vector3Input label="Position" value={component.position} onChange={(v) => onUpdate('position', v)} />
-            <Vector3Input label="Rotation" value={component.rotation} onChange={(v) => onUpdate('rotation', v)} />
-            <Vector3Input label="Scale" value={component.scale} onChange={(v) => onUpdate('scale', v)} />
+            <Vector3Input label="Position" value={component.position} onChange={(v) => onUpdate('position', v)} onCommit={onCommit} />
+            <Vector3Input label="Rotation" value={component.rotation} onChange={(v) => onUpdate('rotation', v)} onCommit={onCommit} />
+            <Vector3Input label="Scale" value={component.scale} onChange={(v) => onUpdate('scale', v)} onCommit={onCommit} />
           </>
         )}
 
@@ -125,7 +131,7 @@ const ComponentCard: React.FC<{
                    <select 
                       className="flex-1 bg-transparent outline-none text-white"
                       value={component.meshType}
-                      onChange={(e) => onUpdate('meshType', e.target.value)}
+                      onChange={(e) => { onUpdate('meshType', e.target.value); onCommit(); }}
                    >
                       <option value="Cube">Cube</option>
                       <option value="Sphere">Sphere</option>
@@ -133,19 +139,35 @@ const ComponentCard: React.FC<{
                    </select>
                 </div>
              </div>
+             
+             {/* Texture Array Selector */}
+             <div className="flex items-center gap-2">
+                 <span className="w-24 text-text-secondary">Texture ID</span>
+                 <div className="flex-1">
+                     <DraggableNumber 
+                        label="#" 
+                        value={component.textureIndex || 0} 
+                        step={1} 
+                        onChange={(v) => onUpdate('textureIndex', Math.max(0, Math.floor(v)))} 
+                        onCommit={onCommit}
+                     />
+                 </div>
+                 <span className="text-[10px] text-text-secondary opacity-50">0=White, 1=Grid, 2=Noise, 3=Brick</span>
+             </div>
+
              <div className="flex items-center gap-2">
                 <span className="w-24 text-text-secondary">Color</span>
                 <div className="flex-1 flex gap-2">
                     <input 
                         type="color" 
                         value={component.color} 
-                        onChange={(e) => onUpdate('color', e.target.value)}
+                        onChange={(e) => { onUpdate('color', e.target.value); onCommit(); }}
                         className="w-8 h-6 rounded cursor-pointer bg-transparent"
                     />
                     <input 
                         type="text" 
                         value={component.color} 
-                        onChange={(e) => onUpdate('color', e.target.value)}
+                        onChange={(e) => { onUpdate('color', e.target.value); onCommit(); }}
                         className="flex-1 bg-input-bg rounded px-2 text-text-secondary outline-none focus:text-white" 
                     />
                 </div>
@@ -176,7 +198,7 @@ const ComponentCard: React.FC<{
                <input 
                   type="color" 
                   value={component.color} 
-                  onChange={(e) => onUpdate('color', e.target.value)}
+                  onChange={(e) => { onUpdate('color', e.target.value); onCommit(); }}
                   className="w-full h-6 rounded bg-transparent cursor-pointer" 
                />
             </div>
@@ -186,7 +208,7 @@ const ComponentCard: React.FC<{
                   <input 
                     type="range" min="0" max="5" step="0.1" 
                     value={component.intensity} 
-                    onChange={(e) => onUpdate('intensity', parseFloat(e.target.value))}
+                    onChange={(e) => { onUpdate('intensity', parseFloat(e.target.value)); onCommit(); }}
                     className="flex-1" 
                   />
                   <span className="w-8 text-right font-mono">{component.intensity}</span>
@@ -199,7 +221,7 @@ const ComponentCard: React.FC<{
            <>
             <div className="flex items-center gap-2">
                <span className="w-24 text-text-secondary">Mass (kg)</span>
-               <DraggableNumber label="" value={component.mass} onChange={(v) => onUpdate('mass', v)} step={0.1} />
+               <DraggableNumber label="" value={component.mass} onChange={(v) => onUpdate('mass', v)} onCommit={onCommit} step={0.1} />
             </div>
             <div className="flex items-center gap-2">
                <span className="w-24 text-text-secondary">Drag</span>
@@ -210,7 +232,7 @@ const ComponentCard: React.FC<{
                <input 
                   type="checkbox" 
                   checked={component.useGravity} 
-                  onChange={(e) => onUpdate('useGravity', e.target.checked)}
+                  onChange={(e) => { onUpdate('useGravity', e.target.checked); onCommit(); }}
                 />
             </div>
             <div className="flex items-center gap-2">
@@ -249,6 +271,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectio
       (entity as any)[field] = value;
       engineInstance.notifyUI();
   };
+  
+  const handleCommit = () => {
+      engineInstance.pushUndoState();
+  };
 
   const handleComponentChange = (type: ComponentType, field: string, value: any) => {
       const comp = entity.components[type];
@@ -266,7 +292,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectio
           <input 
             type="checkbox" 
             checked={entity.isActive} 
-            onChange={(e) => handleEntityChange('isActive', e.target.checked)}
+            onChange={(e) => { handleEntityChange('isActive', e.target.checked); handleCommit(); }}
             className="w-4 h-4 rounded-sm" 
             title="Active" 
           />
@@ -276,6 +302,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectio
                 className="bg-transparent text-sm w-full outline-none font-medium text-white" 
                 value={entity.name} 
                 onChange={(e) => handleEntityChange('name', e.target.value)}
+                onBlur={handleCommit}
              />
           </div>
         </div>
@@ -308,6 +335,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectio
             component={entity.components[ComponentType.TRANSFORM]} 
             icon="Move3d" 
             onUpdate={(f, v) => handleComponentChange(ComponentType.TRANSFORM, f, v)}
+            onCommit={handleCommit}
           />
         )}
         {entity.components[ComponentType.MESH] && (
@@ -316,6 +344,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectio
             component={entity.components[ComponentType.MESH]} 
             icon="Box" 
             onUpdate={(f, v) => handleComponentChange(ComponentType.MESH, f, v)}
+            onCommit={handleCommit}
           />
         )}
         {entity.components[ComponentType.LIGHT] && (
@@ -324,6 +353,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectio
             component={entity.components[ComponentType.LIGHT]} 
             icon="Sun" 
             onUpdate={(f, v) => handleComponentChange(ComponentType.LIGHT, f, v)}
+            onCommit={handleCommit}
           />
         )}
         {entity.components[ComponentType.PHYSICS] && (
@@ -332,6 +362,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectio
             component={entity.components[ComponentType.PHYSICS]} 
             icon="Weight" 
             onUpdate={(f, v) => handleComponentChange(ComponentType.PHYSICS, f, v)}
+            onCommit={handleCommit}
           />
         )}
         

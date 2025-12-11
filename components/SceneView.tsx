@@ -49,6 +49,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     startX: number;
     startY: number;
     startValue: Vector3;
+    hasMoved: boolean;
   } | null>(null);
 
   useLayoutEffect(() => {
@@ -107,13 +108,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    // Selection Logic: Left Click + No Alt (Not orbiting)
     if (!e.altKey && e.button === 0) {
-        
-        // Check Gizmo intersection (Simplified: we let gizmo handle its own MouseDown via renderGizmos)
-        // If we are here, we might be selecting
-        
-        // Start Marquee Selection if using Select Tool
         if (tool === 'SELECT') {
             setSelectionBox({
                 startX: mouseX,
@@ -122,9 +117,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 currentY: mouseY,
                 isSelecting: true
             });
-            // Don't clear selection immediately on mouse down to allow for drag start
         } else {
-             // Instant Click Select for Transform Tools if not clicking gizmo
              const hitId = engineInstance.selectEntityAt(mouseX, mouseY, rect.width, rect.height);
              if (hitId) {
                 if (e.shiftKey) {
@@ -138,7 +131,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         }
     }
     
-    // Navigation Logic: Alt + Mouse Buttons
     if (e.altKey || (e.button === 1) || (e.button === 2)) {
         e.preventDefault();
         let mode: 'ORBIT' | 'PAN' | 'ZOOM' = 'ORBIT';
@@ -171,18 +163,13 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         });
         return;
     }
-
-    // Gizmo Dragging (Moved logic to window listener in useEffect but kept start logic here)
-    // ... logic handled by gizmoDrag state in useEffect below
   };
 
   const handleMouseUp = (e: React.MouseEvent) => {
-      // Finish Selection Box
       if (selectionBox && selectionBox.isSelecting) {
           const w = selectionBox.currentX - selectionBox.startX;
           const h = selectionBox.currentY - selectionBox.startY;
           
-          // If barely moved, treat as single click
           if (Math.abs(w) < 2 && Math.abs(h) < 2) {
                if (containerRef.current) {
                     const rect = containerRef.current.getBoundingClientRect();
@@ -195,7 +182,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     }
                }
           } else {
-              // Box Selection
               const rectIds = engineInstance.selectEntitiesInRect(selectionBox.startX, selectionBox.startY, w, h);
               if (e.shiftKey) {
                   onSelect([...new Set([...selectedIds, ...rectIds])]);
@@ -210,7 +196,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   useEffect(() => {
     const handleWindowMouseMove = (e: MouseEvent) => {
       if (gizmoDrag && selectedIds.length > 0) {
-          // Only transform the FIRST selected entity for simplicity in this demo
           const selectedId = selectedIds[0];
           const entity = entities.find(e => e.id === selectedId);
           if (!entity) return;
@@ -218,6 +203,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           const dx = e.clientX - gizmoDrag.startX;
           const dy = e.clientY - gizmoDrag.startY;
           
+          // Mark that we moved
+          gizmoDrag.hasMoved = true;
+
           const factor = 0.02 * (camera.radius / 10); 
 
           if (tool === 'MOVE') {
@@ -277,8 +265,13 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
 
     const handleWindowMouseUp = () => {
         setDragState(null);
-        setGizmoDrag(null);
-        // Note: selectionBox mouseup is handled on the container to capture clicks better
+        if (gizmoDrag) {
+            // Push undo state only if we actually moved something
+            if (gizmoDrag.hasMoved) {
+                engineInstance.pushUndoState();
+            }
+            setGizmoDrag(null);
+        }
     };
 
     if (dragState || gizmoDrag) {
@@ -296,7 +289,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   };
 
   const renderGizmos = () => {
-      // Only show gizmo if one object is selected
       if (selectedIds.length !== 1 || tool === 'SELECT') return null;
       
       const selectedId = selectedIds[0];
@@ -328,13 +320,13 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
               axis,
               startX: e.clientX,
               startY: e.clientY,
-              startValue: startVal
+              startValue: startVal,
+              hasMoved: false
           });
       };
 
       const renderAxis = (axis: Axis, color: string, endPoint: {x:number, y:number, z:number, w:number}) => {
           if (endPoint.w <= 0) return null;
-          
           const isActive = gizmoDrag?.axis === axis;
           const strokeColor = isActive ? '#fff' : color;
           
@@ -397,7 +389,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         <canvas ref={canvasRef} className="block w-full h-full outline-none" />
         {renderGizmos()}
         
-        {/* Marquee Selection Box */}
         {selectionBox && selectionBox.isSelecting && (
             <div 
                 className="absolute border border-blue-500 bg-blue-500/20 pointer-events-none z-30"
@@ -410,7 +401,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             />
         )}
         
-        {/* Helper UI Overlays */}
         <div className="absolute top-3 left-3 flex gap-2 z-20">
             <div className="bg-black/40 backdrop-blur border border-white/5 rounded-md flex p-1 text-text-secondary">
                  <button className="p-1 hover:text-white rounded hover:bg-white/10"><Icon name="Box" size={14} /></button>
