@@ -1,13 +1,13 @@
 
-
 /**
  * High Performance WebGL Engine Core
  * Features: Data-Oriented ECS (SoA), Geometry Instancing, Dirty Flags, Texture Arrays, Save/Load, Undo/Redo, Debug Graph
  */
 
-import { Entity, ComponentType, Component } from '../types';
+import { Entity, ComponentType, Component, GraphNode, GraphConnection } from '../types';
 import { SceneGraph } from './SceneGraph';
 import { Mat4, Mat4Utils, RayUtils, Vec3Utils, TMP_MAT4_1, TMP_MAT4_2 } from './math';
+import { NodeRegistry, NodeDef } from './NodeRegistry';
 
 // --- Debug Renderer (Instanced Lines) ---
 
@@ -101,47 +101,6 @@ class DebugRenderer {
         gl.bindVertexArray(null);
     }
 }
-
-// --- Logic Graph Runtime (Data-Oriented) ---
-
-type NodeExecutor = (inputs: any[], engine: Ti3DEngine) => any;
-
-const NODE_EXECUTORS: Record<string, NodeExecutor> = {
-    // Producer: Returns stream of all active entity indices
-    'AllEntities': (inputs, engine) => {
-        const count = engine.ecs.count;
-        const { isActive } = engine.ecs.store;
-        // In a real engine, we'd cache this query or use a persistent query list
-        const indices = new Int32Array(count);
-        let c = 0;
-        for(let i=0; i<count; i++) {
-            if(isActive[i]) indices[c++] = i;
-        }
-        return { indices: indices.subarray(0, c), count: c };
-    },
-    
-    // Consumer: Draws axes for each entity in the stream
-    'DrawAxes': (inputs, engine) => {
-        const stream = inputs[0]; // Expecting { indices, count }
-        if(!stream || !stream.indices) return;
-        
-        const { indices, count } = stream;
-        const { posX, posY, posZ } = engine.ecs.store;
-        const size = 1.0;
-        
-        for(let k=0; k<count; k++) {
-            const i = indices[k];
-            const x = posX[i], y = posY[i], z = posZ[i];
-            
-            // X Axis (Red)
-            engine.debugRenderer.drawLine({x,y,z}, {x:x+size,y,z}, {r:1,g:0,b:0});
-            // Y Axis (Green)
-            engine.debugRenderer.drawLine({x,y,z}, {x,y:y+size,z}, {r:0,g:1,b:0});
-            // Z Axis (Blue)
-            engine.debugRenderer.drawLine({x,y,z}, {x,y,z:z+size}, {r:0,g:0,b:1});
-        }
-    }
-};
 
 // --- WebGL Shaders with Instancing & Texture Array Support ---
 
@@ -882,6 +841,13 @@ class PhysicsSystem {
 
 // --- Main Engine Class ---
 
+interface ExecutionStep {
+    id: string;
+    def: NodeDef;
+    inputs: Array<{ nodeId: string, pinId: string } | null>;
+    data: any;
+}
+
 export class Ti3DEngine {
   ecs: SoAEntitySystem;
   sceneGraph: SceneGraph;
@@ -895,7 +861,7 @@ export class Ti3DEngine {
   private listeners: (() => void)[] = [];
 
   // Logic Graph State
-  private executionList: Array<{ id: string, type: string, inputNodeIds: string[] }> = [];
+  private executionList: ExecutionStep[] = [];
   private nodeResults = new Map<string, any>(); 
 
   private tempTransformData = new Float32Array(9);
@@ -947,24 +913,48 @@ export class Ti3DEngine {
       this.notifyUI();
   }
 
-  // Logic Graph "Compiler"
-  updateGraph(nodes: any[], connections: any[]) {
+  // Logic Graph "Compiler" - Topological Sort
+  compileGraph(nodes: GraphNode[], connections: GraphConnection[]) {
       this.executionList = [];
-      const logicNodes = nodes.filter((n: any) => NODE_EXECUTORS[n.type]);
-      
-      // Simple Topological Sort for demo: Producers -> Consumers
-      const producers = logicNodes.filter((n: any) => n.type === 'AllEntities');
-      const consumers = logicNodes.filter((n: any) => n.type === 'DrawAxes');
-      
-      producers.forEach((n: any) => {
-           this.executionList.push({ id: n.id, type: n.type, inputNodeIds: [] });
-      });
-      
-      consumers.forEach((n: any) => {
-          const inputConns = connections.filter((c: any) => c.toNode === n.id);
-          const inputs = inputConns.map((c: any) => c.fromNode);
-          this.executionList.push({ id: n.id, type: n.type, inputNodeIds: inputs });
-      });
+      const nodeMap = new Map(nodes.map(n => [n.id, n]));
+      const visited = new Set<string>();
+
+      // Recursive Visit (Post-order traversal)
+      const visit = (nodeId: string) => {
+          if (visited.has(nodeId)) return;
+          
+          const node = nodeMap.get(nodeId);
+          if (!node) return;
+
+          // 1. Visit Inputs first
+          const inputConns = connections.filter(c => c.toNode === nodeId);
+          for(const c of inputConns) {
+              visit(c.fromNode);
+          }
+
+          visited.add(nodeId);
+
+          // 2. Add to Execution List
+          const def = NodeRegistry[node.type];
+          if (def) {
+              const inputs = def.inputs.map(inputDef => {
+                  const conn = connections.find(c => c.toNode === nodeId && c.toPin === inputDef.id);
+                  return conn ? { nodeId: conn.fromNode, pinId: conn.fromPin } : null;
+              });
+
+              this.executionList.push({
+                  id: nodeId,
+                  def,
+                  inputs,
+                  data: node.data
+              });
+          }
+      };
+
+      // Compile: Start from every node to ensure disconnected graphs run
+      for (const node of nodes) {
+          visit(node.id);
+      }
   }
 
   viewProjectionMatrix = Mat4Utils.create();
@@ -1098,15 +1088,27 @@ export class Ti3DEngine {
 
       this.syncTransforms();
       
-      // --- Logic Graph Execution ---
+      // --- Logic Graph Execution (Compiled) ---
       this.debugRenderer.begin();
       this.nodeResults.clear();
+      
       for(const step of this.executionList) {
-          const exec = NODE_EXECUTORS[step.type];
-          if(exec) {
-              const inputs = step.inputNodeIds.map(id => this.nodeResults.get(id));
-              const result = exec(inputs, this);
-              this.nodeResults.set(step.id, result);
+          const inputs = step.inputs.map(link => {
+              if (!link) return null;
+              const res = this.nodeResults.get(link.nodeId);
+              // If result is object and has key matching pinId, use that
+              if (res && typeof res === 'object' && link.pinId in res && !ArrayBuffer.isView(res)) {
+                  return res[link.pinId];
+              }
+              // Fallback for simple single-output nodes
+              return res;
+          });
+          
+          try {
+             const result = step.def.execute(inputs, step.data, this);
+             this.nodeResults.set(step.id, result);
+          } catch(e) {
+              // Suppress execution errors for smoother editing
           }
       }
 

@@ -54,6 +54,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     hasMoved: boolean;
     screenAxis: { x: number, y: number }; // Normalized screen space vector for axis projection
     rotationStartAngle?: number; 
+    axisVector?: Vector3; // The world-space vector of the axis being manipulated
   } | null>(null);
 
   useLayoutEffect(() => {
@@ -216,7 +217,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           
           gizmoDrag.hasMoved = true;
 
-          // Scale sensitivity based on distance for consistent feel
           const worldPos = sceneGraph.getWorldPosition(selectedId);
           const camPos = getCameraPosition();
           const dist = Math.sqrt(
@@ -251,7 +251,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                   transform.position.y = gizmoDrag.startValue.y - dy * factor;
               }
           } 
-          else if (tool === 'ROTATE' && gizmoDrag.rotationStartAngle !== undefined) {
+          else if (tool === 'ROTATE' && gizmoDrag.rotationStartAngle !== undefined && gizmoDrag.axisVector) {
              const rect = containerRef.current?.getBoundingClientRect();
              if (rect) {
                  // Calculate current angle based on mouse position relative to object center
@@ -262,6 +262,17 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                  const currentAngle = Math.atan2(e.clientY - cy, e.clientX - cx);
                  let delta = currentAngle - gizmoDrag.rotationStartAngle;
                  
+                 // View-Dependent Flow: Flip rotation if axis points away from camera
+                 const viewDir = { 
+                     x: camPos.x - worldPos.x, 
+                     y: camPos.y - worldPos.y, 
+                     z: camPos.z - worldPos.z 
+                 };
+                 const dot = viewDir.x * gizmoDrag.axisVector.x + viewDir.y * gizmoDrag.axisVector.y + viewDir.z * gizmoDrag.axisVector.z;
+                 if (dot < 0) {
+                     delta = -delta;
+                 }
+
                  if (e.shiftKey) {
                      const snap = Math.PI / 12; // 15 degrees
                      delta = Math.round(delta / snap) * snap;
@@ -352,7 +363,20 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       
       const selectedId = selectedIds[0];
       const worldPos = sceneGraph.getWorldPosition(selectedId);
+      const worldMatrix = sceneGraph.getWorldMatrix(selectedId);
+      if (!worldMatrix) return null;
+
+      // Extract Local Basis Vectors (Local Rotation)
+      // Columns 0, 1, 2 of World Matrix
+      const normalize = (v: Vector3) => {
+          const l = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+          return l > 0 ? {x: v.x/l, y: v.y/l, z: v.z/l} : v;
+      };
       
+      const xAxis = normalize({ x: worldMatrix[0], y: worldMatrix[1], z: worldMatrix[2] });
+      const yAxis = normalize({ x: worldMatrix[4], y: worldMatrix[5], z: worldMatrix[6] });
+      const zAxis = normalize({ x: worldMatrix[8], y: worldMatrix[9], z: worldMatrix[10] });
+
       // --- 1. Calculate View-Dependent Scale ---
       const camPos = getCameraPosition();
       const dist = Math.sqrt(
@@ -368,19 +392,23 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
 
       // Axis length in World Units, scaled by distance
       const axisLen = 1.0 * scale; 
-      const handleLen = 0.3 * scale; // For Planar handles
+      const handleLen = 0.3 * scale; 
       const origin = { x: worldPos.x, y: worldPos.y, z: worldPos.z };
       
-      // Calculate Axis End Points (World Space -> Screen Space)
-      const project = (offset: Vector3) => Mat4Utils.transformPoint(
-          { x: origin.x + offset.x, y: origin.y + offset.y, z: origin.z + offset.z }, 
+      // Calculate Axis End Points using LOCAL axes
+      const projectAxis = (axisVec: Vector3, len: number) => Mat4Utils.transformPoint(
+          { 
+              x: origin.x + axisVec.x * len, 
+              y: origin.y + axisVec.y * len, 
+              z: origin.z + axisVec.z * len 
+          }, 
           vpMatrix, width, height
       );
 
       const axes = {
-          x: project({ x: axisLen, y: 0, z: 0 }),
-          y: project({ x: 0, y: axisLen, z: 0 }),
-          z: project({ x: 0, y: 0, z: axisLen })
+          x: projectAxis(xAxis, axisLen),
+          y: projectAxis(yAxis, axisLen),
+          z: projectAxis(zAxis, axisLen)
       };
 
       const startDrag = (e: React.MouseEvent, axis: Axis) => {
@@ -394,6 +422,12 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           if (tool === 'MOVE') startValue = { ...transform.position };
           else if (tool === 'ROTATE') startValue = { ...transform.rotation };
           else if (tool === 'SCALE') startValue = { ...transform.scale };
+
+          // Determine current axis vector
+          let axisVector = { x: 1, y: 0, z: 0 };
+          if (axis === 'X') axisVector = xAxis;
+          if (axis === 'Y') axisVector = yAxis;
+          if (axis === 'Z') axisVector = zAxis;
 
           // Store current mouse projection for improved dragging feel
           let screenAxis = { x: 1, y: 0 };
@@ -423,22 +457,32 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
               startValue,
               hasMoved: false,
               screenAxis,
-              rotationStartAngle
+              rotationStartAngle,
+              axisVector
           });
       };
 
-      // --- Helper: Project Circle Ring ---
+      // --- Helper: Project Circle Ring (Local-aligned) ---
       const projectRing = (axis: 'X' | 'Y' | 'Z', radius: number, segments = 32) => {
+          // Define basis for the ring plane
+          let u = xAxis, v = yAxis;
+          if (axis === 'X') { u = yAxis; v = zAxis; } // YZ plane
+          if (axis === 'Y') { u = xAxis; v = zAxis; } // XZ plane
+          if (axis === 'Z') { u = xAxis; v = yAxis; } // XY plane
+
           const points: string[] = [];
           for (let i = 0; i <= segments; i++) {
               const theta = (i / segments) * Math.PI * 2;
-              let pt = { x: 0, y: 0, z: 0 };
-              if (axis === 'X') pt = { x: 0, y: Math.cos(theta) * radius, z: Math.sin(theta) * radius };
-              if (axis === 'Y') pt = { x: Math.cos(theta) * radius, y: 0, z: Math.sin(theta) * radius };
-              if (axis === 'Z') pt = { x: Math.cos(theta) * radius, y: Math.sin(theta) * radius, z: 0 };
+              const c = Math.cos(theta) * radius;
+              const s = Math.sin(theta) * radius;
               
-              const world = { x: origin.x + pt.x, y: origin.y + pt.y, z: origin.z + pt.z };
-              const screen = Mat4Utils.transformPoint(world, vpMatrix, width, height);
+              const pt = {
+                  x: origin.x + u.x * c + v.x * s,
+                  y: origin.y + u.y * c + v.y * s,
+                  z: origin.z + u.z * c + v.z * s
+              };
+              
+              const screen = Mat4Utils.transformPoint(pt, vpMatrix, width, height);
               points.push(`${screen.x},${screen.y}`);
           }
           return points.join(' ');
@@ -446,21 +490,30 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
 
       // --- Helper: Render Plane Handle ---
       const renderPlaneHandle = (type: Axis, color: string) => {
-          // Calculate corners of the plane handle in World Space
-          const p1 = { ...origin }; // Origin
-          const p2 = { ...origin }; // Axis A endpoint
-          const p3 = { ...origin }; // Corner
-          const p4 = { ...origin }; // Axis B endpoint
+          // Plane handles use local axes too
+          const scaleHandle = handleLen;
+          
+          const pOrigin = { ...origin };
+          let p2 = { ...origin };
+          let p3 = { ...origin };
+          let p4 = { ...origin };
 
           if (type === 'XY') {
-              p2.x += handleLen; p3.x += handleLen; p3.y += handleLen; p4.y += handleLen;
+              // Origin -> X -> X+Y -> Y
+              p2 = { x: origin.x + xAxis.x * scaleHandle, y: origin.y + xAxis.y * scaleHandle, z: origin.z + xAxis.z * scaleHandle };
+              p4 = { x: origin.x + yAxis.x * scaleHandle, y: origin.y + yAxis.y * scaleHandle, z: origin.z + yAxis.z * scaleHandle };
+              p3 = { x: p2.x + yAxis.x * scaleHandle, y: p2.y + yAxis.y * scaleHandle, z: p2.z + yAxis.z * scaleHandle };
           } else if (type === 'XZ') {
-              p2.x += handleLen; p3.x += handleLen; p3.z += handleLen; p4.z += handleLen;
+              p2 = { x: origin.x + xAxis.x * scaleHandle, y: origin.y + xAxis.y * scaleHandle, z: origin.z + xAxis.z * scaleHandle };
+              p4 = { x: origin.x + zAxis.x * scaleHandle, y: origin.y + zAxis.y * scaleHandle, z: origin.z + zAxis.z * scaleHandle };
+              p3 = { x: p2.x + zAxis.x * scaleHandle, y: p2.y + zAxis.y * scaleHandle, z: p2.z + zAxis.z * scaleHandle };
           } else if (type === 'YZ') {
-              p2.y += handleLen; p3.y += handleLen; p3.z += handleLen; p4.z += handleLen;
+              p2 = { x: origin.x + yAxis.x * scaleHandle, y: origin.y + yAxis.y * scaleHandle, z: origin.z + yAxis.z * scaleHandle };
+              p4 = { x: origin.x + zAxis.x * scaleHandle, y: origin.y + zAxis.y * scaleHandle, z: origin.z + zAxis.z * scaleHandle };
+              p3 = { x: p2.x + zAxis.x * scaleHandle, y: p2.y + zAxis.y * scaleHandle, z: p2.z + zAxis.z * scaleHandle };
           }
 
-          const s1 = Mat4Utils.transformPoint(p1, vpMatrix, width, height);
+          const s1 = Mat4Utils.transformPoint(pOrigin, vpMatrix, width, height);
           const s2 = Mat4Utils.transformPoint(p2, vpMatrix, width, height);
           const s3 = Mat4Utils.transformPoint(p3, vpMatrix, width, height);
           const s4 = Mat4Utils.transformPoint(p4, vpMatrix, width, height);

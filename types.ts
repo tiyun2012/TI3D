@@ -1,3 +1,4 @@
+
 // ECS Types
 export interface Vector3 {
   x: number;
@@ -28,18 +29,9 @@ export interface Entity {
 // Node Graph Types
 export interface GraphNode {
   id: string;
-  type: string; // Changed from union to string to allow extensibility
-  category?: string; // 'Math', 'Input', 'Master', etc.
-  title: string;
+  type: string; // Must match key in NodeRegistry
   position: { x: number; y: number };
-  inputs: { 
-    id: string; 
-    name: string; 
-    type: string; 
-    defaultValue?: any; // Value used if nothing is connected
-  }[];
-  outputs: { id: string; name: string; type: string }[];
-  data?: any; // Internal node state (e.g. constant values, preview images)
+  data?: any; // Internal node state (e.g. constant values)
 }
 
 export interface GraphConnection {
