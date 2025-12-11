@@ -127,8 +127,23 @@ const App: React.FC = () => {
   // Keyboard Shortcuts
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
+          // Play/Pause
+          if (e.code === 'Space' && (document.activeElement === document.body || document.activeElement?.tagName === 'BUTTON')) {
+              e.preventDefault();
+              if (engineInstance.isPlaying) {
+                  engineInstance.pause();
+                  setIsPlaying(false);
+              } else {
+                  engineInstance.start();
+                  setIsPlaying(true);
+              }
+          }
+          // Grid Toggle
+          else if (e.code === 'KeyG' && !e.ctrlKey && !e.shiftKey) {
+               engineInstance.toggleGrid();
+          }
           // Undo/Redo
-          if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+          else if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
               if (e.shiftKey) {
                   engineInstance.redo();
               } else {
@@ -292,9 +307,9 @@ const App: React.FC = () => {
               <span className="font-bold flex items-center gap-1"><Icon name="CheckCircle2" size={10} /> Ready</span>
           </div>
           <div className="flex items-center gap-4 font-mono opacity-80">
-              <span>MEM: 48MB</span>
-              <span>GPU: 2.4ms</span>
-              <span>FPS: 60.0</span>
+              <span>MEM: {engineInstance.metrics.entityCount} Entities</span>
+              <span>GPU: {engineInstance.metrics.frameTime.toFixed(2)}ms</span>
+              <span>FPS: {engineInstance.metrics.fps.toFixed(0)}</span>
           </div>
         </div>
       </div>

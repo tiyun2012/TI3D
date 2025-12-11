@@ -1,6 +1,6 @@
 
 import React, { useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react';
-import { Entity, ComponentType, ToolType, Vector3 } from '../types';
+import { Entity, ComponentType, ToolType, Vector3, PerformanceMetrics } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
 import { Mat4Utils, Vec3Utils, Mat4 } from '../services/math';
 import { engineInstance } from '../services/engine';
@@ -16,10 +16,22 @@ interface SceneViewProps {
 
 type Axis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'UNIFORM';
 
+const StatsPanel: React.FC<{ metrics: PerformanceMetrics }> = ({ metrics }) => (
+    <div className="absolute top-10 right-2 bg-black/60 backdrop-blur border border-white/10 rounded-md p-2 text-[10px] font-mono text-text-secondary select-none pointer-events-none z-30 shadow-lg">
+        <div className="flex justify-between gap-4"><span className="text-white">FPS</span> <span className={metrics.fps < 30 ? "text-red-500" : "text-green-500"}>{metrics.fps.toFixed(0)}</span></div>
+        <div className="flex justify-between gap-4"><span>Frame</span> <span>{metrics.frameTime.toFixed(2)}ms</span></div>
+        <div className="flex justify-between gap-4"><span>Calls</span> <span>{metrics.drawCalls}</span></div>
+        <div className="flex justify-between gap-4"><span>Tris</span> <span>{metrics.triangleCount}</span></div>
+        <div className="flex justify-between gap-4"><span>Ents</span> <span>{metrics.entityCount}</span></div>
+    </div>
+);
+
 export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSelect, selectedIds, tool }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
+  const [metrics, setMetrics] = useState<PerformanceMetrics>(engineInstance.metrics);
+
   const [camera, setCamera] = useState({
     target: { x: 0, y: 0, z: 0 },
     theta: Math.PI / 4, 
@@ -69,6 +81,14 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         resizeObserver.observe(containerRef.current!);
         return () => resizeObserver.disconnect();
     }
+  }, []);
+
+  // Poll for metrics
+  useEffect(() => {
+      const interval = setInterval(() => {
+          setMetrics({...engineInstance.metrics});
+      }, 500);
+      return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -660,6 +680,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         <canvas ref={canvasRef} className="block w-full h-full outline-none" />
         {renderGizmos()}
         
+        {/* Performance Stats Overlay */}
+        <StatsPanel metrics={metrics} />
+        
         {selectionBox && selectionBox.isSelecting && (
             <div 
                 className="absolute border border-blue-500 bg-blue-500/20 pointer-events-none z-30"
@@ -675,7 +698,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         <div className="absolute top-3 left-3 flex gap-2 z-20">
             <div className="bg-black/40 backdrop-blur border border-white/5 rounded-md flex p-1 text-text-secondary">
                  <button className="p-1 hover:text-white rounded hover:bg-white/10"><Icon name="Box" size={14} /></button>
-                 <button className="p-1 hover:text-white rounded hover:bg-white/10"><Icon name="Grid" size={14} /></button>
+                 <button className="p-1 hover:text-white rounded hover:bg-white/10" onClick={() => engineInstance.toggleGrid()}><Icon name="Grid" size={14} /></button>
             </div>
             <div className="bg-black/40 backdrop-blur border border-white/5 rounded-md flex items-center px-2 text-[10px] text-text-secondary">
                 <span>Perspective</span>

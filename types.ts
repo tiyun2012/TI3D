@@ -45,3 +45,11 @@ export interface GraphConnection {
 // Editor Types
 export type EditorMode = 'SCENE' | 'GAME' | 'SCRIPT';
 export type ToolType = 'SELECT' | 'MOVE' | 'ROTATE' | 'SCALE';
+
+export interface PerformanceMetrics {
+  fps: number;
+  frameTime: number;
+  drawCalls: number;
+  triangleCount: number;
+  entityCount: number;
+}

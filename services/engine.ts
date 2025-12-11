@@ -4,7 +4,7 @@
  * Features: Data-Oriented ECS (SoA), Geometry Instancing, Dirty Flags, Texture Arrays, Save/Load, Undo/Redo, Debug Graph
  */
 
-import { Entity, ComponentType, Component, GraphNode, GraphConnection } from '../types';
+import { Entity, ComponentType, Component, GraphNode, GraphConnection, PerformanceMetrics } from '../types';
 import { SceneGraph } from './SceneGraph';
 import { Mat4, Mat4Utils, RayUtils, Vec3Utils, TMP_MAT4_1, TMP_MAT4_2 } from './math';
 import { NodeRegistry, NodeDef } from './NodeRegistry';
@@ -181,42 +181,95 @@ void main() {
 
 // --- Data-Oriented ECS Storage (SoA) ---
 
-const MAX_ENTITIES = 10000;
+const INITIAL_CAPACITY = 10000;
 
 // Stores Component Data in flat arrays for cache locality
 class ComponentStorage {
+    capacity = INITIAL_CAPACITY;
+
     // Transform
-    posX = new Float32Array(MAX_ENTITIES);
-    posY = new Float32Array(MAX_ENTITIES);
-    posZ = new Float32Array(MAX_ENTITIES);
-    rotX = new Float32Array(MAX_ENTITIES);
-    rotY = new Float32Array(MAX_ENTITIES);
-    rotZ = new Float32Array(MAX_ENTITIES);
-    scaleX = new Float32Array(MAX_ENTITIES);
-    scaleY = new Float32Array(MAX_ENTITIES);
-    scaleZ = new Float32Array(MAX_ENTITIES);
+    posX = new Float32Array(this.capacity);
+    posY = new Float32Array(this.capacity);
+    posZ = new Float32Array(this.capacity);
+    rotX = new Float32Array(this.capacity);
+    rotY = new Float32Array(this.capacity);
+    rotZ = new Float32Array(this.capacity);
+    scaleX = new Float32Array(this.capacity);
+    scaleY = new Float32Array(this.capacity);
+    scaleZ = new Float32Array(this.capacity);
 
     // Mesh
-    meshType = new Int32Array(MAX_ENTITIES); // 0=None, 1=Cube, 2=Sphere, 3=Plane
-    textureIndex = new Float32Array(MAX_ENTITIES); // New: Texture ID
-    colorR = new Float32Array(MAX_ENTITIES);
-    colorG = new Float32Array(MAX_ENTITIES);
-    colorB = new Float32Array(MAX_ENTITIES);
+    meshType = new Int32Array(this.capacity); // 0=None, 1=Cube, 2=Sphere, 3=Plane
+    textureIndex = new Float32Array(this.capacity); // New: Texture ID
+    colorR = new Float32Array(this.capacity);
+    colorG = new Float32Array(this.capacity);
+    colorB = new Float32Array(this.capacity);
 
     // Physics
-    mass = new Float32Array(MAX_ENTITIES);
-    useGravity = new Uint8Array(MAX_ENTITIES);
+    mass = new Float32Array(this.capacity);
+    useGravity = new Uint8Array(this.capacity);
 
     // Metadata
-    isActive = new Uint8Array(MAX_ENTITIES);
-    generation = new Uint32Array(MAX_ENTITIES);
+    isActive = new Uint8Array(this.capacity);
+    generation = new Uint32Array(this.capacity);
     
     // Auxiliary (Strings are not TypedArrays, handled separately in serialization)
-    names: string[] = new Array(MAX_ENTITIES);
-    ids: string[] = new Array(MAX_ENTITIES);
+    names: string[] = new Array(this.capacity);
+    ids: string[] = new Array(this.capacity);
     
+    constructor() {
+        this.scaleX.fill(1);
+        this.scaleY.fill(1);
+        this.scaleZ.fill(1);
+    }
+
+    resize(newCapacity: number) {
+        console.log(`[ECS] Resizing storage from ${this.capacity} to ${newCapacity}`);
+        
+        const resizeFloat = (old: Float32Array) => { const n = new Float32Array(newCapacity); n.set(old); return n; };
+        const resizeInt32 = (old: Int32Array) => { const n = new Int32Array(newCapacity); n.set(old); return n; };
+        const resizeUint8 = (old: Uint8Array) => { const n = new Uint8Array(newCapacity); n.set(old); return n; };
+        const resizeUint32 = (old: Uint32Array) => { const n = new Uint32Array(newCapacity); n.set(old); return n; };
+
+        this.posX = resizeFloat(this.posX);
+        this.posY = resizeFloat(this.posY);
+        this.posZ = resizeFloat(this.posZ);
+        this.rotX = resizeFloat(this.rotX);
+        this.rotY = resizeFloat(this.rotY);
+        this.rotZ = resizeFloat(this.rotZ);
+        this.scaleX = resizeFloat(this.scaleX);
+        this.scaleY = resizeFloat(this.scaleY);
+        this.scaleZ = resizeFloat(this.scaleZ);
+        
+        this.meshType = resizeInt32(this.meshType);
+        this.textureIndex = resizeFloat(this.textureIndex);
+        this.colorR = resizeFloat(this.colorR);
+        this.colorG = resizeFloat(this.colorG);
+        this.colorB = resizeFloat(this.colorB);
+        
+        this.mass = resizeFloat(this.mass);
+        this.useGravity = resizeUint8(this.useGravity);
+        
+        this.isActive = resizeUint8(this.isActive);
+        this.generation = resizeUint32(this.generation);
+        
+        // Resize Arrays
+        const newNames = new Array(newCapacity);
+        const newIds = new Array(newCapacity);
+        for(let i=0; i<this.capacity; i++) {
+            newNames[i] = this.names[i];
+            newIds[i] = this.ids[i];
+        }
+        this.names = newNames;
+        this.ids = newIds;
+
+        this.capacity = newCapacity;
+    }
+
     // Create a deep copy of the current state
     snapshot() {
+        // Simplified snapshot for current capacity to avoid massive JSONs
+        // In production, we'd only snapshot active entities
         return {
             posX: new Float32Array(this.posX),
             posY: new Float32Array(this.posY),
@@ -245,6 +298,10 @@ class ComponentStorage {
     }
     
     restore(snap: any) {
+        if (snap.posX.length > this.capacity) {
+            this.resize(snap.posX.length);
+        }
+        
         this.posX.set(snap.posX);
         this.posY.set(snap.posY);
         this.posZ.set(snap.posZ);
@@ -283,17 +340,14 @@ class SoAEntitySystem {
     // Map string UUID to SoA Index
     idToIndex = new Map<string, number>();
 
-    constructor() {
-        this.store.scaleX.fill(1);
-        this.store.scaleY.fill(1);
-        this.store.scaleZ.fill(1);
-    }
-
     createEntity(name: string): string {
         let index: number;
         if (this.freeIndices.length > 0) {
             index = this.freeIndices.pop()!;
         } else {
+            if (this.count >= this.store.capacity) {
+                this.store.resize(this.store.capacity * 2);
+            }
             index = this.count++;
         }
         
@@ -422,6 +476,7 @@ class SoAEntitySystem {
     serialize(): string {
         const data = {
             count: this.count,
+            capacity: this.store.capacity,
             freeIndices: this.freeIndices,
             idMap: Array.from(this.idToIndex.entries()),
             // Convert typed arrays to standard arrays for JSON
@@ -451,6 +506,9 @@ class SoAEntitySystem {
     deserialize(json: string, sceneGraph: SceneGraph) {
         try {
             const data = JSON.parse(json);
+            if (data.capacity && data.capacity > this.store.capacity) {
+                this.store.resize(data.capacity);
+            }
             this.count = data.count;
             this.freeIndices = data.freeIndices;
             this.idToIndex = new Map(data.idMap);
@@ -476,10 +534,10 @@ class SoAEntitySystem {
             fill(this.store.colorB, data.store.colorB);
             fill(this.store.isActive, data.store.isActive);
             
-            this.store.names = new Array(MAX_ENTITIES);
+            // this.store.names = new Array(this.store.capacity);
             fill(this.store.names, data.store.names);
             
-            this.store.ids = new Array(MAX_ENTITIES);
+            // this.store.ids = new Array(this.store.capacity);
             fill(this.store.ids, data.store.ids);
 
             this.idToIndex.forEach((idx, id) => {
@@ -576,8 +634,13 @@ class WebGLRenderer {
     textureArray: WebGLTexture | null = null;
     
     // Instance Data Buffers (CPU side)
-    // Stride: Mat4 (16) + Color (3) + Selected (1) + TextureIndex (1) = 21 floats
-    instanceData = new Float32Array(MAX_ENTITIES * 21); 
+    instanceData = new Float32Array(INITIAL_CAPACITY * 21);
+    
+    // Render Stats
+    drawCalls = 0;
+    triangleCount = 0;
+    
+    showGrid = true;
 
     uniforms: Record<string, WebGLUniformLocation | null> = {};
 
@@ -609,6 +672,23 @@ class WebGLRenderer {
         this.createMesh(MESH_TYPES['Sphere'], this.createCubeData()); 
         this.createMesh(MESH_TYPES['Plane'], this.createCubeData());
     }
+    
+    ensureCapacity(capacity: number) {
+        if (this.instanceData.length < capacity * 21) {
+            const newData = new Float32Array(capacity * 21);
+            newData.set(this.instanceData);
+            this.instanceData = newData;
+            
+            // Re-allocate GL buffers for instances
+            if (this.gl) {
+                const gl = this.gl;
+                this.meshes.forEach(mesh => {
+                    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, this.instanceData.byteLength, gl.DYNAMIC_DRAW);
+                });
+            }
+        }
+    }
 
     initTextureArray(gl: WebGL2RenderingContext) {
         // Create 256x256 texture array with 4 layers
@@ -630,7 +710,7 @@ class WebGLRenderer {
         ctx.fillRect(0,0,width,height);
         gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, width, height, 1, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
 
-        // Layer 1: Checkerboard
+        // Layer 1: Checkerboard (Grid)
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0,0,width,height);
         ctx.fillStyle = '#cccccc';
@@ -776,6 +856,10 @@ class WebGLRenderer {
         gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray);
         gl.uniform1i(this.uniforms.u_textures, 0);
 
+        this.drawCalls = 0;
+        this.triangleCount = 0;
+        this.ensureCapacity(store.capacity);
+
         const meshTypes = [1, 2, 3];
         
         for (const typeId of meshTypes) {
@@ -787,6 +871,10 @@ class WebGLRenderer {
             
             for (const index of idToIndex.values()) {
                 if (store.isActive[index] && store.meshType[index] === typeId) {
+                    // Grid Filtering: If grid is off, skip the Floor/Grid texture
+                    // HACK: Assuming texture 1 is grid and we want to hide it
+                    if (!this.showGrid && store.textureIndex[index] === 1) continue;
+
                     const worldMatrix = sceneGraph.getWorldMatrix(store.ids[index]);
                     if (!worldMatrix) continue;
 
@@ -806,6 +894,9 @@ class WebGLRenderer {
                 gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
                 gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.instanceData.subarray(0, instanceCount * 21)); // 21 floats stride
                 gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, instanceCount);
+                
+                this.drawCalls++;
+                this.triangleCount += (mesh.count / 3) * instanceCount;
             }
         }
     }
@@ -833,9 +924,64 @@ class WebGLRenderer {
     }
 }
 
+// --- Physics with Spatial Hashing ---
+
+class SpatialHashGrid {
+    cellSize = 2; // Tune based on object size
+    cells = new Map<string, number[]>();
+
+    clear() { this.cells.clear(); }
+
+    private getKey(x: number, y: number, z: number) {
+        return `${Math.floor(x/this.cellSize)},${Math.floor(y/this.cellSize)},${Math.floor(z/this.cellSize)}`;
+    }
+
+    insert(index: number, x: number, y: number, z: number) {
+        const key = this.getKey(x, y, z);
+        if(!this.cells.has(key)) this.cells.set(key, []);
+        this.cells.get(key)!.push(index);
+    }
+
+    getPotentialColliders(x: number, y: number, z: number): number[] {
+        // Only check current cell for this demo simplification
+        const key = this.getKey(x, y, z);
+        return this.cells.get(key) || [];
+    }
+}
+
 class PhysicsSystem {
-  update(deltaTime: number, store: ComponentStorage, idToIndex: Map<string, number>) {
-    // ...
+  grid = new SpatialHashGrid();
+
+  update(deltaTime: number, store: ComponentStorage, idToIndex: Map<string, number>, sceneGraph: SceneGraph) {
+     this.grid.clear();
+
+     // 1. Broadphase: Insert all physics objects into grid
+     idToIndex.forEach((idx) => {
+         if(store.isActive[idx] && store.mass[idx] > 0) {
+             this.grid.insert(idx, store.posX[idx], store.posY[idx], store.posZ[idx]);
+         }
+     });
+
+     // 2. Integration & Collision
+     idToIndex.forEach((idx, id) => {
+         if (!store.isActive[idx] || !store.useGravity[idx]) return;
+
+         // Gravity
+         store.posY[idx] -= 9.81 * deltaTime;
+
+         // Ground Plane Collision (Simple)
+         if (store.posY[idx] < -0.5) { // Assuming radius/half-height approx 0.5
+             store.posY[idx] = -0.5;
+         }
+
+         // Spatial Query (Example)
+         const neighbors = this.grid.getPotentialColliders(store.posX[idx], store.posY[idx], store.posZ[idx]);
+         if (neighbors.length > 1) {
+             // Narrow phase would go here
+         }
+
+         sceneGraph.setDirty(id);
+     });
   }
 }
 
@@ -865,6 +1011,12 @@ export class Ti3DEngine {
   private nodeResults = new Map<string, any>(); 
 
   private tempTransformData = new Float32Array(9);
+  
+  // Performance
+  metrics: PerformanceMetrics = { fps: 60, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0 };
+  private lastFrameTime = 0;
+  private frameCount = 0;
+  private lastFpsTime = 0;
 
   constructor() {
     this.ecs = new SoAEntitySystem();
@@ -910,6 +1062,11 @@ export class Ti3DEngine {
 
   setSelected(ids: string[]) {
       this.selectedIds = new Set(ids);
+      this.notifyUI();
+  }
+  
+  toggleGrid() {
+      this.renderer.showGrid = !this.renderer.showGrid;
       this.notifyUI();
   }
 
@@ -1076,6 +1233,16 @@ export class Ti3DEngine {
   }
 
   tick(deltaTime: number) {
+      const now = performance.now();
+      
+      // FPS Calculation
+      this.frameCount++;
+      if (now - this.lastFpsTime >= 1000) {
+          this.metrics.fps = this.frameCount;
+          this.frameCount = 0;
+          this.lastFpsTime = now;
+      }
+
       if (this.isPlaying) {
           // simple animation
           const sId = Array.from(this.ecs.idToIndex.entries()).find(x => this.ecs.store.names[x[1]] === 'Orbiting Satellite')?.[0];
@@ -1084,6 +1251,8 @@ export class Ti3DEngine {
               this.ecs.store.rotY[idx] += deltaTime * 2.0;
               this.sceneGraph.setDirty(sId);
           }
+          
+          this.physics.update(deltaTime, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
       }
 
       this.syncTransforms();
@@ -1122,6 +1291,13 @@ export class Ti3DEngine {
       
       // Render Debug Layer
       this.debugRenderer.render(this.viewProjectionMatrix);
+
+      // Metrics Update
+      const end = performance.now();
+      this.metrics.frameTime = end - now;
+      this.metrics.drawCalls = this.renderer.drawCalls;
+      this.metrics.triangleCount = this.renderer.triangleCount;
+      this.metrics.entityCount = this.ecs.idToIndex.size; // Active proxies might be less, but tracking map size
   }
   
   start() { this.isPlaying = true; this.notifyUI(); }
