@@ -229,7 +229,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
     };
     
     // --- Render Helpers ---
-    const renderVolumetricMesh = (vertices: Vector3[], indices: number[][], color: string, opacity: number = 1.0) => {
+    const renderVolumetricMesh = (vertices: Vector3[], indices: number[][], fillStyle: string, opacity: number = 1.0) => {
         const projected = vertices.map(v => {
             const p = project(v);
             return { x: p.x, y: p.y, z: p.z, w: p.w };
@@ -263,20 +263,31 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             let intensity = Math.max(0, GizmoMath.dot(face.normal, lightDir));
             intensity = 0.3 + intensity * 0.7;
             
-            const shadedColor = ColorUtils.shade(color, Math.floor((intensity - 0.5) * 40));
+            // Overlay shading using black with opacity
+            const shadeOpacity = 1.0 - intensity; 
+            
             const pts = face.indices.map(idx => `${projected[idx].x},${projected[idx].y}`).join(' ');
             
             return (
-                <polygon
-                    key={i}
-                    points={pts}
-                    fill={shadedColor}
-                    stroke={shadedColor} // Stroke same as fill to close gaps
-                    strokeWidth={0.5}
-                    fillOpacity={opacity * intensity}
-                    strokeOpacity={0.3}
-                    strokeLinejoin="round"
-                />
+                <g key={i}>
+                    {/* Base Color / Gradient */}
+                    <polygon 
+                        points={pts} 
+                        fill={fillStyle} 
+                        stroke={fillStyle} 
+                        strokeWidth={0.5} 
+                        fillOpacity={opacity} 
+                        strokeLinejoin="round" 
+                    />
+                    {/* Shadow Overlay for volume (Darkens the base color) */}
+                    <polygon 
+                        points={pts} 
+                        fill="black" 
+                        fillOpacity={shadeOpacity * 0.4 * opacity} 
+                        stroke="none" 
+                        pointerEvents="none"
+                    />
+                </g>
             );
         });
     };
@@ -285,14 +296,12 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
     const renderRingDecorations = (axis: Axis, axisVec: Vector3, u: Vector3, v: Vector3, color: string) => {
         if (!gizmoConfig.rotationShowDecorations) return null;
 
-        // Visibility Logic
+        const viewDir = GizmoMath.normalize(GizmoMath.sub(basis.cameraPosition, origin));
+        const dot = Math.abs(GizmoMath.dot(axisVec, viewDir));
+        
         let visibility = 1.0;
-        if (axis !== 'VIEW') {
-            const viewDir = GizmoMath.normalize(GizmoMath.sub(basis.cameraPosition, origin));
-            const dot = Math.abs(GizmoMath.dot(axisVec, viewDir));
-            if (dot > 0.99) visibility = 0;
-            else if (dot > 0.85) visibility = 1.0 - ((dot - 0.85) / 0.14);
-        }
+        if (dot > 0.99) visibility = 0;
+        else if (dot > 0.85) visibility = 1.0 - ((dot - 0.85) / 0.14);
         
         if (visibility < 0.05) return null;
 
@@ -378,6 +387,8 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             z: origin.z + u.z * vert.x + v.z * vert.y + axisVec.z * vert.z,
         }));
         
+        const gradientId = `grad-${axis}-${entity.id}`;
+
         // Hit Area Polyline
         let hitPoints = "";
         const hitSegs = 32;
@@ -392,6 +403,10 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             hitPoints += `${p.x},${p.y} `;
         }
         
+        // Determine fill style: Solid if active/hover, Gradient otherwise
+        const useSolid = isActive || isHover;
+        const fillStyle = useSolid ? finalColor : `url(#${gradientId})`;
+        
         return (
             <g
                 onMouseDown={(e) => startDrag(e, axis, axisVec, u, v)}
@@ -399,11 +414,21 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
                 onMouseLeave={() => setHoverAxis(null)}
                 className="cursor-pointer"
             >
+                <defs>
+                    <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor={color} stopOpacity={0.4} />
+                        <stop offset="50%" stopColor={color} stopOpacity={0.9} />
+                        <stop offset="100%" stopColor={color} stopOpacity={0.4} />
+                    </linearGradient>
+                </defs>
+
+                {/* Invisible Hit Area */}
                 <polyline points={hitPoints} fill="none" stroke="transparent" strokeWidth={20} />
-                
-                <g style={{ filter: isActive ? 'url(#glow)' : 'none' }}>
-                    {renderVolumetricMesh(worldVertices, geo.indices, finalColor, opacity)}
-                    {/* Render decorations for ALL axes, including VIEW */}
+
+                {/* Volumetric Render (No Glow Filter) */}
+                <g>
+                    {renderVolumetricMesh(worldVertices, geo.indices, fillStyle, opacity)}
+                    {/* Render decorations using finalColor (changes on hover) */}
                     {renderRingDecorations(axis, axisVec, u, v, finalColor)}
                 </g>
             </g>
@@ -423,7 +448,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         
         for (let i = 0; i <= segments; i++) {
             const t = i / segments;
-            const angle = dragState.currentAngle * t; // Relative to start drag frame
+            const angle = dragState.currentAngle * t;
             const theta = dragState.startAngle + angle;
             
             points3D.push({
@@ -490,16 +515,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
     
     return (
         <g>
-            <defs>
-                <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-                    <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
-                    <feMerge>
-                        <feMergeNode in="coloredBlur"/>
-                        <feMergeNode in="SourceGraphic"/>
-                    </feMerge>
-                </filter>
-            </defs>
-            
             <circle cx={pCenter.x} cy={pCenter.y} r={scale * gizmoConfig.rotationRingSize * 0.8} fill="black" fillOpacity="0.05" className="pointer-events-none" />
             
             {renderScreenSpaceRing()}
