@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Entity, ComponentType, Vector3 } from '../../types';
 import { engineInstance } from '../../services/engine';
-import { GizmoBasis, GizmoMath, GIZMO_COLORS, Axis } from './GizmoUtils';
+import { GizmoBasis, GizmoMath, GIZMO_COLORS, Axis, GIZMO_CONFIG } from './GizmoUtils';
 
 interface Props {
     entity: Entity;
@@ -120,7 +120,7 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         const isHover = hoverAxis === axis;
         const finalColor = isActive || isHover ? GIZMO_COLORS.Hover : color;
 
-        // 3D Arrow Construction
+        // Common Geometry
         const stemLen = axisLen * 0.82;
         const headWidth = scale * 0.15;
         
@@ -128,17 +128,139 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         const sBase = project(pBase);
         const sTip = tipPos;
 
-        // "Fins" for volumetric head
-        const mkFin = (vOffset: Vector3) => project({
-            x: pBase.x + vOffset.x * headWidth,
-            y: pBase.y + vOffset.y * headWidth,
-            z: pBase.z + vOffset.z * headWidth
-        });
-        
-        const f1 = mkFin(up);
-        const f2 = mkFin({x: -up.x, y: -up.y, z: -up.z});
-        const f3 = mkFin(right);
-        const f4 = mkFin({x: -right.x, y: -right.y, z: -right.z});
+        // Shape Logic
+        const shape = GIZMO_CONFIG.translationShape;
+
+        const renderHead = () => {
+            const mkFin = (vOffset: Vector3, baseOrigin = pBase) => project({
+                x: baseOrigin.x + vOffset.x,
+                y: baseOrigin.y + vOffset.y,
+                z: baseOrigin.z + vOffset.z
+            });
+
+            if (shape === 'CONE') {
+                const u = { x: up.x * headWidth, y: up.y * headWidth, z: up.z * headWidth };
+                const r = { x: right.x * headWidth, y: right.y * headWidth, z: right.z * headWidth };
+                
+                const f1 = mkFin(u);
+                const f2 = mkFin({x: -u.x, y: -u.y, z: -u.z});
+                const f3 = mkFin(r);
+                const f4 = mkFin({x: -r.x, y: -r.y, z: -r.z});
+                
+                return (
+                    <>
+                        <polygon points={`${f1.x},${f1.y} ${f2.x},${f2.y} ${sTip.x},${sTip.y}`} fill={finalColor} />
+                        <polygon points={`${f3.x},${f3.y} ${f4.x},${f4.y} ${sTip.x},${sTip.y}`} fill={finalColor} />
+                    </>
+                );
+            }
+            
+            if (shape === 'TETRAHEDRON') {
+                // 3 fins at 0, 120, 240 degrees
+                const rad120 = (2 * Math.PI) / 3;
+                const rad240 = (4 * Math.PI) / 3;
+                
+                const v1 = { x: up.x * headWidth, y: up.y * headWidth, z: up.z * headWidth };
+                
+                // Rotate up vector around axis (vec) is complex without a matrix lib in this context,
+                // BUT we have 'right' and 'up' as orthogonal basis.
+                // v = up * cos(theta) + right * sin(theta)
+                const rot = (theta: number) => ({
+                    x: (up.x * Math.cos(theta) + right.x * Math.sin(theta)) * headWidth,
+                    y: (up.y * Math.cos(theta) + right.y * Math.sin(theta)) * headWidth,
+                    z: (up.z * Math.cos(theta) + right.z * Math.sin(theta)) * headWidth,
+                });
+
+                const f1 = mkFin(v1); // 0 deg
+                const f2 = mkFin(rot(rad120));
+                const f3 = mkFin(rot(rad240));
+
+                return (
+                    <>
+                        <polygon points={`${f1.x},${f1.y} ${f2.x},${f2.y} ${sTip.x},${sTip.y}`} fill={finalColor} />
+                        <polygon points={`${f2.x},${f2.y} ${f3.x},${f3.y} ${sTip.x},${sTip.y}`} fill={finalColor} />
+                        <polygon points={`${f3.x},${f3.y} ${f1.x},${f1.y} ${sTip.x},${sTip.y}`} fill={finalColor} />
+                        {/* Base Cap */}
+                        <polygon points={`${f1.x},${f1.y} ${f2.x},${f2.y} ${f3.x},${f3.y}`} fill={finalColor} fillOpacity={0.8} />
+                    </>
+                );
+            }
+
+            if (shape === 'RHOMBUS') {
+                 // Double pyramid. Base -> Mid (Wide) -> Tip.
+                 // Midpoint in 3D:
+                 const pMid = { 
+                     x: pBase.x + (vec.x * (scale * 0.1)), 
+                     y: pBase.y + (vec.y * (scale * 0.1)), 
+                     z: pBase.z + (vec.z * (scale * 0.1)) 
+                 };
+                 // Tip needs to be further out for Rhombus to look balanced, or we use standard length
+                 
+                 const u = { x: up.x * headWidth, y: up.y * headWidth, z: up.z * headWidth };
+                 const r = { x: right.x * headWidth, y: right.y * headWidth, z: right.z * headWidth };
+                 
+                 // Generate mid points relative to pMid
+                 const m1 = mkFin(u, pMid);
+                 const m2 = mkFin({x: -u.x, y: -u.y, z: -u.z}, pMid);
+                 const m3 = mkFin(r, pMid);
+                 const m4 = mkFin({x: -r.x, y: -r.y, z: -r.z}, pMid);
+                 
+                 return (
+                     <>
+                        {/* Top Pyramid */}
+                        <polygon points={`${m1.x},${m1.y} ${m2.x},${m2.y} ${sTip.x},${sTip.y}`} fill={finalColor} />
+                        <polygon points={`${m3.x},${m3.y} ${m4.x},${m4.y} ${sTip.x},${sTip.y}`} fill={finalColor} />
+                        {/* Bottom Pyramid (connects to sBase) */}
+                        <polygon points={`${m1.x},${m1.y} ${m2.x},${m2.y} ${sBase.x},${sBase.y}`} fill={finalColor} />
+                        <polygon points={`${m3.x},${m3.y} ${m4.x},${m4.y} ${sBase.x},${sBase.y}`} fill={finalColor} />
+                     </>
+                 );
+            }
+
+            if (shape === 'CUBE') {
+                 const s = headWidth * 0.8;
+                 const u = { x: up.x * s, y: up.y * s, z: up.z * s };
+                 const r = { x: right.x * s, y: right.y * s, z: right.z * s };
+                 const f = { x: vec.x * s, y: vec.y * s, z: vec.z * s };
+
+                 // Center of cube at the end of stem? No, lets put center at pBase + half extent
+                 const c = { x: pBase.x + f.x, y: pBase.y + f.y, z: pBase.z + f.z };
+                 
+                 const v = [
+                     { x: c.x - u.x - r.x - f.x, y: c.y - u.y - r.y - f.y, z: c.z - u.z - r.z - f.z },
+                     { x: c.x + u.x - r.x - f.x, y: c.y + u.y - r.y - f.y, z: c.z + u.z - r.z - f.z },
+                     { x: c.x + u.x + r.x - f.x, y: c.y + u.y + r.y - f.y, z: c.z + u.z + r.z - f.z },
+                     { x: c.x - u.x + r.x - f.x, y: c.y - u.y + r.y - f.y, z: c.z - u.z + r.z - f.z },
+                     { x: c.x - u.x - r.x + f.x, y: c.y - u.y - r.y + f.y, z: c.z - u.z - r.z + f.z },
+                     { x: c.x + u.x - r.x + f.x, y: c.y + u.y - r.y + f.y, z: c.z + u.z - r.z + f.z },
+                     { x: c.x + u.x + r.x + f.x, y: c.y + u.y + r.y + f.y, z: c.z + u.z + r.z + f.z },
+                     { x: c.x - u.x + r.x + f.x, y: c.y - u.y + r.y + f.y, z: c.z - u.z + r.z + f.z }
+                 ].map(v => project(v));
+
+                 // Draw visible faces (simplification: draw all faces with opacity)
+                 // Or draw specific faces based on view... 
+                 // Just drawing all 6 faces as quads
+                 const faces = [
+                     [0,1,2,3], [4,5,6,7], [0,1,5,4], [2,3,7,6], [0,3,7,4], [1,2,6,5]
+                 ];
+
+                 return (
+                     <>
+                        {faces.map((face, i) => (
+                            <polygon 
+                                key={i}
+                                points={face.map(idx => `${v[idx].x},${v[idx].y}`).join(' ')}
+                                fill={finalColor}
+                                stroke="rgba(0,0,0,0.2)"
+                                strokeWidth={1}
+                            />
+                        ))}
+                     </>
+                 );
+            }
+
+            return null;
+        };
 
         return (
             <g
@@ -153,8 +275,7 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
                 
                 {/* Visuals */}
                 <line x1={pCenter.x} y1={pCenter.y} x2={sBase.x} y2={sBase.y} stroke={finalColor} strokeWidth={isActive ? 4 : 2} />
-                <polygon points={`${f1.x},${f1.y} ${f2.x},${f2.y} ${sTip.x},${sTip.y}`} fill={finalColor} />
-                <polygon points={`${f3.x},${f3.y} ${f4.x},${f4.y} ${sTip.x},${sTip.y}`} fill={finalColor} />
+                {renderHead()}
             </g>
         );
     };

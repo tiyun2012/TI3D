@@ -3,6 +3,15 @@ import { Mat4Utils } from '../../services/math';
 import { Vector3 } from '../../types';
 
 export type Axis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'UNIFORM';
+export type GizmoArrowShape = 'CONE' | 'TETRAHEDRON' | 'RHOMBUS' | 'CUBE';
+
+export interface GizmoConfiguration {
+    translationShape: GizmoArrowShape;
+}
+
+export const GIZMO_CONFIG: GizmoConfiguration = {
+    translationShape: 'CONE' // Change this to 'TETRAHEDRON', 'RHOMBUS', or 'CUBE'
+};
 
 export const GIZMO_COLORS = {
     X: '#ef4444', // Red
