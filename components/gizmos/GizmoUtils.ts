@@ -4,7 +4,7 @@ import { Vector3 } from '../../types';
 
 export type Axis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'UNIFORM' | 'VIEW';
 export type GizmoArrowShape = 'CONE' | 'TETRAHEDRON' | 'RHOMBUS' | 'CUBE';
-export type GizmoCenterShape = 'NONE' | 'CUBE' | 'SPHERE' | 'RHOMBUS';
+export type GizmoCenterShape = 'NONE' | 'CUBE' | 'SPHERE' | 'RHOMBUS' | 'QUAD_CIRCLES';
 export type GizmoPlaneShape = 'SQUARE' | 'CIRCLE' | 'RHOMBUS';
 
 export interface GizmoConfiguration {
@@ -14,6 +14,7 @@ export interface GizmoConfiguration {
     arrowSize: number;
     arrowOffset: number;
     planeHandleSize: number;
+    rotationRingSize: number;
     
     // Axis Interaction
     axisHoverColor: string;
@@ -34,6 +35,7 @@ export const DEFAULT_GIZMO_CONFIG: GizmoConfiguration = {
     arrowSize: 0.33,
     arrowOffset: 1.0,
     planeHandleSize: 1.0,
+    rotationRingSize: 1.2,
 
     axisHoverColor: '#ffffff',
     axisPressColor: '#fbbf24', // Amber/Yellow

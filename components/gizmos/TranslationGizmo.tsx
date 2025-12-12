@@ -210,6 +210,33 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         const color = isActive ? gizmoConfig.axisPressColor : (isHover ? baseColor : baseColor);
         const opacity = isActive || isHover ? 1.0 : 0.9;
 
+        // Handle the unique QUAD_CIRCLES shape (2D Screen Space)
+        if (gizmoConfig.centerHandleShape === 'QUAD_CIRCLES') {
+             const r = 18 * gizmoConfig.centerHandleSize; // Base pixel radius
+             const rSmall = r * 0.25;
+             const offset = r * 0.45; // Quadrant offset
+
+             return (
+                <g
+                    onMouseDown={(e) => startDrag(e, 'VIEW')}
+                    onMouseEnter={() => setHoverAxis('VIEW')}
+                    onMouseLeave={() => setHoverAxis(null)}
+                    className="cursor-move"
+                    style={{ transform: `translate(${pCenter.x}px, ${pCenter.y}px)` }} // Position via CSS transform
+                >
+                   {/* Main Outline Circle */}
+                   <circle cx={0} cy={0} r={r} fill={color} fillOpacity={isActive ? 0.3 : 0.1} stroke={color} strokeWidth={2} />
+                   
+                   {/* 4 Small Circles in Quadrants */}
+                   <circle cx={offset} cy={-offset} r={rSmall} fill={color} />
+                   <circle cx={-offset} cy={-offset} r={rSmall} fill={color} />
+                   <circle cx={offset} cy={offset} r={rSmall} fill={color} />
+                   <circle cx={-offset} cy={offset} r={rSmall} fill={color} />
+                </g>
+             );
+        }
+
+        // 3D Geometry fallback for CUBE, SPHERE, RHOMBUS
         let vertices: Vector3[] = [];
         let indices: number[][] = [];
         const toWorld = (x:number, y:number, z:number) => ({

@@ -1,8 +1,9 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { Entity, ComponentType, Vector3 } from '../../types';
 import { engineInstance } from '../../services/engine';
 import { GizmoBasis, GizmoMath, GIZMO_COLORS, Axis } from './GizmoUtils';
+import { EditorContext } from '../../contexts/EditorContext';
 
 interface Props {
     entity: Entity;
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport, containerRef }) => {
+    const { gizmoConfig } = useContext(EditorContext)!;
     const [hoverAxis, setHoverAxis] = useState<Axis | null>(null);
     const [dragState, setDragState] = useState<{
         axis: Axis;
@@ -95,14 +97,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
     };
 
     const renderRing = (axis: Axis, axisVec: Vector3, u: Vector3, v: Vector3, color: string) => {
-        const opacity = Math.abs(GizmoMath.getAxisOpacity(axisVec, basis.cameraPosition, origin));
-        // Fade in when looking parallel to axis (inverse of translation arrows)
-        // Actually rings are best seen when looking DOWN the axis? No, rings are best seen when looking perpendicular.
-        // Current logic: dot product with view. If 1 (parallel view), we see circle. If 0 (perp), we see line.
-        // Let's use simple logic: always visible but handle z-ordering?
-        // Let's stick to simple implementation:
-        
-        const radius = 1.2 * scale;
+        const radius = scale * gizmoConfig.rotationRingSize;
         const segments = 48;
         let points = "";
 
@@ -122,6 +117,16 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         const isActive = dragState?.axis === axis;
         const isHover = hoverAxis === axis;
 
+        // Apply Configuration
+        const baseThickness = gizmoConfig.axisBaseThickness;
+        let strokeWidth = baseThickness;
+        if (isActive) strokeWidth = baseThickness * gizmoConfig.axisPressThicknessOffset;
+        else if (isHover) strokeWidth = baseThickness * gizmoConfig.axisHoverThicknessOffset;
+
+        let finalColor = color;
+        if (isActive) finalColor = gizmoConfig.axisPressColor;
+        else if (isHover) finalColor = gizmoConfig.axisHoverColor;
+
         return (
             <g
                 onMouseDown={(e) => startDrag(e, axis, axisVec)}
@@ -130,13 +135,13 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
                 opacity={isActive || isHover ? 1 : 0.8}
             >
                 {/* Thick invisible hit line */}
-                <polyline points={points} fill="none" stroke="transparent" strokeWidth={12} className="cursor-pointer" />
+                <polyline points={points} fill="none" stroke="transparent" strokeWidth={Math.max(12, strokeWidth * 4)} className="cursor-pointer" />
                 {/* Visible Ring */}
                 <polyline 
                     points={points} 
                     fill="none" 
-                    stroke={isActive || isHover ? "white" : color} 
-                    strokeWidth={isActive || isHover ? 3 : 2} 
+                    stroke={finalColor} 
+                    strokeWidth={strokeWidth} 
                     className="cursor-pointer"
                 />
             </g>
@@ -146,7 +151,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
     return (
         <g>
             {/* Background sphere hint */}
-            <circle cx={pCenter.x} cy={pCenter.y} r={1.2 * scale} fill="white" fillOpacity="0.05" className="pointer-events-none"/>
+            <circle cx={pCenter.x} cy={pCenter.y} r={scale * gizmoConfig.rotationRingSize} fill="white" fillOpacity="0.05" className="pointer-events-none"/>
             
             {renderRing('X', xAxis, yAxis, zAxis, GIZMO_COLORS.X)}
             {renderRing('Y', yAxis, xAxis, zAxis, GIZMO_COLORS.Y)}

@@ -43,6 +43,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   const setArrowSize = (size: number) => setGizmoConfig({ ...gizmoConfig, arrowSize: size });
   const setArrowOffset = (offset: number) => setGizmoConfig({ ...gizmoConfig, arrowOffset: offset });
   const setPlaneSize = (size: number) => setGizmoConfig({ ...gizmoConfig, planeHandleSize: size });
+  const setRingSize = (size: number) => setGizmoConfig({ ...gizmoConfig, rotationRingSize: size });
 
   // New Setters
   const updateConfig = (key: keyof typeof gizmoConfig, value: any) => setGizmoConfig({ ...gizmoConfig, [key]: value });
@@ -55,6 +56,15 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   const PreviewCircle = <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>;
   const PreviewSquare = <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16"/></svg>;
   const PreviewX = <Icon name="X" size={20} />;
+  const PreviewQuadCircles = (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="2"/>
+          <circle cx="16" cy="8" r="2" />
+          <circle cx="8" cy="8" r="2" />
+          <circle cx="16" cy="16" r="2" />
+          <circle cx="8" cy="16" r="2" />
+      </svg>
+  );
 
   return (
     <DraggableWindow title="Preferences" onClose={onClose} width={500} icon="Settings2">
@@ -118,6 +128,25 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                             onChange={(e) => setArrowOffset(parseFloat(e.target.value))} 
                         />
                     </div>
+                </div>
+            </div>
+
+            {/* Section: Rotation Ring */}
+            <div className="space-y-3">
+                <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
+                    <Icon name="RotateCw" size={12} /> Rotation Ring Style
+                </h3>
+                <div className="bg-input-bg p-3 rounded border border-white/5">
+                    <div className="flex justify-between items-center mb-2">
+                        <span className="text-[10px] font-bold text-text-secondary uppercase">Ring Size</span>
+                        <span className="text-[10px] font-mono text-white">{gizmoConfig.rotationRingSize.toFixed(2)}</span>
+                    </div>
+                    <input 
+                        type="range" min="0.5" max="3.0" step="0.1" 
+                        className="w-full cursor-pointer"
+                        value={gizmoConfig.rotationRingSize} 
+                        onChange={(e) => setRingSize(parseFloat(e.target.value))} 
+                    />
                 </div>
             </div>
 
@@ -210,7 +239,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                 <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
                     <Icon name="Move3d" size={12} /> Free Move Handle
                 </h3>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-5 gap-2">
                     <SelectionCard 
                         label="None" 
                         selected={gizmoConfig.centerHandleShape === 'NONE'} 
@@ -234,6 +263,12 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                         selected={gizmoConfig.centerHandleShape === 'RHOMBUS'} 
                         onClick={() => setCenterShape('RHOMBUS')} 
                         shapePreview={PreviewRhombus}
+                    />
+                    <SelectionCard 
+                        label="Quad" 
+                        selected={gizmoConfig.centerHandleShape === 'QUAD_CIRCLES'} 
+                        onClick={() => setCenterShape('QUAD_CIRCLES')} 
+                        shapePreview={PreviewQuadCircles}
                     />
                 </div>
                 
