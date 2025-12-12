@@ -358,26 +358,94 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
     };
 
     const renderPlane = (axis: Axis, col: string, u: Vector3, v: Vector3) => {
-        const offset = scale * 0.5;
-        const start = { 
-            x: origin.x + (u.x + v.x) * offset * 0.5, 
-            y: origin.y + (u.y + v.y) * offset * 0.5, 
-            z: origin.z + (u.z + v.z) * offset * 0.5 
+        // Base distance from center
+        const dist = scale * 0.3;
+        // Size of the handle
+        const size = scale * 0.2 * gizmoConfig.planeHandleSize;
+        
+        // Corner start position
+        const pos = {
+            x: origin.x + (u.x + v.x) * dist,
+            y: origin.y + (u.y + v.y) * dist,
+            z: origin.z + (u.z + v.z) * dist
         };
-        const uVec = { x: u.x * offset, y: u.y * offset, z: u.z * offset };
-        const vVec = { x: v.x * offset, y: v.y * offset, z: v.z * offset };
 
-        const p1 = project(start);
-        const p2 = project({ x: start.x + uVec.x, y: start.y + uVec.y, z: start.z + uVec.z });
-        const p3 = project({ x: start.x + uVec.x + vVec.x, y: start.y + uVec.y + vVec.y, z: start.z + uVec.z + vVec.z });
-        const p4 = project({ x: start.x + vVec.x, y: start.y + vVec.y, z: start.z + vVec.z });
+        const shape = gizmoConfig.planeHandleShape;
+        let p1, p2, p3, p4;
+
+        if (shape === 'CIRCLE') {
+            // Approx circle with 8 points
+            const center = {
+                x: pos.x + (u.x + v.x) * size * 0.5,
+                y: pos.y + (u.y + v.y) * size * 0.5,
+                z: pos.z + (u.z + v.z) * size * 0.5
+            };
+            const radius = size * 0.5;
+            const points = [];
+            for(let i=0; i<8; i++) {
+                const ang = (i/8) * Math.PI * 2;
+                const cos = Math.cos(ang);
+                const sin = Math.sin(ang);
+                points.push({
+                    x: center.x + (u.x * cos + v.x * sin) * radius,
+                    y: center.y + (u.y * cos + v.y * sin) * radius,
+                    z: center.z + (u.z * cos + v.z * sin) * radius
+                });
+            }
+            const projPoints = points.map(project).map(p => `${p.x},${p.y}`).join(' ');
+            
+            const isActive = dragState?.axis === axis;
+            const isHover = hoverAxis === axis;
+
+            return (
+                <polygon
+                    points={projPoints}
+                    fill={col}
+                    fillOpacity={isActive || isHover ? 0.8 : 0.3}
+                    stroke={isActive || isHover ? "white" : "none"}
+                    onMouseDown={(e) => startDrag(e, axis)}
+                    onMouseEnter={() => setHoverAxis(axis)}
+                    onMouseLeave={() => setHoverAxis(null)}
+                    className="cursor-pointer"
+                />
+            );
+        }
+        else if (shape === 'RHOMBUS') {
+            // Rhombus shape
+            //       v3
+            //      /  \
+            //    v4    v2
+            //      \  /
+            //       v1
+            
+            // v1
+            p1 = { x: pos.x + v.x * (size*0.5), y: pos.y + v.y * (size*0.5), z: pos.z + v.z * (size*0.5) };
+            // v2
+            p2 = { x: pos.x + u.x * (size*0.5) + v.x * size, y: pos.y + u.y * (size*0.5) + v.y * size, z: pos.z + u.z * (size*0.5) + v.z * size };
+            // v3
+            p3 = { x: pos.x + u.x * size + v.x * (size*0.5), y: pos.y + u.y * size + v.y * (size*0.5), z: pos.z + u.z * size + v.z * (size*0.5) };
+            // v4
+            p4 = { x: pos.x + u.x * (size*0.5), y: pos.y + u.y * (size*0.5), z: pos.z + u.z * (size*0.5) };
+
+        } else {
+            // SQUARE (Default)
+            p1 = pos;
+            p2 = { x: pos.x + u.x * size, y: pos.y + u.y * size, z: pos.z + u.z * size };
+            p3 = { x: pos.x + u.x * size + v.x * size, y: pos.y + u.y * size + v.y * size, z: pos.z + u.z * size + v.z * size };
+            p4 = { x: pos.x + v.x * size, y: pos.y + v.y * size, z: pos.z + v.z * size };
+        }
+
+        const pp1 = project(p1);
+        const pp2 = project(p2);
+        const pp3 = project(p3);
+        const pp4 = project(p4);
 
         const isActive = dragState?.axis === axis;
         const isHover = hoverAxis === axis;
 
         return (
             <polygon
-                points={`${p1.x},${p1.y} ${p2.x},${p2.y} ${p3.x},${p3.y} ${p4.x},${p4.y}`}
+                points={`${pp1.x},${pp1.y} ${pp2.x},${pp2.y} ${pp3.x},${pp3.y} ${pp4.x},${pp4.y}`}
                 fill={col}
                 fillOpacity={isActive || isHover ? 0.8 : 0.3}
                 stroke={isActive || isHover ? "white" : "none"}

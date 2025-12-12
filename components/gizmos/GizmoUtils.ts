@@ -5,19 +5,24 @@ import { Vector3 } from '../../types';
 export type Axis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'UNIFORM' | 'VIEW';
 export type GizmoArrowShape = 'CONE' | 'TETRAHEDRON' | 'RHOMBUS' | 'CUBE';
 export type GizmoCenterShape = 'NONE' | 'CUBE' | 'SPHERE' | 'RHOMBUS';
+export type GizmoPlaneShape = 'SQUARE' | 'CIRCLE' | 'RHOMBUS';
 
 export interface GizmoConfiguration {
     translationShape: GizmoArrowShape;
     centerHandleShape: GizmoCenterShape;
+    planeHandleShape: GizmoPlaneShape;
     arrowSize: number;
     arrowOffset: number;
+    planeHandleSize: number;
 }
 
 export const DEFAULT_GIZMO_CONFIG: GizmoConfiguration = {
     translationShape: 'CONE',
     centerHandleShape: 'CUBE',
-    arrowSize: 1.0,
-    arrowOffset: 1.0
+    planeHandleShape: 'SQUARE',
+    arrowSize: 0.33,
+    arrowOffset: 1.0,
+    planeHandleSize: 1.0
 };
 
 export const GIZMO_COLORS = {

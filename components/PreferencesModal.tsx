@@ -1,7 +1,7 @@
 
 import React, { useContext } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
-import { GizmoArrowShape, GizmoCenterShape } from './gizmos/GizmoUtils';
+import { GizmoArrowShape, GizmoCenterShape, GizmoPlaneShape } from './gizmos/GizmoUtils';
 import { Icon } from './Icon';
 
 interface Props {
@@ -37,8 +37,11 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
 
   const setArrowShape = (shape: GizmoArrowShape) => setGizmoConfig({ ...gizmoConfig, translationShape: shape });
   const setCenterShape = (shape: GizmoCenterShape) => setGizmoConfig({ ...gizmoConfig, centerHandleShape: shape });
+  const setPlaneShape = (shape: GizmoPlaneShape) => setGizmoConfig({ ...gizmoConfig, planeHandleShape: shape });
+  
   const setArrowSize = (size: number) => setGizmoConfig({ ...gizmoConfig, arrowSize: size });
   const setArrowOffset = (offset: number) => setGizmoConfig({ ...gizmoConfig, arrowOffset: offset });
+  const setPlaneSize = (size: number) => setGizmoConfig({ ...gizmoConfig, planeHandleSize: size });
 
   // Minimal SVG Previews for UI
   const PreviewCone = <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L4 22h16L12 2z"/></svg>;
@@ -46,6 +49,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   const PreviewRhombus = <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 12l10 10 10-10L12 2z"/></svg>;
   const PreviewTetra = <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L3 18l9 4 9-4L12 2z"/></svg>;
   const PreviewCircle = <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>;
+  const PreviewSquare = <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16"/></svg>;
   const PreviewX = <Icon name="X" size={20} />;
 
   return (
@@ -104,7 +108,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                             <span className="text-[10px] font-mono text-white">{gizmoConfig.arrowSize.toFixed(2)}</span>
                         </div>
                         <input 
-                            type="range" min="0.5" max="2.0" step="0.1" 
+                            type="range" min="0.1" max="5.0" step="0.1" 
                             className="w-full cursor-pointer"
                             value={gizmoConfig.arrowSize} 
                             onChange={(e) => setArrowSize(parseFloat(e.target.value))} 
@@ -122,6 +126,45 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                             onChange={(e) => setArrowOffset(parseFloat(e.target.value))} 
                         />
                     </div>
+                </div>
+            </div>
+
+            {/* Section: Plane Handles */}
+             <div className="space-y-3">
+                <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
+                    <Icon name="Square" size={12} /> Plane Handle Style
+                </h3>
+                <div className="grid grid-cols-4 gap-2">
+                    <SelectionCard 
+                        label="Square" 
+                        selected={gizmoConfig.planeHandleShape === 'SQUARE'} 
+                        onClick={() => setPlaneShape('SQUARE')} 
+                        shapePreview={PreviewSquare}
+                    />
+                    <SelectionCard 
+                        label="Rhombus" 
+                        selected={gizmoConfig.planeHandleShape === 'RHOMBUS'} 
+                        onClick={() => setPlaneShape('RHOMBUS')} 
+                        shapePreview={PreviewRhombus}
+                    />
+                     <SelectionCard 
+                        label="Circle" 
+                        selected={gizmoConfig.planeHandleShape === 'CIRCLE'} 
+                        onClick={() => setPlaneShape('CIRCLE')} 
+                        shapePreview={PreviewCircle}
+                    />
+                </div>
+                <div className="bg-input-bg p-3 rounded border border-white/5 mt-2">
+                    <div className="flex justify-between items-center mb-2">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase">Plane Handle Size</span>
+                            <span className="text-[10px] font-mono text-white">{gizmoConfig.planeHandleSize.toFixed(2)}</span>
+                    </div>
+                    <input 
+                        type="range" min="0.1" max="2.0" step="0.1" 
+                        className="w-full cursor-pointer"
+                        value={gizmoConfig.planeHandleSize} 
+                        onChange={(e) => setPlaneSize(parseFloat(e.target.value))} 
+                    />
                 </div>
             </div>
 
