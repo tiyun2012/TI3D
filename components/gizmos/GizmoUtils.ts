@@ -18,8 +18,9 @@ export interface GizmoConfiguration {
     // Axis Interaction
     axisHoverColor: string;
     axisPressColor: string;
-    axisHoverThickness: number;
-    axisPressThickness: number;
+    axisBaseThickness: number;
+    axisHoverThicknessOffset: number; // Multiplier
+    axisPressThicknessOffset: number; // Multiplier
 
     // Center Handle
     centerHandleColor: string;
@@ -36,8 +37,9 @@ export const DEFAULT_GIZMO_CONFIG: GizmoConfiguration = {
 
     axisHoverColor: '#ffffff',
     axisPressColor: '#fbbf24', // Amber/Yellow
-    axisHoverThickness: 4,
-    axisPressThickness: 5,
+    axisBaseThickness: 2,
+    axisHoverThicknessOffset: 1.0,
+    axisPressThicknessOffset: 1.0,
 
     centerHandleColor: '#ffffff',
     centerHandleSize: 1.0

@@ -126,6 +126,16 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                  <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
                     <Icon name="MousePointer2" size={12} /> Axis Interaction
                 </h3>
+
+                {/* Base Thickness Slider */}
+                <div className="bg-input-bg p-3 rounded border border-white/5">
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="text-[10px] font-bold text-text-secondary uppercase">Base Thickness</span>
+                        <span className="text-[10px] font-mono text-white">{gizmoConfig.axisBaseThickness}px</span>
+                    </div>
+                    <input type="range" min="1" max="10" step="1" className="w-full cursor-pointer" value={gizmoConfig.axisBaseThickness} onChange={(e) => updateConfig('axisBaseThickness', parseFloat(e.target.value))} />
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                      <div className="bg-input-bg p-3 rounded border border-white/5 space-y-3">
                          <div className="flex justify-between items-center">
@@ -134,10 +144,10 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                          </div>
                          <div className="space-y-1">
                              <div className="flex justify-between">
-                                <span className="text-[10px] font-bold text-text-secondary uppercase">Hover Thickness</span>
-                                <span className="text-[10px] font-mono text-white">{gizmoConfig.axisHoverThickness}px</span>
+                                <span className="text-[10px] font-bold text-text-secondary uppercase">Hover Scale</span>
+                                <span className="text-[10px] font-mono text-white">{gizmoConfig.axisHoverThicknessOffset.toFixed(1)}x</span>
                              </div>
-                             <input type="range" min="1" max="10" step="1" className="w-full cursor-pointer" value={gizmoConfig.axisHoverThickness} onChange={(e) => updateConfig('axisHoverThickness', parseFloat(e.target.value))} />
+                             <input type="range" min="1.0" max="5.0" step="0.1" className="w-full cursor-pointer" value={gizmoConfig.axisHoverThicknessOffset} onChange={(e) => updateConfig('axisHoverThicknessOffset', parseFloat(e.target.value))} />
                          </div>
                      </div>
                      <div className="bg-input-bg p-3 rounded border border-white/5 space-y-3">
@@ -147,10 +157,10 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                          </div>
                           <div className="space-y-1">
                              <div className="flex justify-between">
-                                <span className="text-[10px] font-bold text-text-secondary uppercase">Press Thickness</span>
-                                <span className="text-[10px] font-mono text-white">{gizmoConfig.axisPressThickness}px</span>
+                                <span className="text-[10px] font-bold text-text-secondary uppercase">Press Scale</span>
+                                <span className="text-[10px] font-mono text-white">{gizmoConfig.axisPressThicknessOffset.toFixed(1)}x</span>
                              </div>
-                             <input type="range" min="1" max="10" step="1" className="w-full cursor-pointer" value={gizmoConfig.axisPressThickness} onChange={(e) => updateConfig('axisPressThickness', parseFloat(e.target.value))} />
+                             <input type="range" min="1.0" max="5.0" step="0.1" className="w-full cursor-pointer" value={gizmoConfig.axisPressThicknessOffset} onChange={(e) => updateConfig('axisPressThicknessOffset', parseFloat(e.target.value))} />
                          </div>
                      </div>
                 </div>

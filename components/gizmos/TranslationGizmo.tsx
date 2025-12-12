@@ -338,10 +338,11 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         const isActive = dragState?.axis === axis;
         const isHover = hoverAxis === axis;
         
-        // Apply Interaction Configuration (Thickness)
-        let strokeWidth = 2;
-        if (isActive) strokeWidth = gizmoConfig.axisPressThickness;
-        else if (isHover) strokeWidth = gizmoConfig.axisHoverThickness;
+        // Apply Interaction Configuration (Thickness with Offsets)
+        const baseThickness = gizmoConfig.axisBaseThickness;
+        let strokeWidth = baseThickness;
+        if (isActive) strokeWidth = baseThickness * gizmoConfig.axisPressThicknessOffset;
+        else if (isHover) strokeWidth = baseThickness * gizmoConfig.axisHoverThicknessOffset;
 
         // Apply Interaction Configuration (Color)
         let finalColor = baseColor;

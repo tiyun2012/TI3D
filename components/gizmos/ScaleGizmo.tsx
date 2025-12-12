@@ -1,8 +1,9 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { Entity, ComponentType, Vector3 } from '../../types';
 import { engineInstance } from '../../services/engine';
 import { GizmoBasis, GizmoMath, GIZMO_COLORS, Axis } from './GizmoUtils';
+import { EditorContext } from '../../contexts/EditorContext';
 
 interface Props {
     entity: Entity;
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export const ScaleGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport }) => {
+    const { gizmoConfig } = useContext(EditorContext)!;
     const [hoverAxis, setHoverAxis] = useState<Axis | null>(null);
     const [dragState, setDragState] = useState<{
         axis: Axis;
@@ -89,6 +91,12 @@ export const ScaleGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport 
         const isHover = hoverAxis === axis;
         const finalColor = isActive || isHover ? GIZMO_COLORS.Hover : color;
 
+        // Apply Interaction Configuration (Thickness with Offsets)
+        const baseThickness = gizmoConfig.axisBaseThickness;
+        let strokeWidth = baseThickness;
+        if (isActive) strokeWidth = baseThickness * gizmoConfig.axisPressThicknessOffset;
+        else if (isHover) strokeWidth = baseThickness * gizmoConfig.axisHoverThicknessOffset;
+
         return (
             <g
                 onMouseDown={(e) => startDrag(e, axis)}
@@ -98,7 +106,7 @@ export const ScaleGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport 
                 opacity={opacity}
             >
                 <line x1={pCenter.x} y1={pCenter.y} x2={pTip.x} y2={pTip.y} stroke="transparent" strokeWidth={20} />
-                <line x1={pCenter.x} y1={pCenter.y} x2={pTip.x} y2={pTip.y} stroke={finalColor} strokeWidth={2} />
+                <line x1={pCenter.x} y1={pCenter.y} x2={pTip.x} y2={pTip.y} stroke={finalColor} strokeWidth={strokeWidth} />
                 <rect 
                     x={pTip.x - 6} y={pTip.y - 6} 
                     width={12} height={12} 
