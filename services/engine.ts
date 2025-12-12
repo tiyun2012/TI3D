@@ -83,7 +83,12 @@ export class Ti3DEngine {
 
   initGL(canvas: HTMLCanvasElement) { 
       this.renderer.init(canvas); 
-      this.debugRenderer.init(this.renderer.gl!);
+      // Safeguard: Only init DebugRenderer if WebGL context was successfully created
+      if (this.renderer.gl) {
+          this.debugRenderer.init(this.renderer.gl);
+      } else {
+          console.warn("WebGL Context not initialized, skipping DebugRenderer init.");
+      }
   }
   resize(width: number, height: number) { this.renderer.resize(width, height); }
 

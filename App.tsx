@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import DockLayout, { LayoutData, TabData, BoxData, PanelData } from 'rc-dock';
 import { engineInstance } from './services/engine';
@@ -87,8 +88,8 @@ const DEFAULT_LAYOUT: LayoutData = {
         mode: 'vertical',
         size: 280,
         children: [
-          { tabs: [{ id: 'hierarchy', title: 'Hierarchy' }], size: 400 },
-          { tabs: [{ id: 'project', title: 'Project' }] }
+          { tabs: [{ id: 'hierarchy', title: 'Hierarchy', content: <HierarchyWrapper /> }], size: 400 },
+          { tabs: [{ id: 'project', title: 'Project', content: <ProjectWrapper /> }] }
         ]
       },
       {
@@ -96,20 +97,20 @@ const DEFAULT_LAYOUT: LayoutData = {
         children: [
           {
             tabs: [
-              { id: 'scene', title: 'Scene' },
-              { id: 'game', title: 'Game' },
-              { id: 'graph', title: 'Visual Script' }
+              { id: 'scene', title: 'Scene', content: <SceneWrapper /> },
+              { id: 'game', title: 'Game', content: <GameWrapper /> },
+              { id: 'graph', title: 'Visual Script', content: <GraphWrapper /> }
             ]
           },
           {
-            tabs: [{ id: 'console', title: 'Console' }],
+            tabs: [{ id: 'console', title: 'Console', content: <ConsoleWrapper /> }],
             size: 160
           }
         ]
       },
       {
         size: 320,
-        tabs: [{ id: 'inspector', title: 'Inspector' }]
+        tabs: [{ id: 'inspector', title: 'Inspector', content: <InspectorWrapper /> }]
       }
     ]
   }

@@ -1,4 +1,5 @@
 
+
 export class DebugRenderer {
     gl: WebGL2RenderingContext | null = null;
     program: WebGLProgram | null = null;
@@ -13,6 +14,7 @@ export class DebugRenderer {
     uniforms: { u_vp: WebGLUniformLocation | null } = { u_vp: null };
 
     init(gl: WebGL2RenderingContext) {
+        if (!gl) return;
         this.gl = gl;
         
         const vs = `#version 300 es
@@ -29,16 +31,27 @@ export class DebugRenderer {
         void main() { color = vec4(v_color, 1.0); }`;
         
         const createShader = (type: number, src: string) => {
-            const s = gl.createShader(type)!;
+            const s = gl.createShader(type);
+            if (!s) return null;
             gl.shaderSource(s, src);
             gl.compileShader(s);
-            if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+            if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(s));
+                return null;
+            }
             return s;
         };
         
-        const p = gl.createProgram()!;
-        gl.attachShader(p, createShader(gl.VERTEX_SHADER, vs));
-        gl.attachShader(p, createShader(gl.FRAGMENT_SHADER, fs));
+        const p = gl.createProgram();
+        if (!p) return;
+
+        const vShader = createShader(gl.VERTEX_SHADER, vs);
+        const fShader = createShader(gl.FRAGMENT_SHADER, fs);
+        
+        if (!vShader || !fShader) return;
+
+        gl.attachShader(p, vShader);
+        gl.attachShader(p, fShader);
         gl.linkProgram(p);
         this.program = p;
         
@@ -75,7 +88,7 @@ export class DebugRenderer {
     }
 
     render(viewProjection: Float32Array) {
-        if (this.lineCount === 0 || !this.gl || !this.program) return;
+        if (this.lineCount === 0 || !this.gl || !this.program || !this.vao) return;
         const gl = this.gl;
         
         gl.useProgram(this.program);

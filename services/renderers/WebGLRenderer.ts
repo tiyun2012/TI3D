@@ -1,4 +1,5 @@
 
+
 import { ComponentStorage } from '../ecs/ComponentStorage';
 import { SceneGraph } from '../SceneGraph';
 import { Mat4 } from '../math';
@@ -99,7 +100,10 @@ export class WebGLRenderer {
 
     init(canvas: HTMLCanvasElement) {
         this.gl = canvas.getContext('webgl2', { alpha: false, antialias: true, powerPreference: "high-performance" });
-        if (!this.gl) return;
+        if (!this.gl) {
+            console.error("WebGL2 not supported or context lost.");
+            return;
+        }
         const gl = this.gl;
         
         gl.viewport(0, 0, canvas.width, canvas.height);
@@ -109,7 +113,11 @@ export class WebGLRenderer {
 
         const vs = this.createShader(gl, gl.VERTEX_SHADER, VS_SOURCE);
         const fs = this.createShader(gl, gl.FRAGMENT_SHADER, FS_SOURCE);
+        
+        if (!vs || !fs) return;
+
         this.program = this.createProgram(gl, vs, fs);
+        if (!this.program) return;
 
         this.uniforms = {
             u_viewProjection: gl.getUniformLocation(this.program, 'u_viewProjection'),
@@ -149,6 +157,8 @@ export class WebGLRenderer {
         const height = 256;
         const depth = 4;
         const tex = gl.createTexture();
+        if (!tex) return;
+
         gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
         gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, width, height, depth);
 
@@ -156,7 +166,8 @@ export class WebGLRenderer {
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
-        const ctx = canvas.getContext('2d')!;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
 
         // Layer 0: White
         ctx.fillStyle = '#ffffff';
@@ -232,7 +243,8 @@ export class WebGLRenderer {
         if (!this.gl || !this.program) return;
         const gl = this.gl;
 
-        const vao = gl.createVertexArray()!;
+        const vao = gl.createVertexArray();
+        if (!vao) return;
         gl.bindVertexArray(vao);
 
         const posBuffer = gl.createBuffer();
@@ -258,7 +270,9 @@ export class WebGLRenderer {
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data.indices, gl.STATIC_DRAW);
 
         // Instanced Attributes
-        const instanceBuffer = gl.createBuffer()!;
+        const instanceBuffer = gl.createBuffer();
+        if (!instanceBuffer) return;
+
         gl.bindBuffer(gl.ARRAY_BUFFER, instanceBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, this.instanceData.byteLength, gl.DYNAMIC_DRAW);
 
@@ -305,9 +319,11 @@ export class WebGLRenderer {
         gl.uniformMatrix4fv(this.uniforms.u_viewProjection, false, viewProjection);
         
         // Bind Texture Array
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray);
-        gl.uniform1i(this.uniforms.u_textures, 0);
+        if (this.textureArray) {
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray);
+            gl.uniform1i(this.uniforms.u_textures, 0);
+        }
 
         this.drawCalls = 0;
         this.triangleCount = 0;
@@ -363,15 +379,17 @@ export class WebGLRenderer {
     }
 
     private createShader(gl: WebGL2RenderingContext, type: number, src: string) {
-        const s = gl.createShader(type)!;
+        const s = gl.createShader(type);
+        if (!s) return null;
         gl.shaderSource(s, src);
         gl.compileShader(s);
         if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.error(gl.getShaderInfoLog(s)); return null; }
         return s;
     }
     private createProgram(gl: WebGL2RenderingContext, vs: WebGLShader, fs: WebGLShader) {
-        const p = gl.createProgram()!;
-        gl.attachShader(p, vs!); gl.attachShader(p, fs!);
+        const p = gl.createProgram();
+        if (!p) return null;
+        gl.attachShader(p, vs); gl.attachShader(p, fs);
         gl.linkProgram(p);
         return p;
     }
