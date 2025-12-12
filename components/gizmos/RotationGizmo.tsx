@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { Entity, ComponentType, Vector3 } from '../../types';
 import { engineInstance } from '../../services/engine';
@@ -156,13 +157,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             const v = dragState.startRotation;
             
             if (dragState.axis === 'VIEW') {
-                // Screen-space rotation approximation
-                const rotationSpeed = 0.01;
-                // Use screen delta for intuitive feel
-                const screenDeltaX = e.pageX - (e.pageX - (e.clientX - rect.left)); // Simplified relative check
-                // Actually raw delta angle is best for "dial" feel, 
-                // but screen X/Y delta is better for "trackball" feel.
-                // Using angular delta for consistency with ring UI:
+                // Screen-space rotation approximation (View axis rotates Y primarily for now)
                 transform.rotation.y = v.y - delta; 
             } else {
                 if (dragState.axis === 'X') transform.rotation.x = v.x - delta;
@@ -264,7 +259,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             intensity = 0.3 + intensity * 0.7;
             
             // Overlay shading using black with opacity
-            const shadeOpacity = 1.0 - intensity; 
+            const shadeOpacity = Math.max(0, 1.0 - intensity);
             
             const pts = face.indices.map(idx => `${projected[idx].x},${projected[idx].y}`).join(' ');
             
@@ -306,7 +301,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         if (visibility < 0.05) return null;
 
         // Apply scale config - Larger for VIEW ring if configured
-        const ringScale = axis === 'VIEW' ? gizmoConfig.rotationScreenRingScale : 1.0;
+        const ringScale = axis === 'VIEW' ? (gizmoConfig.rotationScreenRingScale || 1.25) : 1.0;
         const radius = scale * gizmoConfig.rotationRingSize * ringScale;
         
         const decorationCount = axis === 'VIEW' ? 12 : 8; // More decorations for outer ring
@@ -373,7 +368,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         const finalColor = isActive ? gizmoConfig.axisPressColor : (isHover ? gizmoConfig.axisHoverColor : color);
         
         // Apply Scaling: Screen Ring can be larger
-        const ringScale = axis === 'VIEW' ? gizmoConfig.rotationScreenRingScale : 1.0;
+        const ringScale = axis === 'VIEW' ? (gizmoConfig.rotationScreenRingScale || 1.25) : 1.0;
         const radius = scale * gizmoConfig.rotationRingSize * ringScale;
         
         const tubeRadius = scale * 0.015 * gizmoConfig.rotationRingTubeScale * (isActive || isHover ? 2.0 : 1.0);
@@ -425,10 +420,9 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
                 {/* Invisible Hit Area */}
                 <polyline points={hitPoints} fill="none" stroke="transparent" strokeWidth={20} />
 
-                {/* Volumetric Render (No Glow Filter) */}
+                {/* Volumetric Render */}
                 <g>
                     {renderVolumetricMesh(worldVertices, geo.indices, fillStyle, opacity)}
-                    {/* Render decorations using finalColor (changes on hover) */}
                     {renderRingDecorations(axis, axisVec, u, v, finalColor)}
                 </g>
             </g>

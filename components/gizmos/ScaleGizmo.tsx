@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useContext } from 'react';
 import { Entity, ComponentType, Vector3 } from '../../types';
 import { engineInstance } from '../../services/engine';
@@ -80,7 +81,7 @@ export const ScaleGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport 
         });
     };
 
-    // --- Volumetric Render Logic (Matching TranslationGizmo) ---
+    // --- Volumetric Render Logic ---
     const renderVolumetricMesh = (vertices: Vector3[], indices: number[][], color: string) => {
         const projected = vertices.map(v => {
             const p = project(v);
@@ -160,7 +161,7 @@ export const ScaleGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport 
         const isActive = dragState?.axis === axis;
         const isHover = hoverAxis === axis;
         const finalColor = isActive || isHover ? GIZMO_COLORS.Hover : color;
-        const handleSize = scale * 0.25; // Slightly larger for scale cubes
+        const handleSize = scale * 0.25; 
 
         // Stem Logic
         const pTip = project({ x: origin.x + vec.x * axisLen, y: origin.y + vec.y * axisLen, z: origin.z + vec.z * axisLen });
@@ -203,7 +204,7 @@ export const ScaleGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport 
             {renderHandle('Y', yAxis, GIZMO_COLORS.Y)}
             {renderHandle('Z', zAxis, GIZMO_COLORS.Z)}
             
-            {/* Center Uniform Scale - Also a 3D Cube */}
+            {/* Center Uniform Scale */}
             <g
                 onMouseDown={(e) => startDrag(e, 'UNIFORM')}
                 onMouseEnter={() => setHoverAxis('UNIFORM')}

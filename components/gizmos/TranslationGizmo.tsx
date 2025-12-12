@@ -456,12 +456,6 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         }
         else if (shape === 'RHOMBUS') {
             // Rhombus shape
-            //       v3
-            //      /  \
-            //    v4    v2
-            //      \  /
-            //       v1
-            
             // v1
             p1 = { x: pos.x + v.x * (size*0.5), y: pos.y + v.y * (size*0.5), z: pos.z + v.z * (size*0.5) };
             // v2

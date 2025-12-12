@@ -1,3 +1,4 @@
+
 import { Mat4Utils } from '../../services/math';
 import { Vector3 } from '../../types';
 
@@ -17,7 +18,7 @@ export interface GizmoConfiguration {
     
     // Rotation Specifics
     rotationRingTubeScale: number;
-    rotationScreenRingScale: number; // New: Scale multiplier for the outer ring
+    rotationScreenRingScale: number; // Scale multiplier for the outer ring
     rotationShowScreenRing: boolean;
     rotationShowDecorations: boolean;
     rotationShowSector: boolean;
@@ -45,7 +46,7 @@ export const DEFAULT_GIZMO_CONFIG: GizmoConfiguration = {
     
     // Rotation Defaults
     rotationRingTubeScale: 1.0,
-    rotationScreenRingScale: 1.25, // Default larger than standard rings
+    rotationScreenRingScale: 1.25,
     rotationShowScreenRing: true,
     rotationShowDecorations: true,
     rotationShowSector: true,
@@ -72,9 +73,13 @@ export const GIZMO_COLORS = {
 export const ColorUtils = {
     // Basic hex color shading
     shade: (hex: string, percent: number) => {
-        let R = parseInt(hex.substring(1, 3), 16);
-        let G = parseInt(hex.substring(3, 5), 16);
-        let B = parseInt(hex.substring(5, 7), 16);
+        if (!hex) return '#ffffff';
+        // Remove hash if present
+        hex = hex.replace('#', '');
+        
+        let R = parseInt(hex.substring(0, 2), 16);
+        let G = parseInt(hex.substring(2, 4), 16);
+        let B = parseInt(hex.substring(4, 6), 16);
 
         R = Math.floor(R * (100 + percent) / 100);
         G = Math.floor(G * (100 + percent) / 100);
@@ -83,6 +88,10 @@ export const ColorUtils = {
         R = (R < 255) ? R : 255;
         G = (G < 255) ? G : 255;
         B = (B < 255) ? B : 255;
+        
+        R = (R > 0) ? R : 0;
+        G = (G > 0) ? G : 0;
+        B = (B > 0) ? B : 0;
 
         const RR = ((R.toString(16).length === 1) ? "0" + R.toString(16) : R.toString(16));
         const GG = ((G.toString(16).length === 1) ? "0" + G.toString(16) : G.toString(16));

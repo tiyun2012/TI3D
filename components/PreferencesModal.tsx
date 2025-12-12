@@ -1,3 +1,4 @@
+
 import React, { useContext } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
 import { GizmoArrowShape, GizmoCenterShape, GizmoPlaneShape } from './gizmos/GizmoUtils';
@@ -44,7 +45,6 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   const setPlaneSize = (size: number) => setGizmoConfig({ ...gizmoConfig, planeHandleSize: size });
   const setRingSize = (size: number) => setGizmoConfig({ ...gizmoConfig, rotationRingSize: size });
 
-  // Generic Updater
   const updateConfig = (key: keyof typeof gizmoConfig, value: any) => setGizmoConfig({ ...gizmoConfig, [key]: value });
 
   // Minimal SVG Previews for UI
@@ -165,7 +165,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                     </div>
                 </div>
 
-                {/* NEW: Screen Ring Scale */}
+                {/* Screen Ring Scale */}
                 <div className="bg-input-bg p-3 rounded border border-white/5">
                      <div className="flex justify-between items-center mb-2">
                         <span className="text-[10px] font-bold text-text-secondary uppercase">Screen Ring Scale</span>
