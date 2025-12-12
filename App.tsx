@@ -87,8 +87,8 @@ const DEFAULT_LAYOUT: LayoutData = {
         mode: 'vertical',
         size: 280,
         children: [
-          { tabs: [{ id: 'hierarchy', title: 'Hierarchy', content: <div /> }], size: 400 },
-          { tabs: [{ id: 'project', title: 'Project', content: <div /> }] }
+          { tabs: [{ id: 'hierarchy', title: 'Hierarchy' }], size: 400 },
+          { tabs: [{ id: 'project', title: 'Project' }] }
         ]
       },
       {
@@ -96,20 +96,20 @@ const DEFAULT_LAYOUT: LayoutData = {
         children: [
           {
             tabs: [
-              { id: 'scene', title: 'Scene', content: <div /> },
-              { id: 'game', title: 'Game', content: <div /> },
-              { id: 'graph', title: 'Visual Script', content: <div /> }
+              { id: 'scene', title: 'Scene' },
+              { id: 'game', title: 'Game' },
+              { id: 'graph', title: 'Visual Script' }
             ]
           },
           {
-            tabs: [{ id: 'console', title: 'Console', content: <div /> }],
+            tabs: [{ id: 'console', title: 'Console' }],
             size: 160
           }
         ]
       },
       {
         size: 320,
-        tabs: [{ id: 'inspector', title: 'Inspector', content: <div /> }]
+        tabs: [{ id: 'inspector', title: 'Inspector' }]
       }
     ]
   }
@@ -217,7 +217,7 @@ const App: React.FC = () => {
       }
   };
 
-  const loadTab = (data: TabData): TabData => {
+  const getTab = useCallback((data: TabData): TabData => {
     let content;
     let icon = 'Box';
     switch (data.id) {
@@ -230,38 +230,28 @@ const App: React.FC = () => {
         case 'console': content = <ConsoleWrapper />; icon = 'Terminal'; break;
         default: content = <div>Missing Panel</div>;
     }
+    
+    const title = (
+        <div className="flex items-center gap-2">
+            <Icon 
+                name={icon as any} 
+                size={14} 
+                className={data.id === 'scene' ? 'text-accent' : 'text-text-secondary'}
+            />
+            <span>{data.title as string}</span>
+        </div>
+    );
+
     return {
       id: data.id,
-      title: data.title, 
+      title: title, 
       content: content,
       closable: true,
       minWidth: 150,
       minHeight: 100,
       group: data.group, 
     };
-  };
-
-  const [layout] = useState<LayoutData>(() => {
-     const process = (box: BoxData | PanelData): BoxData | PanelData => {
-         if ('children' in box && box.children) return { ...box, children: box.children.map(process as any) };
-         const panel = box as PanelData;
-         if (panel.tabs) return { ...panel, tabs: panel.tabs.map((t: TabData) => {
-             const loaded = loadTab(t);
-             const iconName = 
-                t.id === 'hierarchy' ? 'ListTree' :
-                t.id === 'project' ? 'FolderOpen' :
-                t.id === 'scene' ? 'Cuboid' :
-                t.id === 'game' ? 'Gamepad2' :
-                t.id === 'graph' ? 'Workflow' :
-                t.id === 'inspector' ? 'Settings2' :
-                t.id === 'console' ? 'Terminal' : 'Box';
-             return { ...loaded, title: (<div className="flex items-center gap-2"><Icon name={iconName as any} size={14} className={t.id === 'scene' ? 'text-accent' : 'text-text-secondary'}/><span>{t.title as string}</span></div>) };
-         })};
-         return box;
-     };
-     if (!DEFAULT_LAYOUT.dockbox) return { dockbox: { mode: 'horizontal', children: [] } as BoxData };
-     return { dockbox: process(DEFAULT_LAYOUT.dockbox) as BoxData };
-  });
+  }, []);
 
   const toggleMenu = (e: React.MouseEvent, menu: string) => {
       e.stopPropagation();
@@ -340,7 +330,8 @@ const App: React.FC = () => {
         {/* Docking Area */}
         <div className="flex-1 relative">
             <DockLayout 
-              defaultLayout={layout}
+              defaultLayout={DEFAULT_LAYOUT}
+              loadTab={getTab}
               style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}
               dropMode="edge"
             />
