@@ -3,6 +3,7 @@ import React, { useContext } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
 import { GizmoArrowShape, GizmoCenterShape, GizmoPlaneShape } from './gizmos/GizmoUtils';
 import { Icon } from './Icon';
+import { DraggableWindow } from './DraggableWindow';
 
 interface Props {
   onClose: () => void;
@@ -43,6 +44,9 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   const setArrowOffset = (offset: number) => setGizmoConfig({ ...gizmoConfig, arrowOffset: offset });
   const setPlaneSize = (size: number) => setGizmoConfig({ ...gizmoConfig, planeHandleSize: size });
 
+  // New Setters
+  const updateConfig = (key: keyof typeof gizmoConfig, value: any) => setGizmoConfig({ ...gizmoConfig, [key]: value });
+
   // Minimal SVG Previews for UI
   const PreviewCone = <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L4 22h16L12 2z"/></svg>;
   const PreviewCube = <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16"/></svg>;
@@ -53,20 +57,8 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   const PreviewX = <Icon name="X" size={20} />;
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm" onClick={onClose}>
-      <div 
-        className="bg-panel border border-white/20 rounded-lg shadow-2xl w-[500px] overflow-hidden flex flex-col max-h-[80vh]" 
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="bg-panel-header px-4 py-3 border-b border-white/10 flex justify-between items-center shrink-0">
-            <span className="font-bold text-sm text-white flex items-center gap-2">
-                <Icon name="Settings2" size={16} className="text-accent" />
-                Preferences
-            </span>
-            <button onClick={onClose} className="hover:text-white text-text-secondary"><Icon name="X" size={16}/></button>
-        </div>
-        
-        <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar">
+    <DraggableWindow title="Preferences" onClose={onClose} width={500} icon="Settings2">
+        <div className="p-6 space-y-6">
             
             {/* Section: Gizmo Arrows */}
             <div className="space-y-3">
@@ -126,6 +118,41 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                             onChange={(e) => setArrowOffset(parseFloat(e.target.value))} 
                         />
                     </div>
+                </div>
+            </div>
+
+            {/* Section: Axis Interaction Colors/Thickness */}
+            <div className="space-y-3">
+                 <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
+                    <Icon name="MousePointer2" size={12} /> Axis Interaction
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                     <div className="bg-input-bg p-3 rounded border border-white/5 space-y-3">
+                         <div className="flex justify-between items-center">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase">Hover Color</span>
+                            <input type="color" className="w-6 h-6 rounded cursor-pointer bg-transparent" value={gizmoConfig.axisHoverColor} onChange={(e) => updateConfig('axisHoverColor', e.target.value)} />
+                         </div>
+                         <div className="space-y-1">
+                             <div className="flex justify-between">
+                                <span className="text-[10px] font-bold text-text-secondary uppercase">Hover Thickness</span>
+                                <span className="text-[10px] font-mono text-white">{gizmoConfig.axisHoverThickness}px</span>
+                             </div>
+                             <input type="range" min="1" max="10" step="1" className="w-full cursor-pointer" value={gizmoConfig.axisHoverThickness} onChange={(e) => updateConfig('axisHoverThickness', parseFloat(e.target.value))} />
+                         </div>
+                     </div>
+                     <div className="bg-input-bg p-3 rounded border border-white/5 space-y-3">
+                         <div className="flex justify-between items-center">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase">Press Color</span>
+                            <input type="color" className="w-6 h-6 rounded cursor-pointer bg-transparent" value={gizmoConfig.axisPressColor} onChange={(e) => updateConfig('axisPressColor', e.target.value)} />
+                         </div>
+                          <div className="space-y-1">
+                             <div className="flex justify-between">
+                                <span className="text-[10px] font-bold text-text-secondary uppercase">Press Thickness</span>
+                                <span className="text-[10px] font-mono text-white">{gizmoConfig.axisPressThickness}px</span>
+                             </div>
+                             <input type="range" min="1" max="10" step="1" className="w-full cursor-pointer" value={gizmoConfig.axisPressThickness} onChange={(e) => updateConfig('axisPressThickness', parseFloat(e.target.value))} />
+                         </div>
+                     </div>
                 </div>
             </div>
 
@@ -199,6 +226,20 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                         shapePreview={PreviewRhombus}
                     />
                 </div>
+                
+                <div className="grid grid-cols-2 gap-4 mt-2">
+                     <div className="bg-input-bg p-3 rounded border border-white/5 flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase">Color</span>
+                            <input type="color" className="w-6 h-6 rounded cursor-pointer bg-transparent" value={gizmoConfig.centerHandleColor} onChange={(e) => updateConfig('centerHandleColor', e.target.value)} />
+                     </div>
+                     <div className="bg-input-bg p-3 rounded border border-white/5">
+                        <div className="flex justify-between items-center mb-1">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase">Size</span>
+                            <span className="text-[10px] font-mono text-white">{gizmoConfig.centerHandleSize.toFixed(2)}</span>
+                        </div>
+                        <input type="range" min="0.5" max="2.0" step="0.1" className="w-full cursor-pointer" value={gizmoConfig.centerHandleSize} onChange={(e) => updateConfig('centerHandleSize', parseFloat(e.target.value))} />
+                     </div>
+                </div>
             </div>
 
             {/* Placeholder: Grid */}
@@ -222,7 +263,6 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
         <div className="bg-panel-header px-4 py-3 border-t border-white/10 flex justify-end shrink-0">
             <button onClick={onClose} className="bg-white/10 hover:bg-white/20 text-white text-xs px-6 py-2 rounded font-medium transition-colors">Close</button>
         </div>
-      </div>
-    </div>
+    </DraggableWindow>
   );
 };

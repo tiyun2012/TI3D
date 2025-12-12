@@ -14,6 +14,16 @@ export interface GizmoConfiguration {
     arrowSize: number;
     arrowOffset: number;
     planeHandleSize: number;
+    
+    // Axis Interaction
+    axisHoverColor: string;
+    axisPressColor: string;
+    axisHoverThickness: number;
+    axisPressThickness: number;
+
+    // Center Handle
+    centerHandleColor: string;
+    centerHandleSize: number;
 }
 
 export const DEFAULT_GIZMO_CONFIG: GizmoConfiguration = {
@@ -22,7 +32,15 @@ export const DEFAULT_GIZMO_CONFIG: GizmoConfiguration = {
     planeHandleShape: 'SQUARE',
     arrowSize: 0.33,
     arrowOffset: 1.0,
-    planeHandleSize: 1.0
+    planeHandleSize: 1.0,
+
+    axisHoverColor: '#ffffff',
+    axisPressColor: '#fbbf24', // Amber/Yellow
+    axisHoverThickness: 4,
+    axisPressThickness: 5,
+
+    centerHandleColor: '#ffffff',
+    centerHandleSize: 1.0
 };
 
 export const GIZMO_COLORS = {

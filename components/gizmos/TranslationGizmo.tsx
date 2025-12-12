@@ -199,9 +199,16 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
     const renderCenterHandle = () => {
         if (gizmoConfig.centerHandleShape === 'NONE') return null;
 
-        const size = scale * 0.15;
-        const color = dragState?.axis === 'VIEW' || hoverAxis === 'VIEW' ? GIZMO_COLORS.Center : '#aaaaaa';
-        const opacity = dragState?.axis === 'VIEW' || hoverAxis === 'VIEW' ? 1.0 : 0.8;
+        // Apply Center Handle Size Config
+        const size = scale * 0.15 * gizmoConfig.centerHandleSize;
+        
+        const isActive = dragState?.axis === 'VIEW';
+        const isHover = hoverAxis === 'VIEW';
+
+        // Apply Center Handle Color Config (use Press color if active)
+        const baseColor = gizmoConfig.centerHandleColor;
+        const color = isActive ? gizmoConfig.axisPressColor : (isHover ? baseColor : baseColor);
+        const opacity = isActive || isHover ? 1.0 : 0.9;
 
         let vertices: Vector3[] = [];
         let indices: number[][] = [];
@@ -324,13 +331,22 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         return renderVolumetricMesh(vertices, indices, color);
     };
 
-    const renderArrow = (axis: Axis, tipPos: any, color: string, vec: Vector3, up: Vector3, right: Vector3) => {
+    const renderArrow = (axis: Axis, tipPos: any, baseColor: string, vec: Vector3, up: Vector3, right: Vector3) => {
         const opacity = GizmoMath.getAxisOpacity(vec, basis.cameraPosition, origin);
         if (opacity < 0.1) return null;
 
         const isActive = dragState?.axis === axis;
         const isHover = hoverAxis === axis;
-        const finalColor = isActive || isHover ? GIZMO_COLORS.Hover : color;
+        
+        // Apply Interaction Configuration (Thickness)
+        let strokeWidth = 2;
+        if (isActive) strokeWidth = gizmoConfig.axisPressThickness;
+        else if (isHover) strokeWidth = gizmoConfig.axisHoverThickness;
+
+        // Apply Interaction Configuration (Color)
+        let finalColor = baseColor;
+        if (isActive) finalColor = gizmoConfig.axisPressColor;
+        else if (isHover) finalColor = gizmoConfig.axisHoverColor;
         
         // Stem length logic - slightly shorter than full axis length to account for head
         // With scaling, we keep the ratio consistent
@@ -350,7 +366,7 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
                 {/* Hit Box */}
                 <line x1={pCenter.x} y1={pCenter.y} x2={tipPos.x} y2={tipPos.y} stroke="transparent" strokeWidth={20} />
                 {/* Stem */}
-                <line x1={pCenter.x} y1={pCenter.y} x2={sBase.x} y2={sBase.y} stroke={finalColor} strokeWidth={isActive ? 4 : 2} />
+                <line x1={pCenter.x} y1={pCenter.y} x2={sBase.x} y2={sBase.y} stroke={finalColor} strokeWidth={strokeWidth} />
                 {/* Head */}
                 {renderArrowHead(axis, pBase, vec, up, right, finalColor)}
             </g>
