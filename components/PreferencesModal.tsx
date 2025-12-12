@@ -37,6 +37,8 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
 
   const setArrowShape = (shape: GizmoArrowShape) => setGizmoConfig({ ...gizmoConfig, translationShape: shape });
   const setCenterShape = (shape: GizmoCenterShape) => setGizmoConfig({ ...gizmoConfig, centerHandleShape: shape });
+  const setArrowSize = (size: number) => setGizmoConfig({ ...gizmoConfig, arrowSize: size });
+  const setArrowOffset = (offset: number) => setGizmoConfig({ ...gizmoConfig, arrowOffset: offset });
 
   // Minimal SVG Previews for UI
   const PreviewCone = <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L4 22h16L12 2z"/></svg>;
@@ -92,6 +94,34 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                         onClick={() => setArrowShape('CUBE')} 
                         shapePreview={PreviewCube}
                     />
+                </div>
+                
+                {/* Sliders for Size and Offset */}
+                <div className="grid grid-cols-2 gap-4 mt-2">
+                    <div className="bg-input-bg p-3 rounded border border-white/5">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase">Arrow Size</span>
+                            <span className="text-[10px] font-mono text-white">{gizmoConfig.arrowSize.toFixed(2)}</span>
+                        </div>
+                        <input 
+                            type="range" min="0.5" max="2.0" step="0.1" 
+                            className="w-full cursor-pointer"
+                            value={gizmoConfig.arrowSize} 
+                            onChange={(e) => setArrowSize(parseFloat(e.target.value))} 
+                        />
+                    </div>
+                    <div className="bg-input-bg p-3 rounded border border-white/5">
+                        <div className="flex justify-between items-center mb-2">
+                             <span className="text-[10px] font-bold text-text-secondary uppercase">Arrow Offset</span>
+                             <span className="text-[10px] font-mono text-white">{gizmoConfig.arrowOffset.toFixed(2)}</span>
+                        </div>
+                        <input 
+                            type="range" min="0.5" max="2.5" step="0.1" 
+                            className="w-full cursor-pointer"
+                            value={gizmoConfig.arrowOffset} 
+                            onChange={(e) => setArrowOffset(parseFloat(e.target.value))} 
+                        />
+                    </div>
                 </div>
             </div>
 

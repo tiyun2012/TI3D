@@ -25,7 +25,10 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
     } | null>(null);
 
     const { origin, xAxis, yAxis, zAxis, scale } = basis;
-    const axisLen = 1.8 * scale;
+    
+    // Apply Arrow Offset Configuration
+    const axisLen = 1.8 * scale * gizmoConfig.arrowOffset;
+    
     const transform = entity.components[ComponentType.TRANSFORM];
 
     const project = (v: Vector3) => GizmoMath.project(v, vpMatrix, viewport.width, viewport.height);
@@ -265,8 +268,9 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         color: string
     ) => {
         const shape = gizmoConfig.translationShape;
-        const headWidth = scale * 0.15;
-        const headLength = scale * 0.35;
+        // Apply Arrow Size Configuration
+        const headWidth = scale * 0.15 * gizmoConfig.arrowSize;
+        const headLength = scale * 0.35 * gizmoConfig.arrowSize;
         
         let vertices: Vector3[] = [];
         let indices: number[][] = [];
@@ -327,6 +331,9 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         const isActive = dragState?.axis === axis;
         const isHover = hoverAxis === axis;
         const finalColor = isActive || isHover ? GIZMO_COLORS.Hover : color;
+        
+        // Stem length logic - slightly shorter than full axis length to account for head
+        // With scaling, we keep the ratio consistent
         const stemLen = axisLen * 0.82;
         
         const pBase = { x: origin.x + vec.x * stemLen, y: origin.y + vec.y * stemLen, z: origin.z + vec.z * stemLen };

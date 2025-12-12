@@ -9,11 +9,15 @@ export type GizmoCenterShape = 'NONE' | 'CUBE' | 'SPHERE' | 'RHOMBUS';
 export interface GizmoConfiguration {
     translationShape: GizmoArrowShape;
     centerHandleShape: GizmoCenterShape;
+    arrowSize: number;
+    arrowOffset: number;
 }
 
 export const DEFAULT_GIZMO_CONFIG: GizmoConfiguration = {
     translationShape: 'CONE',
-    centerHandleShape: 'CUBE'
+    centerHandleShape: 'CUBE',
+    arrowSize: 1.0,
+    arrowOffset: 1.0
 };
 
 export const GIZMO_COLORS = {
