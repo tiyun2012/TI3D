@@ -44,7 +44,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   const setPlaneSize = (size: number) => setGizmoConfig({ ...gizmoConfig, planeHandleSize: size });
   const setRingSize = (size: number) => setGizmoConfig({ ...gizmoConfig, rotationRingSize: size });
 
-  // New Setters
+  // Generic Updater
   const updateConfig = (key: keyof typeof gizmoConfig, value: any) => setGizmoConfig({ ...gizmoConfig, [key]: value });
 
   // Minimal SVG Previews for UI
@@ -101,7 +101,6 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                     />
                 </div>
                 
-                {/* Sliders for Size and Offset */}
                 <div className="grid grid-cols-2 gap-4 mt-2">
                     <div className="bg-input-bg p-3 rounded border border-white/5">
                         <div className="flex justify-between items-center mb-2">
@@ -130,7 +129,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                 </div>
             </div>
 
-            {/* Section: Rotation Ring */}
+            {/* Section: Rotation Ring Settings */}
             <div className="space-y-3">
                 <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
                     <Icon name="RotateCw" size={12} /> Rotation Ring Style
@@ -170,12 +169,12 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                 <div className="bg-input-bg p-3 rounded border border-white/5">
                      <div className="flex justify-between items-center mb-2">
                         <span className="text-[10px] font-bold text-text-secondary uppercase">Screen Ring Scale</span>
-                        <span className="text-[10px] font-mono text-white">{gizmoConfig.rotationScreenRingScale.toFixed(2)}x</span>
+                        <span className="text-[10px] font-mono text-white">{gizmoConfig.rotationScreenRingScale?.toFixed(2) ?? '1.25'}x</span>
                     </div>
                     <input 
                         type="range" min="1.0" max="2.0" step="0.05" 
                         className="w-full cursor-pointer"
-                        value={gizmoConfig.rotationScreenRingScale} 
+                        value={gizmoConfig.rotationScreenRingScale ?? 1.25} 
                         onChange={(e) => updateConfig('rotationScreenRingScale', parseFloat(e.target.value))} 
                     />
                 </div>
@@ -197,20 +196,11 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                 </div>
             </div>
 
-            {/* Section: Axis Interaction Colors/Thickness */}
+            {/* Section: Axis Interaction Colors */}
             <div className="space-y-3">
                  <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
                     <Icon name="MousePointer2" size={12} /> Axis Interaction
                 </h3>
-
-                {/* Base Thickness Slider */}
-                <div className="bg-input-bg p-3 rounded border border-white/5">
-                    <div className="flex justify-between items-center mb-1">
-                        <span className="text-[10px] font-bold text-text-secondary uppercase">Base Thickness</span>
-                        <span className="text-[10px] font-mono text-white">{gizmoConfig.axisBaseThickness}px</span>
-                    </div>
-                    <input type="range" min="1" max="10" step="1" className="w-full cursor-pointer" value={gizmoConfig.axisBaseThickness} onChange={(e) => updateConfig('axisBaseThickness', parseFloat(e.target.value))} />
-                </div>
 
                 <div className="grid grid-cols-2 gap-4">
                      <div className="bg-input-bg p-3 rounded border border-white/5 space-y-3">
@@ -218,66 +208,13 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                             <span className="text-[10px] font-bold text-text-secondary uppercase">Hover Color</span>
                             <input type="color" className="w-6 h-6 rounded cursor-pointer bg-transparent" value={gizmoConfig.axisHoverColor} onChange={(e) => updateConfig('axisHoverColor', e.target.value)} />
                          </div>
-                         <div className="space-y-1">
-                             <div className="flex justify-between">
-                                <span className="text-[10px] font-bold text-text-secondary uppercase">Hover Scale</span>
-                                <span className="text-[10px] font-mono text-white">{gizmoConfig.axisHoverThicknessOffset.toFixed(1)}x</span>
-                             </div>
-                             <input type="range" min="1.0" max="5.0" step="0.1" className="w-full cursor-pointer" value={gizmoConfig.axisHoverThicknessOffset} onChange={(e) => updateConfig('axisHoverThicknessOffset', parseFloat(e.target.value))} />
-                         </div>
                      </div>
                      <div className="bg-input-bg p-3 rounded border border-white/5 space-y-3">
                          <div className="flex justify-between items-center">
                             <span className="text-[10px] font-bold text-text-secondary uppercase">Press Color</span>
                             <input type="color" className="w-6 h-6 rounded cursor-pointer bg-transparent" value={gizmoConfig.axisPressColor} onChange={(e) => updateConfig('axisPressColor', e.target.value)} />
                          </div>
-                          <div className="space-y-1">
-                             <div className="flex justify-between">
-                                <span className="text-[10px] font-bold text-text-secondary uppercase">Press Scale</span>
-                                <span className="text-[10px] font-mono text-white">{gizmoConfig.axisPressThicknessOffset.toFixed(1)}x</span>
-                             </div>
-                             <input type="range" min="1.0" max="5.0" step="0.1" className="w-full cursor-pointer" value={gizmoConfig.axisPressThicknessOffset} onChange={(e) => updateConfig('axisPressThicknessOffset', parseFloat(e.target.value))} />
-                         </div>
                      </div>
-                </div>
-            </div>
-
-            {/* Section: Plane Handles */}
-             <div className="space-y-3">
-                <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
-                    <Icon name="Square" size={12} /> Plane Handle Style
-                </h3>
-                <div className="grid grid-cols-4 gap-2">
-                    <SelectionCard 
-                        label="Square" 
-                        selected={gizmoConfig.planeHandleShape === 'SQUARE'} 
-                        onClick={() => setPlaneShape('SQUARE')} 
-                        shapePreview={PreviewSquare}
-                    />
-                    <SelectionCard 
-                        label="Rhombus" 
-                        selected={gizmoConfig.planeHandleShape === 'RHOMBUS'} 
-                        onClick={() => setPlaneShape('RHOMBUS')} 
-                        shapePreview={PreviewRhombus}
-                    />
-                     <SelectionCard 
-                        label="Circle" 
-                        selected={gizmoConfig.planeHandleShape === 'CIRCLE'} 
-                        onClick={() => setPlaneShape('CIRCLE')} 
-                        shapePreview={PreviewCircle}
-                    />
-                </div>
-                <div className="bg-input-bg p-3 rounded border border-white/5 mt-2">
-                    <div className="flex justify-between items-center mb-2">
-                            <span className="text-[10px] font-bold text-text-secondary uppercase">Plane Handle Size</span>
-                            <span className="text-[10px] font-mono text-white">{gizmoConfig.planeHandleSize.toFixed(2)}</span>
-                    </div>
-                    <input 
-                        type="range" min="0.1" max="2.0" step="0.1" 
-                        className="w-full cursor-pointer"
-                        value={gizmoConfig.planeHandleSize} 
-                        onChange={(e) => setPlaneSize(parseFloat(e.target.value))} 
-                    />
                 </div>
             </div>
 
@@ -300,54 +237,11 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                         shapePreview={PreviewCube}
                     />
                     <SelectionCard 
-                        label="Sphere" 
-                        selected={gizmoConfig.centerHandleShape === 'SPHERE'} 
-                        onClick={() => setCenterShape('SPHERE')} 
-                        shapePreview={PreviewCircle}
-                    />
-                    <SelectionCard 
-                        label="Rhombus" 
-                        selected={gizmoConfig.centerHandleShape === 'RHOMBUS'} 
-                        onClick={() => setCenterShape('RHOMBUS')} 
-                        shapePreview={PreviewRhombus}
-                    />
-                    <SelectionCard 
                         label="Quad" 
                         selected={gizmoConfig.centerHandleShape === 'QUAD_CIRCLES'} 
                         onClick={() => setCenterShape('QUAD_CIRCLES')} 
                         shapePreview={PreviewQuadCircles}
                     />
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4 mt-2">
-                     <div className="bg-input-bg p-3 rounded border border-white/5 flex items-center justify-between">
-                            <span className="text-[10px] font-bold text-text-secondary uppercase">Color</span>
-                            <input type="color" className="w-6 h-6 rounded cursor-pointer bg-transparent" value={gizmoConfig.centerHandleColor} onChange={(e) => updateConfig('centerHandleColor', e.target.value)} />
-                     </div>
-                     <div className="bg-input-bg p-3 rounded border border-white/5">
-                        <div className="flex justify-between items-center mb-1">
-                            <span className="text-[10px] font-bold text-text-secondary uppercase">Size</span>
-                            <span className="text-[10px] font-mono text-white">{gizmoConfig.centerHandleSize.toFixed(2)}</span>
-                        </div>
-                        <input type="range" min="0.5" max="2.0" step="0.1" className="w-full cursor-pointer" value={gizmoConfig.centerHandleSize} onChange={(e) => updateConfig('centerHandleSize', parseFloat(e.target.value))} />
-                     </div>
-                </div>
-            </div>
-
-            {/* Placeholder: Grid */}
-            <div className="space-y-3 opacity-50 pointer-events-none grayscale">
-                <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
-                    <Icon name="Grid" size={12} /> Grid Options
-                </h3>
-                <div className="grid grid-cols-2 gap-4 text-xs">
-                     <div className="flex justify-between items-center bg-input-bg p-2 rounded">
-                         <span>Grid Size</span>
-                         <span className="font-mono">10.0</span>
-                     </div>
-                     <div className="flex justify-between items-center bg-input-bg p-2 rounded">
-                         <span>Snap Step</span>
-                         <span className="font-mono">1.0</span>
-                     </div>
                 </div>
             </div>
         </div>

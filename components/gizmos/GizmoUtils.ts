@@ -50,7 +50,7 @@ export const DEFAULT_GIZMO_CONFIG: GizmoConfiguration = {
     rotationShowDecorations: true,
     rotationShowSector: true,
 
-    axisHoverColor: '#ffffff',
+    axisHoverColor: '#1be4e1',
     axisPressColor: '#fbbf24', // Amber/Yellow
     axisBaseThickness: 2,
     axisHoverThicknessOffset: 1.0,
@@ -65,7 +65,7 @@ export const GIZMO_COLORS = {
     Y: '#22c55e', // Green
     Z: '#3b82f6', // Blue
     Center: '#ffffff', // White for free move
-    Hover: '#ffffff',
+    Hover: '#1be4e1',
     Gray: '#cccccc'
 };
 
