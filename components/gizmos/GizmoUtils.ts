@@ -2,21 +2,25 @@
 import { Mat4Utils } from '../../services/math';
 import { Vector3 } from '../../types';
 
-export type Axis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'UNIFORM';
+export type Axis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'UNIFORM' | 'VIEW';
 export type GizmoArrowShape = 'CONE' | 'TETRAHEDRON' | 'RHOMBUS' | 'CUBE';
+export type GizmoCenterShape = 'NONE' | 'CUBE' | 'SPHERE' | 'RHOMBUS';
 
 export interface GizmoConfiguration {
     translationShape: GizmoArrowShape;
+    centerHandleShape: GizmoCenterShape;
 }
 
 export const DEFAULT_GIZMO_CONFIG: GizmoConfiguration = {
-    translationShape: 'CONE'
+    translationShape: 'CONE',
+    centerHandleShape: 'CUBE'
 };
 
 export const GIZMO_COLORS = {
     X: '#ef4444', // Red
     Y: '#22c55e', // Green
     Z: '#3b82f6', // Blue
+    Center: '#ffffff', // White for free move
     Hover: '#ffffff',
     Gray: '#cccccc'
 };
