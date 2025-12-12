@@ -1,5 +1,3 @@
-
-
 import { Mat4Utils } from '../../services/math';
 import { Vector3 } from '../../types';
 
@@ -16,6 +14,13 @@ export interface GizmoConfiguration {
     arrowOffset: number;
     planeHandleSize: number;
     rotationRingSize: number;
+    
+    // Rotation Specifics
+    rotationRingTubeScale: number;
+    rotationScreenRingScale: number; // New: Scale multiplier for the outer ring
+    rotationShowScreenRing: boolean;
+    rotationShowDecorations: boolean;
+    rotationShowSector: boolean;
     
     // Axis Interaction
     axisHoverColor: string;
@@ -37,6 +42,13 @@ export const DEFAULT_GIZMO_CONFIG: GizmoConfiguration = {
     arrowOffset: 1.0,
     planeHandleSize: 1.0,
     rotationRingSize: 1.2,
+    
+    // Rotation Defaults
+    rotationRingTubeScale: 1.0,
+    rotationScreenRingScale: 1.25, // Default larger than standard rings
+    rotationShowScreenRing: true,
+    rotationShowDecorations: true,
+    rotationShowSector: true,
 
     axisHoverColor: '#ffffff',
     axisPressColor: '#fbbf24', // Amber/Yellow

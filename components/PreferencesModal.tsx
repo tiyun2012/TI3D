@@ -1,4 +1,3 @@
-
 import React, { useContext } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
 import { GizmoArrowShape, GizmoCenterShape, GizmoPlaneShape } from './gizmos/GizmoUtils';
@@ -136,17 +135,65 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                 <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
                     <Icon name="RotateCw" size={12} /> Rotation Ring Style
                 </h3>
+                
+                <div className="grid grid-cols-2 gap-4">
+                    {/* Ring Radius */}
+                    <div className="bg-input-bg p-3 rounded border border-white/5">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase">Ring Size</span>
+                            <span className="text-[10px] font-mono text-white">{gizmoConfig.rotationRingSize.toFixed(2)}</span>
+                        </div>
+                        <input 
+                            type="range" min="0.5" max="3.0" step="0.1" 
+                            className="w-full cursor-pointer"
+                            value={gizmoConfig.rotationRingSize} 
+                            onChange={(e) => setRingSize(parseFloat(e.target.value))} 
+                        />
+                    </div>
+
+                    {/* Tube Thickness */}
+                    <div className="bg-input-bg p-3 rounded border border-white/5">
+                         <div className="flex justify-between items-center mb-2">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase">Tube Thickness</span>
+                            <span className="text-[10px] font-mono text-white">{gizmoConfig.rotationRingTubeScale.toFixed(2)}</span>
+                        </div>
+                        <input 
+                            type="range" min="0.1" max="2.0" step="0.1" 
+                            className="w-full cursor-pointer"
+                            value={gizmoConfig.rotationRingTubeScale} 
+                            onChange={(e) => updateConfig('rotationRingTubeScale', parseFloat(e.target.value))} 
+                        />
+                    </div>
+                </div>
+
+                {/* NEW: Screen Ring Scale */}
                 <div className="bg-input-bg p-3 rounded border border-white/5">
-                    <div className="flex justify-between items-center mb-2">
-                        <span className="text-[10px] font-bold text-text-secondary uppercase">Ring Size</span>
-                        <span className="text-[10px] font-mono text-white">{gizmoConfig.rotationRingSize.toFixed(2)}</span>
+                     <div className="flex justify-between items-center mb-2">
+                        <span className="text-[10px] font-bold text-text-secondary uppercase">Screen Ring Scale</span>
+                        <span className="text-[10px] font-mono text-white">{gizmoConfig.rotationScreenRingScale.toFixed(2)}x</span>
                     </div>
                     <input 
-                        type="range" min="0.5" max="3.0" step="0.1" 
+                        type="range" min="1.0" max="2.0" step="0.05" 
                         className="w-full cursor-pointer"
-                        value={gizmoConfig.rotationRingSize} 
-                        onChange={(e) => setRingSize(parseFloat(e.target.value))} 
+                        value={gizmoConfig.rotationScreenRingScale} 
+                        onChange={(e) => updateConfig('rotationScreenRingScale', parseFloat(e.target.value))} 
                     />
+                </div>
+
+                {/* Toggles */}
+                 <div className="flex items-center gap-4 text-xs pt-1 px-1">
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-text-secondary hover:text-white transition-colors">
+                        <input type="checkbox" checked={gizmoConfig.rotationShowScreenRing} onChange={(e) => updateConfig('rotationShowScreenRing', e.target.checked)} />
+                        <span>Outer Ring</span>
+                    </label>
+                     <label className="flex items-center gap-2 cursor-pointer select-none text-text-secondary hover:text-white transition-colors">
+                        <input type="checkbox" checked={gizmoConfig.rotationShowDecorations} onChange={(e) => updateConfig('rotationShowDecorations', e.target.checked)} />
+                        <span>Decorations</span>
+                    </label>
+                     <label className="flex items-center gap-2 cursor-pointer select-none text-text-secondary hover:text-white transition-colors">
+                        <input type="checkbox" checked={gizmoConfig.rotationShowSector} onChange={(e) => updateConfig('rotationShowSector', e.target.checked)} />
+                        <span>Pie Sector</span>
+                    </label>
                 </div>
             </div>
 

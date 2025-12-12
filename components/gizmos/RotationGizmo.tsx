@@ -273,8 +273,8 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
                     fill={shadedColor}
                     stroke={shadedColor} // Stroke same as fill to close gaps
                     strokeWidth={0.5}
-                    fillOpacity={opacity}
-                    strokeOpacity={opacity}
+                    fillOpacity={opacity * intensity}
+                    strokeOpacity={0.3}
                     strokeLinejoin="round"
                 />
             );
@@ -283,17 +283,24 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
 
     // Render decorations (small rhombuses) along the ring
     const renderRingDecorations = (axis: Axis, axisVec: Vector3, u: Vector3, v: Vector3, color: string) => {
-        const viewDir = GizmoMath.normalize(GizmoMath.sub(basis.cameraPosition, origin));
-        const dot = Math.abs(GizmoMath.dot(axisVec, viewDir));
-        
+        if (!gizmoConfig.rotationShowDecorations) return null;
+
+        // Visibility Logic
         let visibility = 1.0;
-        if (dot > 0.99) visibility = 0;
-        else if (dot > 0.85) visibility = 1.0 - ((dot - 0.85) / 0.14);
+        if (axis !== 'VIEW') {
+            const viewDir = GizmoMath.normalize(GizmoMath.sub(basis.cameraPosition, origin));
+            const dot = Math.abs(GizmoMath.dot(axisVec, viewDir));
+            if (dot > 0.99) visibility = 0;
+            else if (dot > 0.85) visibility = 1.0 - ((dot - 0.85) / 0.14);
+        }
         
         if (visibility < 0.05) return null;
 
-        const radius = scale * gizmoConfig.rotationRingSize;
-        const decorationCount = 8;
+        // Apply scale config - Larger for VIEW ring if configured
+        const ringScale = axis === 'VIEW' ? gizmoConfig.rotationScreenRingScale : 1.0;
+        const radius = scale * gizmoConfig.rotationRingSize * ringScale;
+        
+        const decorationCount = axis === 'VIEW' ? 12 : 8; // More decorations for outer ring
         const rhombusSize = scale * 0.06;
         
         const baseRhombus = getCachedRhombus(rhombusSize);
@@ -356,8 +363,11 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         const opacity = visibility * (isActive ? 1.0 : (isHover ? 0.9 : 0.7));
         const finalColor = isActive ? gizmoConfig.axisPressColor : (isHover ? gizmoConfig.axisHoverColor : color);
         
-        const radius = scale * gizmoConfig.rotationRingSize;
-        const tubeRadius = scale * 0.015 * (isActive || isHover ? 2.0 : 1.0);
+        // Apply Scaling: Screen Ring can be larger
+        const ringScale = axis === 'VIEW' ? gizmoConfig.rotationScreenRingScale : 1.0;
+        const radius = scale * gizmoConfig.rotationRingSize * ringScale;
+        
+        const tubeRadius = scale * 0.015 * gizmoConfig.rotationRingTubeScale * (isActive || isHover ? 2.0 : 1.0);
         
         const geo = getCachedTorus(radius, tubeRadius);
         
@@ -393,18 +403,20 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
                 
                 <g style={{ filter: isActive ? 'url(#glow)' : 'none' }}>
                     {renderVolumetricMesh(worldVertices, geo.indices, finalColor, opacity)}
-                    {axis !== 'VIEW' && renderRingDecorations(axis, axisVec, u, v, finalColor)}
+                    {/* Render decorations for ALL axes, including VIEW */}
+                    {renderRingDecorations(axis, axisVec, u, v, finalColor)}
                 </g>
             </g>
         );
     };
     
     const renderSector = () => {
+        if (!gizmoConfig.rotationShowSector) return null;
         if (!dragState || dragState.axis === 'VIEW' || !dragState.u || !dragState.v) return null;
         
         const radius = scale * gizmoConfig.rotationRingSize;
         const color = dragState.axis === 'X' ? GIZMO_COLORS.X : 
-                     dragState.axis === 'Y' ? GIZMO_COLORS.Y : GIZMO_COLORS.Z;
+                      dragState.axis === 'Y' ? GIZMO_COLORS.Y : GIZMO_COLORS.Z;
         
         const segments = Math.max(8, Math.floor(Math.abs(dragState.currentAngle) * 16 / (2 * Math.PI)));
         const points3D: Vector3[] = [origin];
@@ -412,14 +424,8 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         for (let i = 0; i <= segments; i++) {
             const t = i / segments;
             const angle = dragState.currentAngle * t; // Relative to start drag frame
-            // Project angle onto the U, V plane
-            const uComp = Math.cos(dragState.startAngle + angle) * Math.cos(dragState.startAngle) + Math.sin(dragState.startAngle + angle) * Math.sin(dragState.startAngle); // Simplified
-            
-            // We need to rotate the "starting vector" by "angle".
-            // Start vector in 3D: P_start = origin + (u*cos(startA) + v*sin(startA))*radius
-            // Current vector: P_curr = origin + (u*cos(startA + angle) + v*sin(startA + angle))*radius
-            
             const theta = dragState.startAngle + angle;
+            
             points3D.push({
                 x: origin.x + (dragState.u.x * Math.cos(theta) + dragState.v.x * Math.sin(theta)) * radius,
                 y: origin.y + (dragState.u.y * Math.cos(theta) + dragState.v.y * Math.sin(theta)) * radius,
@@ -444,6 +450,8 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
     };
     
     const renderScreenSpaceRing = () => {
+        if (!gizmoConfig.rotationShowScreenRing) return null;
+
         const viewDir = GizmoMath.normalize(GizmoMath.sub(basis.cameraPosition, origin));
         const worldUp = { x: 0, y: 1, z: 0 };
         let right = GizmoMath.cross(viewDir, worldUp);
@@ -455,6 +463,8 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
     };
     
     const renderCardinalDecorations = () => {
+        if (!gizmoConfig.rotationShowDecorations) return null;
+
         const radius = scale * gizmoConfig.rotationRingSize * 1.3;
         const labels = [
             { t: 'X', pos: xAxis, col: GIZMO_COLORS.X },
