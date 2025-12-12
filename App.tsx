@@ -227,7 +227,7 @@ const App: React.FC = () => {
     };
   };
 
-  const [layout] = useState(() => {
+  const [layout] = useState<LayoutData>(() => {
      const process = (box: BoxData | PanelData): BoxData | PanelData => {
          if ('children' in box && box.children) return { ...box, children: box.children.map(process as any) };
          const panel = box as PanelData;
@@ -245,7 +245,7 @@ const App: React.FC = () => {
          })};
          return box;
      };
-     if (!DEFAULT_LAYOUT.dockbox) return { dockbox: { mode: 'horizontal', children: [] } };
+     if (!DEFAULT_LAYOUT.dockbox) return { dockbox: { mode: 'horizontal', children: [] } as BoxData };
      return { dockbox: process(DEFAULT_LAYOUT.dockbox) as BoxData };
   });
 
