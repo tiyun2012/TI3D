@@ -3,7 +3,7 @@ import { GraphNode, GraphConnection } from '../types';
 import { engineInstance } from '../services/engine';
 import { NodeRegistry, getTypeColor } from '../services/NodeRegistry';
 
-// --- 1. Shared Layout Constants ---
+// ... (LayoutConfig and GraphMath remain unchanged) ...
 const LayoutConfig = {
     GRID_SIZE: 20,
     NODE_WIDTH: 180,
@@ -14,23 +14,15 @@ const LayoutConfig = {
     BORDER: 1,
     GAP: 4,
     PADDING_TOP: 8,
-    // Gap from the CENTER of the pin. 
-    // 0 = Center of pin (wire hidden behind cap). 
-    // 6 = Edge of pin (wire starts at circle boundary).
     WIRE_GAP: 0 
 };
 
-// --- 2. Math Helpers ---
 const GraphMath = {
     getPinPosition: (node: GraphNode, pinId: string, type: 'input' | 'output') => {
-        // Reroute Node: Input Left, Output Right (Center Y)
         if (node.type === 'Reroute') {
             const centerY = node.position.y + LayoutConfig.REROUTE_SIZE / 2;
-            if (type === 'input') {
-                return { x: node.position.x, y: centerY }; 
-            } else {
-                return { x: node.position.x + LayoutConfig.REROUTE_SIZE, y: centerY };
-            }
+            if (type === 'input') return { x: node.position.x, y: centerY }; 
+            else return { x: node.position.x + LayoutConfig.REROUTE_SIZE, y: centerY };
         }
 
         const def = NodeRegistry[node.type];
@@ -50,13 +42,7 @@ const GraphMath = {
         const yOffset = LayoutConfig.BORDER + LayoutConfig.HEADER_HEIGHT + LayoutConfig.PADDING_TOP + 
                        (index * (LayoutConfig.ITEM_HEIGHT + LayoutConfig.GAP)) + (LayoutConfig.ITEM_HEIGHT / 2);
         
-        // FIX: Return the visual CENTER of the pin, not the edge.
-        // Input pin is at left: -6px. Width 12. Center is at 0 relative to node.
-        // Output pin is at right: -6px. Right edge is Width+6. Center is at Width relative to node.
-        const xOffset = type === 'output' 
-            ? LayoutConfig.NODE_WIDTH
-            : 0;
-
+        const xOffset = type === 'output' ? LayoutConfig.NODE_WIDTH : 0;
         return { x: node.position.x + xOffset, y: node.position.y + yOffset };
     },
 
@@ -75,7 +61,6 @@ const GraphMath = {
     }
 };
 
-// --- Initial Data ---
 const INITIAL_NODES: GraphNode[] = [
     { id: '1', type: 'Time', position: { x: 50, y: 100 } },
     { id: '2', type: 'Sine', position: { x: 280, y: 100 } },
@@ -92,34 +77,33 @@ const INITIAL_CONNECTIONS: GraphConnection[] = [
 ];
 
 export const NodeGraph: React.FC = () => {
-    // React State
     const [nodes, setNodes] = useState<GraphNode[]>(INITIAL_NODES);
     const [connections, setConnections] = useState<GraphConnection[]>(INITIAL_CONNECTIONS);
     const [connecting, setConnecting] = useState<{ nodeId: string, pinId: string, type: 'input'|'output', x: number, y: number, dataType: string } | null>(null);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, visible: boolean } | null>(null);
     const [searchFilter, setSearchFilter] = useState('');
-    
-    // Selection State
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const [selectionBox, setSelectionBox] = useState<{ startX: number, startY: number, currentX: number, currentY: number } | null>(null);
 
-    // High-Performance Refs
     const transformRef = useRef({ x: 0, y: 0, k: 1 });
     const viewRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const pathRefs = useRef<Map<string, SVGPathElement>>(new Map());
-    
-    // Global Event Manager
     const activeListenersRef = useRef<{ move?: (ev: MouseEvent) => void; up?: (ev: MouseEvent) => void }>({});
 
     useEffect(() => {
-        engineInstance.compileGraph(nodes, connections);
+        const timeoutId = setTimeout(() => {
+            engineInstance.compileGraph(nodes, connections);
+        }, 150); 
+        return () => clearTimeout(timeoutId);
     }, [nodes, connections]);
 
-    // --- Helper: Type Checking ---
+    const nodeMap = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes]);
+
+    // ... (rest of the component remains similar, using nodeMap and optimized logic)
     const getPortType = useCallback((nodeId: string, pinId: string, type: 'input' | 'output') => {
-        const node = nodes.find(n => n.id === nodeId);
+        const node = nodeMap.get(nodeId);
         if (!node) return 'any';
         if (node.type === 'Reroute') return 'any';
         
@@ -129,13 +113,11 @@ export const NodeGraph: React.FC = () => {
         const list = type === 'input' ? def.inputs : def.outputs;
         const port = list.find(p => p.id === pinId);
         return port ? port.type : 'any';
-    }, [nodes]);
+    }, [nodeMap]);
 
     const isCompatible = useCallback((sourceType: string, targetType: string) => {
         return sourceType === 'any' || targetType === 'any' || sourceType === targetType;
     }, []);
-
-    // --- Viewport Syncing ---
 
     const updateViewportStyle = useCallback(() => {
         if (viewRef.current && containerRef.current) {
@@ -150,14 +132,11 @@ export const NodeGraph: React.FC = () => {
         updateViewportStyle();
     }, [updateViewportStyle]);
 
-    // Cleanup Helper
     const cleanupListeners = useCallback(() => {
         if (activeListenersRef.current.move) window.removeEventListener('mousemove', activeListenersRef.current.move);
         if (activeListenersRef.current.up) window.removeEventListener('mouseup', activeListenersRef.current.up);
         activeListenersRef.current = {};
     }, []);
-
-    // --- Interaction Handlers ---
 
     const handleWheel = useCallback((e: React.WheelEvent) => {
         e.stopPropagation();
@@ -190,7 +169,6 @@ export const NodeGraph: React.FC = () => {
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
 
-        // Pan
         if (e.button === 1 || (e.button === 0 && e.altKey)) {
             e.preventDefault();
             cleanupListeners();
@@ -219,9 +197,7 @@ export const NodeGraph: React.FC = () => {
             activeListenersRef.current = { move: onMove, up: onUp };
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
-        }
-        // Selection Box (Left Click)
-        else if (e.button === 0) {
+        } else if (e.button === 0) {
             if (!e.shiftKey && !e.ctrlKey) {
                 setSelectedNodeIds(new Set());
             }
@@ -238,10 +214,8 @@ export const NodeGraph: React.FC = () => {
                 
                 setSelectionBox(prev => prev ? { ...prev, currentX, currentY } : null);
 
-                // Live Selection Update
                 cancelAnimationFrame(frameId);
                 frameId = requestAnimationFrame(() => {
-                     // Calculate Selection Rect
                      const minX = Math.min(startX, currentX);
                      const maxX = Math.max(startX, currentX);
                      const minY = Math.min(startY, currentY);
@@ -251,13 +225,11 @@ export const NodeGraph: React.FC = () => {
                      
                      nodeRefs.current.forEach((el, id) => {
                          const nodeRect = el.getBoundingClientRect();
-                         // Convert Node Rect to Container Space
                          const nx = nodeRect.left - rect.left;
                          const ny = nodeRect.top - rect.top;
                          const nw = nodeRect.width;
                          const nh = nodeRect.height;
                          
-                         // Intersection
                          if (minX < nx + nw && maxX > nx && minY < ny + nh && maxY > ny) {
                              newSelected.add(id);
                          }
@@ -284,7 +256,6 @@ export const NodeGraph: React.FC = () => {
         
         cleanupListeners();
 
-        // Selection Logic
         let currentSelection = new Set(selectedNodeIds);
         if (!currentSelection.has(node.id)) {
             if (!e.shiftKey && !e.ctrlKey) {
@@ -301,7 +272,6 @@ export const NodeGraph: React.FC = () => {
         const startMouse = { x: e.clientX, y: e.clientY };
         const k = transformRef.current.k;
         
-        // Capture start positions of ALL selected nodes
         const startPositions = new Map<string, {x: number, y: number}>();
         nodes.forEach(n => {
             if (currentSelection.has(n.id)) {
@@ -311,31 +281,25 @@ export const NodeGraph: React.FC = () => {
 
         let frameId = 0;
 
-        // Optimization: Pre-calculate static connection points for all selected nodes
         const activeLinks = connections
             .filter(c => currentSelection.has(c.fromNode) || currentSelection.has(c.toNode))
             .map(c => {
-                const fromNode = nodes.find(n => n.id === c.fromNode);
-                const toNode = nodes.find(n => n.id === c.toNode);
+                const fromNode = nodeMap.get(c.fromNode);
+                const toNode = nodeMap.get(c.toNode);
                 if (!fromNode || !toNode) return null;
 
                 const pathEl = pathRefs.current.get(c.id);
                 if (!pathEl) return null;
-
-                const isFromSelected = currentSelection.has(c.fromNode);
-                const isToSelected = currentSelection.has(c.toNode);
 
                 return {
                     pathEl,
                     fromNodeId: c.fromNode,
                     fromPin: c.fromPin,
                     toNodeId: c.toNode,
-                    toPin: c.toPin,
-                    isFromSelected,
-                    isToSelected
+                    toPin: c.toPin
                 };
             })
-            .filter(Boolean); // Remove nulls
+            .filter(Boolean);
 
         const onMove = (ev: MouseEvent) => {
             cancelAnimationFrame(frameId);
@@ -343,7 +307,6 @@ export const NodeGraph: React.FC = () => {
                 const dx = (ev.clientX - startMouse.x) / k;
                 const dy = (ev.clientY - startMouse.y) / k;
 
-                // 1. Direct DOM Update for all selected nodes
                 startPositions.forEach((startPos, id) => {
                     const nodeEl = nodeRefs.current.get(id);
                     if (nodeEl) {
@@ -353,11 +316,9 @@ export const NodeGraph: React.FC = () => {
                     }
                 });
 
-                // 2. Update Wires
                 for(const link of activeLinks) {
                     if (!link) continue;
 
-                    // Get "Live" positions
                     const getPos = (id: string, defPos: {x:number, y:number}) => {
                          if (startPositions.has(id)) {
                              const s = startPositions.get(id)!;
@@ -366,8 +327,8 @@ export const NodeGraph: React.FC = () => {
                          return defPos;
                     };
 
-                    const n1 = nodes.find(n => n.id === link.fromNodeId)!;
-                    const n2 = nodes.find(n => n.id === link.toNodeId)!;
+                    const n1 = nodeMap.get(link.fromNodeId)!;
+                    const n2 = nodeMap.get(link.toNodeId)!;
 
                     const p1 = GraphMath.getPinPosition(
                         { ...n1, position: getPos(n1.id, n1.position) }, 
@@ -378,7 +339,6 @@ export const NodeGraph: React.FC = () => {
                         link.toPin, 'input'
                     );
 
-                    // --- APPLY GAP (Drag Update) ---
                     p1.x += LayoutConfig.WIRE_GAP;
                     p2.x -= LayoutConfig.WIRE_GAP;
                     
@@ -406,10 +366,9 @@ export const NodeGraph: React.FC = () => {
         activeListenersRef.current = { move: onMove, up: onUp };
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup', onUp);
-    }, [nodes, connections, cleanupListeners, selectedNodeIds]);
+    }, [nodes, connections, cleanupListeners, selectedNodeIds, nodeMap]);
 
-    // --- Wire Linking ---
-
+    // ... (Pin handling and render logic updated similarly) ...
     const handlePinDown = useCallback((e: React.MouseEvent, nodeId: string, pinId: string, type: 'input'|'output') => {
         e.stopPropagation();
         e.preventDefault();
@@ -446,7 +405,6 @@ export const NodeGraph: React.FC = () => {
                 const source = prev.type === 'output' ? prev : { nodeId, pinId };
                 const target = prev.type === 'input' ? prev : { nodeId, pinId };
                 
-                // Check Compatibility
                 const sourceType = getPortType(source.nodeId, source.pinId, 'output');
                 const targetType = getPortType(target.nodeId, target.pinId, 'input');
                 
@@ -471,21 +429,16 @@ export const NodeGraph: React.FC = () => {
         const pos = GraphMath.screenToWorld(contextMenu.x, contextMenu.y, rect, transformRef.current);
         const newNodeId = crypto.randomUUID();
         setNodes(p => [...p, { id: newNodeId, type, position: pos, data: {} }]);
-        setSelectedNodeIds(new Set([newNodeId])); // Select newly created node
+        setSelectedNodeIds(new Set([newNodeId]));
         setContextMenu(null);
         setSearchFilter('');
     };
 
-    // --- Render Helpers ---
-
     const renderPort = (nodeId: string, pinId: string, type: 'input'|'output', color?: string) => {
-        // Visual Guide Logic
         let isActive = false;
         let isCompatiblePort = false;
 
         if (connecting && connecting.nodeId !== nodeId && connecting.type !== type) {
-            // This port is a valid candidate direction-wise
-            // Now check type compatibility
             const myType = getPortType(nodeId, pinId, type);
             if (isCompatible(connecting.dataType, myType)) {
                 isActive = true;
@@ -493,13 +446,12 @@ export const NodeGraph: React.FC = () => {
             }
         }
 
-        // Styles
         let borderClass = 'border-black';
         let bgStyle = color || '#fff';
         let scaleClass = 'hover:scale-125';
 
         if (isActive && isCompatiblePort) {
-            borderClass = 'border-emerald-500 ring-2 ring-emerald-400'; // Green Glow
+            borderClass = 'border-emerald-500 ring-2 ring-emerald-400';
             scaleClass = 'scale-125';
             bgStyle = '#fff';
         }
@@ -519,18 +471,15 @@ export const NodeGraph: React.FC = () => {
         );
     };
 
-    // --- Main Render ---
-
     const renderedWires = useMemo(() => {
         return connections.map(c => {
-            const fromNode = nodes.find(n => n.id === c.fromNode);
-            const toNode = nodes.find(n => n.id === c.toNode);
+            const fromNode = nodeMap.get(c.fromNode);
+            const toNode = nodeMap.get(c.toNode);
             if (!fromNode || !toNode) return null;
 
             const p1 = GraphMath.getPinPosition(fromNode, c.fromPin, 'output');
             const p2 = GraphMath.getPinPosition(toNode, c.toPin, 'input');
             
-            // --- APPLY GAP (Static Render) ---
             p1.x += LayoutConfig.WIRE_GAP;
             p2.x -= LayoutConfig.WIRE_GAP;
 
@@ -542,7 +491,7 @@ export const NodeGraph: React.FC = () => {
 
             return <path key={c.id} ref={el => { if(el) pathRefs.current.set(c.id, el) }} d={d} stroke={color} strokeWidth="2" fill="none" />;
         });
-    }, [nodes, connections]);
+    }, [nodeMap, connections]);
 
     return (
         <div 
@@ -560,22 +509,18 @@ export const NodeGraph: React.FC = () => {
                 <svg className="absolute top-0 left-0 overflow-visible pointer-events-none w-1 h-1">
                     {renderedWires}
                     {connecting && (() => {
-                         const node = nodes.find(n => n.id === connecting.nodeId);
+                         const node = nodeMap.get(connecting.nodeId);
                          if(!node) return null;
                          const pinPos = GraphMath.getPinPosition(node, connecting.pinId, connecting.type);
                          
-                         // --- APPLY GAP (Drag Render) ---
-                         if (connecting.type === 'output') {
-                             pinPos.x += LayoutConfig.WIRE_GAP;
-                         } else {
-                             pinPos.x -= LayoutConfig.WIRE_GAP;
-                         }
+                         if (connecting.type === 'output') pinPos.x += LayoutConfig.WIRE_GAP;
+                         else pinPos.x -= LayoutConfig.WIRE_GAP;
 
                          const p2 = { x: connecting.x, y: connecting.y };
                          const start = connecting.type === 'output' ? pinPos : p2;
                          const end = connecting.type === 'output' ? p2 : pinPos;
                          
-                         const color = getTypeColor(connecting.dataType as any); // Color the drag line
+                         const color = getTypeColor(connecting.dataType as any);
                          return <path d={GraphMath.calculateCurve(start.x, start.y, end.x, end.y)} stroke={color} strokeWidth="2" strokeDasharray="5,5" fill="none" />;
                     })()}
                 </svg>
@@ -647,7 +592,6 @@ export const NodeGraph: React.FC = () => {
                 })}
             </div>
             
-            {/* Selection Box Overlay */}
             {selectionBox && (
                 <div 
                     className="absolute border border-accent bg-accent/20 pointer-events-none z-50"
