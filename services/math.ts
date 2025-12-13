@@ -353,5 +353,26 @@ export const Mat4Utils = {
       out.z = 0;
     }
     return out;
+  },
+
+  // --- ADDED FUNCTION TO FIX ERROR ---
+  transformPoint: (v: Vec3, m: Mat4, width: number, height: number) => {
+    const x = v.x, y = v.y, z = v.z;
+    
+    // 1. Multiply by Matrix (ViewProjection)
+    const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+    const projX = m[0] * x + m[4] * y + m[8] * z + m[12];
+    const projY = m[1] * x + m[5] * y + m[9] * z + m[13];
+    const projZ = m[2] * x + m[6] * y + m[10] * z + m[14];
+
+    // 2. Perspective Divide & Viewport Map
+    const s = w !== 0 ? 1.0 / w : 1.0;
+    // We return 'w' so the caller can check if the point is behind the camera (w <= 0)
+    return {
+        x: (projX * s) * 0.5 * width + 0.5 * width,
+        y: -(projY * s) * 0.5 * height + 0.5 * height, // Flip Y for DOM coordinates
+        z: projZ * s,
+        w: w
+    };
   }
 };

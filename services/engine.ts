@@ -1,3 +1,4 @@
+
 // services/engine.ts
 
 /**
@@ -107,33 +108,42 @@ export class Ti3DEngine {
       this.executionList = [];
       const nodeMap = new Map(nodes.map(n => [n.id, n]));
       const visited = new Set<string>();
+      const visiting = new Set<string>(); // Cycle detection
 
       const visit = (nodeId: string) => {
+          if (visiting.has(nodeId)) {
+              console.warn(`[Graph] Cycle detected involving node ${nodeId}. Breaking chain.`);
+              return;
+          }
           if (visited.has(nodeId)) return;
+
+          visiting.add(nodeId);
+
           const node = nodeMap.get(nodeId);
-          if (!node) return;
+          if (node) {
+              const inputConns = connections.filter(c => c.toNode === nodeId);
+              for(const c of inputConns) {
+                  visit(c.fromNode);
+              }
 
-          const inputConns = connections.filter(c => c.toNode === nodeId);
-          for(const c of inputConns) {
-              visit(c.fromNode);
+              const def = NodeRegistry[node.type];
+              if (def) {
+                  const inputs = def.inputs.map(inputDef => {
+                      const conn = connections.find(c => c.toNode === nodeId && c.toPin === inputDef.id);
+                      return conn ? { nodeId: conn.fromNode, pinId: conn.fromPin } : null;
+                  });
+
+                  this.executionList.push({
+                      id: nodeId,
+                      def,
+                      inputs,
+                      data: node.data
+                  });
+              }
           }
 
+          visiting.delete(nodeId);
           visited.add(nodeId);
-
-          const def = NodeRegistry[node.type];
-          if (def) {
-              const inputs = def.inputs.map(inputDef => {
-                  const conn = connections.find(c => c.toNode === nodeId && c.toPin === inputDef.id);
-                  return conn ? { nodeId: conn.fromNode, pinId: conn.fromPin } : null;
-              });
-
-              this.executionList.push({
-                  id: nodeId,
-                  def,
-                  inputs,
-                  data: node.data
-              });
-          }
       };
 
       for (const node of nodes) {
