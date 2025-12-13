@@ -454,14 +454,14 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         
         points3D.push(origin); // Close loop
         
-        const projected = points3D.map(v => project(v));
-        const pathPoints = projected.map((p: any) => `${p.x},${p.y}`).join(' ');
+        const projected = points3D.map(project);
+        const pathPoints = projected.map(p => `${p.x},${p.y}`).join(' ');
         
         return (
             <g pointerEvents="none" opacity={0.4}>
                 <polygon points={pathPoints} fill={color} stroke="none" />
                 <polyline 
-                    points={projected.slice(1, -1).map((p: any) => `${p.x},${p.y}`).join(' ')} 
+                    points={projected.slice(1, -1).map(p => `${p.x},${p.y}`).join(' ')} 
                     stroke="white" strokeWidth={2} fill="none" 
                 />
             </g>

@@ -274,8 +274,6 @@ export const Mat4Utils = {
       return out;
   },
 
-  // --- NEW UTILS FOR NODES ---
-
   translation: (x: number, y: number, z: number, out: Mat4): Mat4 => {
     Mat4Utils.identity(out);
     out[12] = x; out[13] = y; out[14] = z;
@@ -355,7 +353,7 @@ export const Mat4Utils = {
     return out;
   },
 
-  // --- ADDED FUNCTION TO FIX ERROR ---
+  // --- ADDED: Missing function ---
   transformPoint: (v: Vec3, m: Mat4, width: number, height: number) => {
     const x = v.x, y = v.y, z = v.z;
     

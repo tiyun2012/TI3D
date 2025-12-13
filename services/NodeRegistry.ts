@@ -1,7 +1,7 @@
 // services/NodeRegistry.ts
 
 import { Ti3DEngine } from './engine';
-import { Mat4Utils, Vec3Utils, Mat4 } from './math';
+import { Mat4Utils } from './math';
 
 export type DataType = 'float' | 'vec3' | 'vec4' | 'mat4' | 'stream' | 'texture' | 'any';
 
@@ -30,7 +30,70 @@ const TYPE_COLORS: Record<DataType, string> = {
 export const getTypeColor = (t: DataType) => TYPE_COLORS[t] || '#fff';
 
 export const NodeRegistry: Record<string, NodeDef> = {
-  // ... (Existing non-matrix nodes like Time, Sine, Float, Vec3, etc.) ...
+  // --- BASIC MATH NODES (Required for Initial Graph) ---
+
+  'Time': {
+    type: 'Time',
+    category: 'Input',
+    title: 'Time',
+    inputs: [],
+    outputs: [{ id: 'out', name: 'Time', type: 'float' }],
+    execute: (_, __, ___) => performance.now() / 1000
+  },
+
+  'Float': {
+    type: 'Float',
+    category: 'Input',
+    title: 'Float',
+    inputs: [],
+    outputs: [{ id: 'out', name: 'Value', type: 'float' }],
+    execute: (_, data) => parseFloat(data?.value || '0')
+  },
+
+  'Sine': {
+    type: 'Sine',
+    category: 'Math',
+    title: 'Sine',
+    inputs: [{ id: 'in', name: 'In', type: 'float' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+    execute: (inputs) => Math.sin(inputs[0] || 0)
+  },
+
+  'Add': {
+    type: 'Add',
+    category: 'Math',
+    title: 'Add',
+    inputs: [
+        { id: 'a', name: 'A', type: 'float' },
+        { id: 'b', name: 'B', type: 'float' }
+    ],
+    outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+    execute: (inputs) => (inputs[0] || 0) + (inputs[1] || 0)
+  },
+  
+  'WaveViewer': {
+      type: 'WaveViewer',
+      category: 'Debug',
+      title: 'Wave Viewer',
+      inputs: [{ id: 'in', name: 'In', type: 'float' }],
+      outputs: [],
+      execute: (inputs) => inputs[0] // Pass-through or side-effect visualization
+  },
+
+  'Vec3': {
+    type: 'Vec3',
+    category: 'Input',
+    title: 'Vector3',
+    inputs: [
+        { id: 'x', name: 'X', type: 'float' },
+        { id: 'y', name: 'Y', type: 'float' },
+        { id: 'z', name: 'Z', type: 'float' }
+    ],
+    outputs: [{ id: 'out', name: 'Vec3', type: 'vec3' }],
+    execute: (inputs) => ({ x: inputs[0]||0, y: inputs[1]||0, z: inputs[2]||0 })
+  },
+
+  // --- ECS / QUERY NODES ---
   
   'AllEntities': {
     type: 'AllEntities',
@@ -47,8 +110,6 @@ export const NodeRegistry: Record<string, NodeDef> = {
        return { indices: indices.subarray(0,c), count: c };
     }
   },
-
-  // --- NEW HIGH-PERFORMANCE ECS NODES ---
 
   'BatchApplyTransform': {
     type: 'BatchApplyTransform',
@@ -72,10 +133,8 @@ export const NodeRegistry: Record<string, NodeDef> = {
         const { indices, count } = stream;
         const store = engine.ecs.store;
         
-        // Zero-allocation loop
         for (let i = 0; i < count; i++) {
             const idx = indices[i];
-            // Use optimized setters that handle dirty flags
             if (pos) store.setPosition(idx, pos.x, pos.y, pos.z);
             if (rot) store.setRotation(idx, rot.x, rot.y, rot.z);
             if (scl) store.setScale(idx, scl.x, scl.y, scl.z);
@@ -101,7 +160,6 @@ export const NodeRegistry: Record<string, NodeDef> = {
         if (idx === undefined) return { pos: {x:0,y:0,z:0}, rot: {x:0,y:0,z:0}, scl: {x:1,y:1,z:1} };
         
         const store = engine.ecs.store;
-        // Direct read from SoA
         return {
             pos: { x: store.posX[idx], y: store.posY[idx], z: store.posZ[idx] },
             rot: { x: store.rotX[idx], y: store.rotY[idx], z: store.rotZ[idx] },
@@ -110,7 +168,7 @@ export const NodeRegistry: Record<string, NodeDef> = {
     }
   },
 
-  // --- MATRIX MATH (For calculation only) ---
+  // --- MATRIX MATH NODES ---
   
   'MatrixMultiply': {
     type: 'MatrixMultiply',
@@ -162,7 +220,5 @@ export const NodeRegistry: Record<string, NodeDef> = {
         const up = inputs[2] || { x: 0, y: 1, z: 0 };
         return Mat4Utils.lookAt(eye, target, up, Mat4Utils.create());
     }
-  },
-  
-  // (Include other helper nodes like Float, Vec3, Time, etc. here)
+  }
 };

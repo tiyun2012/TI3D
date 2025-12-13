@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react';
 import { GraphNode, GraphConnection } from '../types';
 import { engineInstance } from '../services/engine';
@@ -14,21 +13,23 @@ const LayoutConfig = {
     PIN_RADIUS: 6,
     BORDER: 1,
     GAP: 4,
-    PADDING_TOP: 8
+    PADDING_TOP: 8,
+    // Gap from the CENTER of the pin. 
+    // 0 = Center of pin (wire hidden behind cap). 
+    // 6 = Edge of pin (wire starts at circle boundary).
+    WIRE_GAP: 0 
 };
 
 // --- 2. Math Helpers ---
 const GraphMath = {
-    snap: (v: number) => Math.round(v / LayoutConfig.GRID_SIZE) * LayoutConfig.GRID_SIZE,
-
     getPinPosition: (node: GraphNode, pinId: string, type: 'input' | 'output') => {
         // Reroute Node: Input Left, Output Right (Center Y)
         if (node.type === 'Reroute') {
             const centerY = node.position.y + LayoutConfig.REROUTE_SIZE / 2;
             if (type === 'input') {
-                return { x: node.position.x - LayoutConfig.PIN_RADIUS, y: centerY }; 
+                return { x: node.position.x, y: centerY }; 
             } else {
-                return { x: node.position.x + LayoutConfig.REROUTE_SIZE + LayoutConfig.PIN_RADIUS, y: centerY };
+                return { x: node.position.x + LayoutConfig.REROUTE_SIZE, y: centerY };
             }
         }
 
@@ -49,9 +50,12 @@ const GraphMath = {
         const yOffset = LayoutConfig.BORDER + LayoutConfig.HEADER_HEIGHT + LayoutConfig.PADDING_TOP + 
                        (index * (LayoutConfig.ITEM_HEIGHT + LayoutConfig.GAP)) + (LayoutConfig.ITEM_HEIGHT / 2);
         
+        // FIX: Return the visual CENTER of the pin, not the edge.
+        // Input pin is at left: -6px. Width 12. Center is at 0 relative to node.
+        // Output pin is at right: -6px. Right edge is Width+6. Center is at Width relative to node.
         const xOffset = type === 'output' 
-            ? (LayoutConfig.NODE_WIDTH + LayoutConfig.PIN_RADIUS) 
-            : -LayoutConfig.PIN_RADIUS;
+            ? LayoutConfig.NODE_WIDTH
+            : 0;
 
         return { x: node.position.x + xOffset, y: node.position.y + yOffset };
     },
@@ -73,11 +77,11 @@ const GraphMath = {
 
 // --- Initial Data ---
 const INITIAL_NODES: GraphNode[] = [
-    { id: '1', type: 'Time', position: { x: 60, y: 100 } },
+    { id: '1', type: 'Time', position: { x: 50, y: 100 } },
     { id: '2', type: 'Sine', position: { x: 280, y: 100 } },
-    { id: '3', type: 'Float', position: { x: 60, y: 260 }, data: { value: "1.5" } },
-    { id: '4', type: 'Add', position: { x: 500, y: 140 } },
-    { id: '5', type: 'WaveViewer', position: { x: 760, y: 140 } }
+    { id: '3', type: 'Float', position: { x: 50, y: 250 }, data: { value: "1.5" } },
+    { id: '4', type: 'Add', position: { x: 500, y: 150 } },
+    { id: '5', type: 'WaveViewer', position: { x: 750, y: 150 } }
 ];
 
 const INITIAL_CONNECTIONS: GraphConnection[] = [
@@ -97,7 +101,6 @@ export const NodeGraph: React.FC = () => {
     
     // Selection State
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
-    const [selectedConnectionIds, setSelectedConnectionIds] = useState<Set<string>>(new Set());
     const [selectionBox, setSelectionBox] = useState<{ startX: number, startY: number, currentX: number, currentY: number } | null>(null);
 
     // High-Performance Refs
@@ -153,35 +156,6 @@ export const NodeGraph: React.FC = () => {
         if (activeListenersRef.current.up) window.removeEventListener('mouseup', activeListenersRef.current.up);
         activeListenersRef.current = {};
     }, []);
-
-    // --- Deletion Logic ---
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if ((e.key === 'Delete' || e.key === 'Backspace') && !e.repeat) {
-                // Ignore if typing in input
-                if (document.activeElement?.tagName === 'INPUT') return;
-
-                if (selectedNodeIds.size > 0 || selectedConnectionIds.size > 0) {
-                    // Remove Nodes
-                    const newNodes = nodes.filter(n => !selectedNodeIds.has(n.id));
-                    
-                    // Remove Connections attached to deleted nodes OR selected connections
-                    const newConnections = connections.filter(c => {
-                        const isConnectedToDeleted = selectedNodeIds.has(c.fromNode) || selectedNodeIds.has(c.toNode);
-                        const isSelected = selectedConnectionIds.has(c.id);
-                        return !isConnectedToDeleted && !isSelected;
-                    });
-
-                    setNodes(newNodes);
-                    setConnections(newConnections);
-                    setSelectedNodeIds(new Set());
-                    setSelectedConnectionIds(new Set());
-                }
-            }
-        };
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [nodes, connections, selectedNodeIds, selectedConnectionIds]);
 
     // --- Interaction Handlers ---
 
@@ -246,12 +220,10 @@ export const NodeGraph: React.FC = () => {
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
         }
-        // Selection Box (Left Click on Empty Space)
+        // Selection Box (Left Click)
         else if (e.button === 0) {
-            // Deselect unless shift
             if (!e.shiftKey && !e.ctrlKey) {
                 setSelectedNodeIds(new Set());
-                setSelectedConnectionIds(new Set());
             }
 
             const startX = e.clientX - rect.left;
@@ -269,6 +241,7 @@ export const NodeGraph: React.FC = () => {
                 // Live Selection Update
                 cancelAnimationFrame(frameId);
                 frameId = requestAnimationFrame(() => {
+                     // Calculate Selection Rect
                      const minX = Math.min(startX, currentX);
                      const maxX = Math.max(startX, currentX);
                      const minY = Math.min(startY, currentY);
@@ -278,11 +251,14 @@ export const NodeGraph: React.FC = () => {
                      
                      nodeRefs.current.forEach((el, id) => {
                          const nodeRect = el.getBoundingClientRect();
+                         // Convert Node Rect to Container Space
                          const nx = nodeRect.left - rect.left;
                          const ny = nodeRect.top - rect.top;
+                         const nw = nodeRect.width;
+                         const nh = nodeRect.height;
                          
-                         // Intersection Check
-                         if (minX < nx + nodeRect.width && maxX > nx && minY < ny + nodeRect.height && maxY > ny) {
+                         // Intersection
+                         if (minX < nx + nw && maxX > nx && minY < ny + nh && maxY > ny) {
                              newSelected.add(id);
                          }
                      });
@@ -313,7 +289,6 @@ export const NodeGraph: React.FC = () => {
         if (!currentSelection.has(node.id)) {
             if (!e.shiftKey && !e.ctrlKey) {
                 currentSelection = new Set([node.id]);
-                setSelectedConnectionIds(new Set()); // Clear wire selection
             } else {
                 currentSelection.add(node.id);
             }
@@ -336,25 +311,31 @@ export const NodeGraph: React.FC = () => {
 
         let frameId = 0;
 
-        // Optimization: Identify affected connections once
+        // Optimization: Pre-calculate static connection points for all selected nodes
         const activeLinks = connections
             .filter(c => currentSelection.has(c.fromNode) || currentSelection.has(c.toNode))
             .map(c => {
+                const fromNode = nodes.find(n => n.id === c.fromNode);
+                const toNode = nodes.find(n => n.id === c.toNode);
+                if (!fromNode || !toNode) return null;
+
                 const pathEl = pathRefs.current.get(c.id);
-                // Also get the "hit" path element which is usually next sibling or handled via ref map if we added it
-                // For simplicity, we just update the visual path. The Hit path update requires separate ref or selection logic.
-                // NOTE: We will update ALL path elements with this ID.
+                if (!pathEl) return null;
+
+                const isFromSelected = currentSelection.has(c.fromNode);
+                const isToSelected = currentSelection.has(c.toNode);
+
                 return {
-                    id: c.id,
-                    pathEl, 
+                    pathEl,
                     fromNodeId: c.fromNode,
                     fromPin: c.fromPin,
                     toNodeId: c.toNode,
                     toPin: c.toPin,
-                    isFromSelected: currentSelection.has(c.fromNode),
-                    isToSelected: currentSelection.has(c.toNode)
+                    isFromSelected,
+                    isToSelected
                 };
-            });
+            })
+            .filter(Boolean); // Remove nulls
 
         const onMove = (ev: MouseEvent) => {
             cancelAnimationFrame(frameId);
@@ -362,29 +343,25 @@ export const NodeGraph: React.FC = () => {
                 const dx = (ev.clientX - startMouse.x) / k;
                 const dy = (ev.clientY - startMouse.y) / k;
 
-                // 1. Direct DOM Update for all selected nodes with Snapping
+                // 1. Direct DOM Update for all selected nodes
                 startPositions.forEach((startPos, id) => {
                     const nodeEl = nodeRefs.current.get(id);
                     if (nodeEl) {
-                        // Apply Snap to Grid
-                        const nx = GraphMath.snap(startPos.x + dx);
-                        const ny = GraphMath.snap(startPos.y + dy);
+                        const nx = startPos.x + dx;
+                        const ny = startPos.y + dy;
                         nodeEl.style.transform = `translate(${nx}px, ${ny}px)`;
                     }
                 });
 
                 // 2. Update Wires
                 for(const link of activeLinks) {
-                    if (!link.pathEl) continue;
+                    if (!link) continue;
 
-                    // Helper to get dynamic position during drag
+                    // Get "Live" positions
                     const getPos = (id: string, defPos: {x:number, y:number}) => {
                          if (startPositions.has(id)) {
                              const s = startPositions.get(id)!;
-                             return { 
-                                 x: GraphMath.snap(s.x + dx), 
-                                 y: GraphMath.snap(s.y + dy) 
-                            };
+                             return { x: s.x + dx, y: s.y + dy };
                          }
                          return defPos;
                     };
@@ -400,16 +377,12 @@ export const NodeGraph: React.FC = () => {
                         { ...n2, position: getPos(n2.id, n2.position) }, 
                         link.toPin, 'input'
                     );
+
+                    // --- APPLY GAP (Drag Update) ---
+                    p1.x += LayoutConfig.WIRE_GAP;
+                    p2.x -= LayoutConfig.WIRE_GAP;
                     
-                    const d = GraphMath.calculateCurve(p1.x, p1.y, p2.x, p2.y);
-                    
-                    // Update both the visual path and hit path (if we store ref to hit path, or query selector)
-                    // For now, updating the visual ref. 
-                    link.pathEl.setAttribute('d', d);
-                    
-                    // Update Hit Path (Hack: find sibling)
-                    const hitPath = link.pathEl.previousElementSibling as SVGPathElement;
-                    if(hitPath && hitPath.tagName === 'path') hitPath.setAttribute('d', d);
+                    link.pathEl.setAttribute('d', GraphMath.calculateCurve(p1.x, p1.y, p2.x, p2.y));
                 }
             });
         };
@@ -424,13 +397,7 @@ export const NodeGraph: React.FC = () => {
             setNodes(prev => prev.map(n => {
                 if (startPositions.has(n.id)) {
                     const s = startPositions.get(n.id)!;
-                    return { 
-                        ...n, 
-                        position: { 
-                            x: GraphMath.snap(s.x + dx), 
-                            y: GraphMath.snap(s.y + dy) 
-                        } 
-                    };
+                    return { ...n, position: { x: s.x + dx, y: s.y + dy } };
                 }
                 return n;
             }));
@@ -490,10 +457,7 @@ export const NodeGraph: React.FC = () => {
                     const exists = curr.some(c => c.fromNode === source.nodeId && c.fromPin === source.pinId && c.toNode === target.nodeId && c.toPin === target.pinId);
                     if (exists) return curr;
 
-                    // Enforce Single Input: Remove any existing connection to this input pin
-                    // Data flow graphs typically only allow one wire per input.
                     const clean = curr.filter(c => !(c.toNode === target.nodeId && c.toPin === target.pinId));
-
                     return [...clean, { id: crypto.randomUUID(), fromNode: source.nodeId, fromPin: source.pinId, toNode: target.nodeId, toPin: target.pinId }];
                 });
             }
@@ -505,14 +469,9 @@ export const NodeGraph: React.FC = () => {
         if(!contextMenu || !containerRef.current) return;
         const rect = containerRef.current.getBoundingClientRect();
         const pos = GraphMath.screenToWorld(contextMenu.x, contextMenu.y, rect, transformRef.current);
-        
-        // Snap new node
-        pos.x = GraphMath.snap(pos.x);
-        pos.y = GraphMath.snap(pos.y);
-
         const newNodeId = crypto.randomUUID();
         setNodes(p => [...p, { id: newNodeId, type, position: pos, data: {} }]);
-        setSelectedNodeIds(new Set([newNodeId])); 
+        setSelectedNodeIds(new Set([newNodeId])); // Select newly created node
         setContextMenu(null);
         setSearchFilter('');
     };
@@ -525,6 +484,8 @@ export const NodeGraph: React.FC = () => {
         let isCompatiblePort = false;
 
         if (connecting && connecting.nodeId !== nodeId && connecting.type !== type) {
+            // This port is a valid candidate direction-wise
+            // Now check type compatibility
             const myType = getPortType(nodeId, pinId, type);
             if (isCompatible(connecting.dataType, myType)) {
                 isActive = true;
@@ -538,8 +499,8 @@ export const NodeGraph: React.FC = () => {
         let scaleClass = 'hover:scale-125';
 
         if (isActive && isCompatiblePort) {
-            borderClass = 'border-emerald-500 ring-2 ring-emerald-400'; 
-            scaleClass = 'scale-150';
+            borderClass = 'border-emerald-500 ring-2 ring-emerald-400'; // Green Glow
+            scaleClass = 'scale-125';
             bgStyle = '#fff';
         }
 
@@ -568,31 +529,20 @@ export const NodeGraph: React.FC = () => {
 
             const p1 = GraphMath.getPinPosition(fromNode, c.fromPin, 'output');
             const p2 = GraphMath.getPinPosition(toNode, c.toPin, 'input');
+            
+            // --- APPLY GAP (Static Render) ---
+            p1.x += LayoutConfig.WIRE_GAP;
+            p2.x -= LayoutConfig.WIRE_GAP;
+
             const d = GraphMath.calculateCurve(p1.x, p1.y, p2.x, p2.y);
             
             const def = NodeRegistry[fromNode.type];
             const port = def?.outputs.find(p => p.id === c.fromPin);
             const color = port?.color || getTypeColor(port?.type || 'any');
 
-            const isSelected = selectedConnectionIds.has(c.id);
-
-            return (
-                <g key={c.id} onClick={(e) => { e.stopPropagation(); setSelectedConnectionIds(new Set([c.id])); setSelectedNodeIds(new Set()); }}>
-                    {/* Hit Area (Thicker, Transparent) */}
-                    <path d={d} stroke="transparent" strokeWidth="12" fill="none" className="cursor-pointer" />
-                    {/* Visual Line */}
-                    <path 
-                        ref={el => { if(el) pathRefs.current.set(c.id, el) }} 
-                        d={d} 
-                        stroke={isSelected ? '#fff' : color} 
-                        strokeWidth={isSelected ? 3 : 2} 
-                        fill="none" 
-                        className="pointer-events-none transition-colors"
-                    />
-                </g>
-            );
+            return <path key={c.id} ref={el => { if(el) pathRefs.current.set(c.id, el) }} d={d} stroke={color} strokeWidth="2" fill="none" />;
         });
-    }, [nodes, connections, selectedConnectionIds]);
+    }, [nodes, connections]);
 
     return (
         <div 
@@ -601,23 +551,31 @@ export const NodeGraph: React.FC = () => {
             onWheel={handleWheel}
             onMouseDown={handleMouseDown}
             onContextMenu={e => e.preventDefault()}
-            tabIndex={0} // Allow focus for keyboard events
         >
              <div className="absolute inset-0 pointer-events-none opacity-20"
                 style={{ backgroundImage: 'linear-gradient(#333 1px, transparent 1px), linear-gradient(90deg, #333 1px, transparent 1px)' }}
             />
 
             <div ref={viewRef} className="w-full h-full origin-top-left will-change-transform" style={{ transform: `translate3d(0px, 0px, 0) scale(1)` }}>
-                <svg className="absolute top-0 left-0 overflow-visible pointer-events-auto w-1 h-1">
+                <svg className="absolute top-0 left-0 overflow-visible pointer-events-none w-1 h-1">
                     {renderedWires}
                     {connecting && (() => {
                          const node = nodes.find(n => n.id === connecting.nodeId);
                          if(!node) return null;
-                         const p1 = GraphMath.getPinPosition(node, connecting.pinId, connecting.type);
+                         const pinPos = GraphMath.getPinPosition(node, connecting.pinId, connecting.type);
+                         
+                         // --- APPLY GAP (Drag Render) ---
+                         if (connecting.type === 'output') {
+                             pinPos.x += LayoutConfig.WIRE_GAP;
+                         } else {
+                             pinPos.x -= LayoutConfig.WIRE_GAP;
+                         }
+
                          const p2 = { x: connecting.x, y: connecting.y };
-                         const start = connecting.type === 'output' ? p1 : p2;
-                         const end = connecting.type === 'output' ? p2 : p1;
-                         const color = getTypeColor(connecting.dataType as any);
+                         const start = connecting.type === 'output' ? pinPos : p2;
+                         const end = connecting.type === 'output' ? p2 : pinPos;
+                         
+                         const color = getTypeColor(connecting.dataType as any); // Color the drag line
                          return <path d={GraphMath.calculateCurve(start.x, start.y, end.x, end.y)} stroke={color} strokeWidth="2" strokeDasharray="5,5" fill="none" />;
                     })()}
                 </svg>
@@ -628,7 +586,7 @@ export const NodeGraph: React.FC = () => {
                     const isReroute = node.type === 'Reroute';
                     const isSelected = selectedNodeIds.has(node.id);
                     
-                    const borderStyle = isSelected ? 'ring-2 ring-accent border-accent' : 'border-black';
+                    const borderStyle = isSelected ? 'ring-1 ring-accent border-accent' : 'border-white/10';
 
                     return (
                         <div
@@ -652,7 +610,7 @@ export const NodeGraph: React.FC = () => {
                              ) : (
                                 <>
                                     <div 
-                                        className={`h-9 px-3 flex items-center justify-between border-b border-white/5 rounded-t-md cursor-grab active:cursor-grabbing ${isSelected ? 'bg-accent' : 'bg-white/5'}`}
+                                        className={`h-9 px-3 flex items-center justify-between border-b border-white/5 rounded-t-md cursor-grab active:cursor-grabbing ${isSelected ? 'bg-accent/20' : 'bg-white/5'}`}
                                         onMouseDown={(e) => handleNodeDragStart(e, node)}
                                     >
                                         <span className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-gray-200'}`}>{def.title}</span>
