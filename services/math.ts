@@ -1,6 +1,4 @@
-
-// Minimal 4x4 Matrix Math for High Performance
-// Stored as Float32Array (column-major) for direct WebGL usage
+// services/math.ts
 
 export type Mat4 = Float32Array;
 export type Vec3 = { x: number, y: number, z: number };
@@ -10,7 +8,6 @@ export interface Ray {
     direction: Vec3;
 }
 
-// Global scratchpads to minimize GC during intermediate calculations
 export const TMP_MAT4_1 = new Float32Array(16);
 export const TMP_MAT4_2 = new Float32Array(16);
 export const TMP_VEC3_1 = { x: 0, y: 0, z: 0 };
@@ -39,7 +36,6 @@ export const Vec3Utils = {
   },
   dot: (a: Vec3, b: Vec3): number => a.x * b.x + a.y * b.y + a.z * b.z,
   
-  // Transform Point (w=1 implied)
   transformMat4: (v: Vec3, m: Mat4, out: Vec3): Vec3 => {
     const x = v.x, y = v.y, z = v.z;
     const w = m[3] * x + m[7] * y + m[11] * z + m[15];
@@ -50,7 +46,6 @@ export const Vec3Utils = {
     return out;
   },
 
-  // Transform Vector (w=0 implied)
   transformMat4Normal: (v: Vec3, m: Mat4, out: Vec3): Vec3 => {
     const x = v.x, y = v.y, z = v.z;
     out.x = m[0] * x + m[4] * y + m[8] * z;
@@ -63,90 +58,58 @@ export const Vec3Utils = {
 export const RayUtils = {
   create: (): Ray => ({ origin: {x:0, y:0, z:0}, direction: {x:0, y:0, z:1} }),
   
-  // Calculate Ray from Screen Coordinates (NDC -> World)
   fromScreen: (x: number, y: number, width: number, height: number, invViewProj: Mat4, out: Ray) => {
-    // NDC
     const ndcX = (x / width) * 2 - 1;
-    const ndcY = 1 - (y / height) * 2; // Flip Y
-
-    const start = { x: ndcX, y: ndcY, z: -1 }; // Near plane
-    const end = { x: ndcX, y: ndcY, z: 1 };    // Far plane
-
-    // Unproject
+    const ndcY = 1 - (y / height) * 2;
+    const start = { x: ndcX, y: ndcY, z: -1 };
+    const end = { x: ndcX, y: ndcY, z: 1 };
     const worldStart = Vec3Utils.create();
     const worldEnd = Vec3Utils.create();
-    
     Vec3Utils.transformMat4(start, invViewProj, worldStart);
     Vec3Utils.transformMat4(end, invViewProj, worldEnd);
-
-    // Set Origin
     Vec3Utils.copy(out.origin, worldStart);
-
-    // Set Direction
     Vec3Utils.subtract(worldEnd, worldStart, out.direction);
     Vec3Utils.normalize(out.direction, out.direction);
   },
 
-  // Ray-Sphere Intersection
   intersectSphere: (ray: Ray, center: Vec3, radius: number): number | null => {
     const ocX = ray.origin.x - center.x;
     const ocY = ray.origin.y - center.y;
     const ocZ = ray.origin.z - center.z;
-    
     const a = Vec3Utils.dot(ray.direction, ray.direction);
     const b = 2.0 * (ocX * ray.direction.x + ocY * ray.direction.y + ocZ * ray.direction.z);
     const c = (ocX*ocX + ocY*ocY + ocZ*ocZ) - radius*radius;
-    
     const discriminant = b*b - 4*a*c;
     if (discriminant < 0) return null;
-    
-    // Return smallest positive t
     const t1 = (-b - Math.sqrt(discriminant)) / (2.0*a);
     if (t1 > 0) return t1;
-    
     const t2 = (-b + Math.sqrt(discriminant)) / (2.0*a);
     return t2 > 0 ? t2 : null;
   },
 
-  // Ray-AABB Intersection (Slab Method)
   intersectBox: (ray: Ray, min: Vec3, max: Vec3): number | null => {
     let tmin = (min.x - ray.origin.x) / ray.direction.x;
     let tmax = (max.x - ray.origin.x) / ray.direction.x;
-
     if (tmin > tmax) [tmin, tmax] = [tmax, tmin];
-
     let tymin = (min.y - ray.origin.y) / ray.direction.y;
     let tymax = (max.y - ray.origin.y) / ray.direction.y;
-
     if (tymin > tymax) [tymin, tymax] = [tymax, tymin];
-
     if ((tmin > tymax) || (tymin > tmax)) return null;
-
     if (tymin > tmin) tmin = tymin;
     if (tymax < tmax) tmax = tymax;
-
     let tzmin = (min.z - ray.origin.z) / ray.direction.z;
     let tzmax = (max.z - ray.origin.z) / ray.direction.z;
-
     if (tzmin > tzmax) [tzmin, tzmax] = [tzmax, tzmin];
-
     if ((tmin > tzmax) || (tzmin > tmax)) return null;
-
     if (tzmin > tmin) tmin = tzmin;
     if (tzmax < tmax) tmax = tzmax;
-
-    if (tmax < 0) return null; // Behind
+    if (tmax < 0) return null;
     return tmin > 0 ? tmin : tmax;
   }
 };
 
 export const Mat4Utils = {
-  create: (): Mat4 => new Float32Array([
-    1, 0, 0, 0,
-    0, 1, 0, 0,
-    0, 0, 1, 0,
-    0, 0, 0, 1
-  ]),
+  create: (): Mat4 => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),
 
   copy: (out: Mat4, a: Mat4): Mat4 => {
     out.set(a);
@@ -155,7 +118,7 @@ export const Mat4Utils = {
 
   identity: (out: Mat4): Mat4 => {
     out.fill(0);
-    out[0] = 1; out[5] = 1; out[10] = 1; out[15] = 1;
+    out[0]=1; out[5]=1; out[10]=1; out[15]=1;
     return out;
   },
 
@@ -211,10 +174,7 @@ export const Mat4Utils = {
     const b11 = a22 * a33 - a23 * a32;
 
     let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
-
-    if (!det) {
-      return null;
-    }
+    if (!det) return null;
     det = 1.0 / det;
 
     out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
@@ -233,7 +193,6 @@ export const Mat4Utils = {
     out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
     out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
     out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
-
     return out;
   },
 
@@ -242,28 +201,22 @@ export const Mat4Utils = {
       const upx = up.x, upy = up.y, upz = up.z;
       const centerx = center.x, centery = center.y, centerz = center.z;
 
-      if (Math.abs(eyex - centerx) < 0.000001 &&
-          Math.abs(eyey - centery) < 0.000001 &&
-          Math.abs(eyez - centerz) < 0.000001) {
+      if (Math.abs(eyex - centerx) < 1e-6 &&
+          Math.abs(eyey - centery) < 1e-6 &&
+          Math.abs(eyez - centerz) < 1e-6) {
         return Mat4Utils.identity(out);
       }
 
-      let z0 = eyex - centerx;
-      let z1 = eyey - centery;
-      let z2 = eyez - centerz;
+      let z0 = eyex - centerx, z1 = eyey - centery, z2 = eyez - centerz;
       let len = 1 / Math.sqrt(z0 * z0 + z1 * z1 + z2 * z2);
       z0 *= len; z1 *= len; z2 *= len;
 
-      let x0 = upy * z2 - upz * z1;
-      let x1 = upz * z0 - upx * z2;
-      let x2 = upx * z1 - upy * z0;
+      let x0 = upy * z2 - upz * z1, x1 = upz * z0 - upx * z2, x2 = upx * z1 - upy * z0;
       len = Math.sqrt(x0 * x0 + x1 * x1 + x2 * x2);
       if (!len) { x0 = 0; x1 = 0; x2 = 0; }
       else { len = 1 / len; x0 *= len; x1 *= len; x2 *= len; }
 
-      let y0 = z1 * x2 - z2 * x1;
-      let y1 = z2 * x0 - z0 * x2;
-      let y2 = z0 * x1 - z1 * x0;
+      let y0 = z1 * x2 - z2 * x1, y1 = z2 * x0 - z0 * x2, y2 = z0 * x1 - z1 * x0;
       len = Math.sqrt(y0 * y0 + y1 * y1 + y2 * y2);
       if (!len) { y0 = 0; y1 = 0; y2 = 0; }
       else { len = 1 / len; y0 *= len; y1 *= len; y2 *= len; }
@@ -275,7 +228,6 @@ export const Mat4Utils = {
       out[13] = -(y0 * eyex + y1 * eyey + y2 * eyez);
       out[14] = -(z0 * eyex + z1 * eyey + z2 * eyez);
       out[15] = 1;
-
       return out;
   },
 
@@ -295,10 +247,6 @@ export const Mat4Utils = {
       return out;
   },
 
-  getTranslation: (mat: Mat4): Vec3 => {
-      return { x: mat[12], y: mat[13], z: mat[14] };
-  },
-  
   compose: (
       tx: number, ty: number, tz: number,
       rx: number, ry: number, rz: number,
@@ -326,19 +274,84 @@ export const Mat4Utils = {
       return out;
   },
 
-  transformPoint: (v: {x:number, y:number, z:number}, m: Mat4, width: number, height: number) => {
-      const x = v.x, y = v.y, z = v.z;
-      const w = m[3] * x + m[7] * y + m[11] * z + m[15];
-      const resX = m[0] * x + m[4] * y + m[8] * z + m[12];
-      const resY = m[1] * x + m[5] * y + m[9] * z + m[13];
-      const resZ = m[2] * x + m[6] * y + m[10] * z + m[14];
+  // --- NEW UTILS FOR NODES ---
 
-      const ndcX = resX / w;
-      const ndcY = resY / w;
-      
-      const screenX = (ndcX + 1) * 0.5 * width;
-      const screenY = (1 - ndcY) * 0.5 * height;
+  translation: (x: number, y: number, z: number, out: Mat4): Mat4 => {
+    Mat4Utils.identity(out);
+    out[12] = x; out[13] = y; out[14] = z;
+    return out;
+  },
 
-      return { x: screenX, y: screenY, z: resZ, w: w };
+  rotation: (x: number, y: number, z: number, out: Mat4): Mat4 => {
+    const cx = Math.cos(x), sx = Math.sin(x);
+    const cy = Math.cos(y), sy = Math.sin(y);
+    const cz = Math.cos(z), sz = Math.sin(z);
+    
+    out[0] = cy * cz;
+    out[1] = cz * sx * sy - cx * sz;
+    out[2] = cx * cz * sy + sx * sz;
+    out[3] = 0;
+    out[4] = cy * sz;
+    out[5] = cx * cz + sx * sy * sz;
+    out[6] = -cz * sx + cx * sy * sz;
+    out[7] = 0;
+    out[8] = -sy;
+    out[9] = cy * sx;
+    out[10] = cx * cy;
+    out[11] = 0;
+    out[12] = 0; out[13] = 0; out[14] = 0; out[15] = 1;
+    return out;
+  },
+
+  scaling: (x: number, y: number, z: number, out: Mat4): Mat4 => {
+    Mat4Utils.identity(out);
+    out[0] = x; out[5] = y; out[10] = z;
+    return out;
+  },
+
+  lerp: (a: Mat4, b: Mat4, t: number, out: Mat4): Mat4 => {
+    for (let i = 0; i < 16; i++) out[i] = a[i] + (b[i] - a[i]) * t;
+    return out;
+  },
+
+  orthographic: (left: number, right: number, bottom: number, top: number, near: number, far: number, out: Mat4): Mat4 => {
+    const lr = 1 / (left - right);
+    const bt = 1 / (bottom - top);
+    const nf = 1 / (near - far);
+    out.fill(0);
+    out[0] = -2 * lr;
+    out[5] = -2 * bt;
+    out[10] = 2 * nf;
+    out[12] = (left + right) * lr;
+    out[13] = (top + bottom) * bt;
+    out[14] = (far + near) * nf;
+    out[15] = 1;
+    return out;
+  },
+
+  getTranslation: (mat: Mat4, out: Vec3): Vec3 => {
+    out.x = mat[12]; out.y = mat[13]; out.z = mat[14];
+    return out;
+  },
+
+  getScale: (mat: Mat4, out: Vec3): Vec3 => {
+    out.x = Math.sqrt(mat[0]*mat[0] + mat[1]*mat[1] + mat[2]*mat[2]);
+    out.y = Math.sqrt(mat[4]*mat[4] + mat[5]*mat[5] + mat[6]*mat[6]);
+    out.z = Math.sqrt(mat[8]*mat[8] + mat[9]*mat[9] + mat[10]*mat[10]);
+    return out;
+  },
+
+  getRotation: (mat: Mat4, out: Vec3): Vec3 => {
+    const sy = Math.sqrt(mat[0]*mat[0] + mat[4]*mat[4]);
+    if (sy > 1e-6) {
+      out.x = Math.atan2(mat[9], mat[10]);
+      out.y = Math.atan2(-mat[8], sy);
+      out.z = Math.atan2(mat[4], mat[0]);
+    } else {
+      out.x = Math.atan2(-mat[6], mat[5]);
+      out.y = Math.atan2(-mat[8], sy);
+      out.z = 0;
+    }
+    return out;
   }
 };

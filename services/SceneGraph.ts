@@ -1,36 +1,35 @@
+// services/SceneGraph.ts
 
-import { Entity, ComponentType } from '../types';
-import { Mat4, Mat4Utils } from './math';
+import { Mat4Utils } from './math';
+import type { SoAEntitySystem } from './ecs/EntitySystem'; // Type-only import is safe
 
 export class SceneNode {
   entityId: string;
   parentId: string | null = null;
   childrenIds: string[] = [];
   
-  // Cache matrices - Memory is allocated once
-  localMatrix: Mat4 = Mat4Utils.create();
-  worldMatrix: Mat4 = Mat4Utils.create();
-  
-  isDirty: boolean = true;
-
   constructor(entityId: string) {
     this.entityId = entityId;
   }
 }
 
 export class SceneGraph {
-  // Map entity ID to Node
   private nodes: Map<string, SceneNode> = new Map();
   private rootIds: Set<string> = new Set();
-
-  constructor() {}
+  
+  // Dependency Injection: No longer imports global engineInstance
+  private ecs: SoAEntitySystem | null = null;
 
   registerEntity(entityId: string) {
     if (!this.nodes.has(entityId)) {
-      const node = new SceneNode(entityId);
-      this.nodes.set(entityId, node);
+      this.nodes.set(entityId, new SceneNode(entityId));
       this.rootIds.add(entityId);
     }
+  }
+
+  // Call this immediately after creating SceneGraph
+  setContext(ecs: SoAEntitySystem) {
+      this.ecs = ecs;
   }
 
   attach(childId: string, parentId: string | null) {
@@ -39,9 +38,7 @@ export class SceneGraph {
 
     if (childNode.parentId) {
       const oldParent = this.nodes.get(childNode.parentId);
-      if (oldParent) {
-        oldParent.childrenIds = oldParent.childrenIds.filter(id => id !== childId);
-      }
+      if (oldParent) oldParent.childrenIds = oldParent.childrenIds.filter(id => id !== childId);
     } else {
       this.rootIds.delete(childId);
     }
@@ -61,88 +58,80 @@ export class SceneGraph {
       this.rootIds.add(childId);
     }
     
-    // Hierarchy change requires update
     this.setDirty(childId);
   }
 
   setDirty(entityId: string) {
+    if (!this.ecs) return;
+
+    // 1. Mark self dirty in ECS
+    const idx = this.ecs.idToIndex.get(entityId);
+    if (idx !== undefined) {
+        this.ecs.store.transformDirty[idx] = 1;
+    }
+
+    // 2. Propagate to children
     const node = this.nodes.get(entityId);
-    if (node && !node.isDirty) {
-      node.isDirty = true;
-      // Propagate dirty to children
-      for(const childId of node.childrenIds) {
-          this.setDirty(childId);
-      }
+    if (node) {
+        for (const childId of node.childrenIds) {
+            this.setDirty(childId);
+        }
     }
   }
 
-  getRootIds(): string[] {
-    return Array.from(this.rootIds);
+  getRootIds() { return Array.from(this.rootIds); }
+  getChildren(entityId: string) { return this.nodes.get(entityId)?.childrenIds || []; }
+
+  getWorldMatrix(entityId: string): Float32Array | null {
+    if (!this.ecs) return null;
+
+    const idx = this.ecs.idToIndex.get(entityId);
+    if (idx === undefined) return null;
+    
+    const store = this.ecs.store;
+    
+    // Check dirty state directly from store
+    if (store.transformDirty[idx]) {
+        const node = this.nodes.get(entityId);
+        const parentMat = (node && node.parentId) ? this.getWorldMatrix(node.parentId) : null;
+        store.updateWorldMatrix(idx, parentMat);
+    }
+
+    const start = idx * 16;
+    return store.worldMatrix.subarray(start, start + 16);
   }
 
-  getChildren(entityId: string): string[] {
-    return this.nodes.get(entityId)?.childrenIds || [];
+  getWorldPosition(entityId: string) {
+      const m = this.getWorldMatrix(entityId);
+      if(!m) return {x:0,y:0,z:0};
+      return { x: m[12], y: m[13], z: m[14] };
   }
 
-  getWorldMatrix(entityId: string): Mat4 | null {
-    return this.nodes.get(entityId)?.worldMatrix || null;
-  }
+  update() {
+    if (!this.ecs) return;
+    const store = this.ecs.store;
+    const idToIndex = this.ecs.idToIndex; // Store ref to map
+    
+    const processNode = (id: string, parentMatrix: Float32Array | null, parentDirty: boolean) => {
+        const idx = idToIndex.get(id);
+        if (idx === undefined) return;
 
-  getWorldPosition(entityId: string): { x: number, y: number, z: number } {
-    const mat = this.getWorldMatrix(entityId);
-    if (!mat) return { x: 0, y: 0, z: 0 };
-    return Mat4Utils.getTranslation(mat);
-  }
+        const isDirty = store.transformDirty[idx] === 1 || parentDirty;
 
-  /**
-   * Recalculates world matrices for the graph.
-   * Only updates nodes marked as dirty.
-   * @param getTransformData callback to retrieve raw transform data (x,y,z, rx,ry,rz, sx,sy,sz)
-   */
-  update(getTransformData: (id: string) => Float32Array | null) {
-    this.rootIds.forEach(rootId => {
-      this.updateNodeRecursive(rootId, getTransformData, null, false);
-    });
-  }
-
-  private updateNodeRecursive(
-      nodeId: string, 
-      getTransformData: (id: string) => Float32Array | null, 
-      parentWorldMatrix: Mat4 | null,
-      parentDirty: boolean
-  ) {
-    const node = this.nodes.get(nodeId);
-    if (!node) return;
-
-    const shouldUpdate = node.isDirty || parentDirty;
-
-    if (shouldUpdate) {
-        // 1. Calculate Local Matrix
-        const data = getTransformData(nodeId);
-        if (data) {
-            // data is [px, py, pz, rx, ry, rz, sx, sy, sz]
-            Mat4Utils.compose(
-                data[0], data[1], data[2], 
-                data[3], data[4], data[5], 
-                data[6], data[7], data[8], 
-                node.localMatrix
-            );
+        if (isDirty) {
+            store.updateWorldMatrix(idx, parentMatrix);
         }
 
-        // 2. Calculate World Matrix
-        if (parentWorldMatrix) {
-             Mat4Utils.multiply(parentWorldMatrix, node.localMatrix, node.worldMatrix);
-        } else {
-             Mat4Utils.copy(node.worldMatrix, node.localMatrix);
-        }
+        const myWorldMatrix = store.worldMatrix.subarray(idx*16, idx*16+16);
         
-        node.isDirty = false;
-    }
+        const node = this.nodes.get(id);
+        if (node) {
+            for (const childId of node.childrenIds) {
+                processNode(childId, myWorldMatrix, isDirty);
+            }
+        }
+    };
 
-    // 3. Process Children (Propagate dirty state if we updated)
-    const children = node.childrenIds;
-    for (let i = 0; i < children.length; i++) {
-        this.updateNodeRecursive(children[i], getTransformData, node.worldMatrix, shouldUpdate);
-    }
+    this.rootIds.forEach(rootId => processNode(rootId, null, false));
   }
 }

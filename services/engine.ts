@@ -1,3 +1,4 @@
+// services/engine.ts
 
 /**
  * High Performance WebGL Engine Core
@@ -25,7 +26,7 @@ export class Ti3DEngine {
   ecs: SoAEntitySystem;
   sceneGraph: SceneGraph;
   renderer: WebGLRenderer;
-  debugRenderer: DebugRenderer; // New Debug Renderer
+  debugRenderer: DebugRenderer; 
   physics: PhysicsSystem;
   history: HistorySystem;
   
@@ -48,17 +49,21 @@ export class Ti3DEngine {
   constructor() {
     this.ecs = new SoAEntitySystem();
     this.sceneGraph = new SceneGraph();
+    
+    // --- FIX: Inject ECS context here ---
+    this.sceneGraph.setContext(this.ecs); 
+    
     this.renderer = new WebGLRenderer();
     this.debugRenderer = new DebugRenderer();
     this.physics = new PhysicsSystem();
     this.history = new HistorySystem();
+    
     this.initDemoScene();
     
     // Initial Snapshot
     this.pushUndoState();
   }
   
-  // Undo/Redo Public API
   pushUndoState() {
       this.history.pushState(this.ecs);
   }
@@ -71,7 +76,6 @@ export class Ti3DEngine {
       if(this.history.redo(this.ecs, this.sceneGraph)) this.notifyUI();
   }
 
-  // Save/Load Public API
   saveScene(): string {
       return this.ecs.serialize();
   }
@@ -83,11 +87,8 @@ export class Ti3DEngine {
 
   initGL(canvas: HTMLCanvasElement) { 
       this.renderer.init(canvas); 
-      // Safeguard: Only init DebugRenderer if WebGL context was successfully created
       if (this.renderer.gl) {
           this.debugRenderer.init(this.renderer.gl);
-      } else {
-          console.warn("WebGL Context not initialized, skipping DebugRenderer init.");
       }
   }
   resize(width: number, height: number) { this.renderer.resize(width, height); }
@@ -102,20 +103,16 @@ export class Ti3DEngine {
       this.notifyUI();
   }
 
-  // Logic Graph "Compiler" - Topological Sort
   compileGraph(nodes: GraphNode[], connections: GraphConnection[]) {
       this.executionList = [];
       const nodeMap = new Map(nodes.map(n => [n.id, n]));
       const visited = new Set<string>();
 
-      // Recursive Visit (Post-order traversal)
       const visit = (nodeId: string) => {
           if (visited.has(nodeId)) return;
-          
           const node = nodeMap.get(nodeId);
           if (!node) return;
 
-          // 1. Visit Inputs first
           const inputConns = connections.filter(c => c.toNode === nodeId);
           for(const c of inputConns) {
               visit(c.fromNode);
@@ -123,7 +120,6 @@ export class Ti3DEngine {
 
           visited.add(nodeId);
 
-          // 2. Add to Execution List
           const def = NodeRegistry[node.type];
           if (def) {
               const inputs = def.inputs.map(inputDef => {
@@ -140,7 +136,6 @@ export class Ti3DEngine {
           }
       };
 
-      // Compile: Start from every node to ensure disconnected graphs run
       for (const node of nodes) {
           visit(node.id);
       }
@@ -174,6 +169,7 @@ export class Ti3DEngine {
           const worldMatrix = this.sceneGraph.getWorldMatrix(id);
           if (!worldMatrix) continue;
 
+          // Note: Invert might be expensive, optimize later if needed
           if (!Mat4Utils.invert(worldMatrix, invWorld)) continue;
 
           Vec3Utils.transformMat4(ray.origin, invWorld, localRay.origin);
@@ -206,6 +202,7 @@ export class Ti3DEngine {
       for (const [id, index] of this.ecs.idToIndex) {
           if (!this.ecs.store.isActive[index]) continue;
           if (this.ecs.store.meshType[index] === 0) continue;
+          
           const worldPos = this.sceneGraph.getWorldPosition(id);
           const screenPos = Mat4Utils.transformPoint(worldPos, this.viewProjectionMatrix, this.canvasWidth, this.canvasHeight);
           
@@ -221,7 +218,7 @@ export class Ti3DEngine {
   createEntity(name: string): Entity {
       const id = this.ecs.createEntity(name);
       this.sceneGraph.registerEntity(id);
-      this.pushUndoState(); // Capture creation
+      this.pushUndoState();
       this.notifyUI();
       return this.ecs.createProxy(id, this.sceneGraph)!;
   }
@@ -230,12 +227,12 @@ export class Ti3DEngine {
       const p = this.createEntity('Player Cube');
       p.components[ComponentType.MESH].meshType = 'Cube';
       p.components[ComponentType.MESH].color = '#3b82f6';
-      p.components[ComponentType.MESH].textureIndex = 1; // Grid
+      p.components[ComponentType.MESH].textureIndex = 1;
 
       const s = this.createEntity('Orbiting Satellite');
       s.components[ComponentType.MESH].meshType = 'Sphere';
       s.components[ComponentType.MESH].color = '#ef4444';
-      s.components[ComponentType.MESH].textureIndex = 2; // Noise
+      s.components[ComponentType.MESH].textureIndex = 2;
       s.components[ComponentType.TRANSFORM].position = {x: 3, y: 0, z: 0};
       s.components[ComponentType.TRANSFORM].scale = {x: 0.5, y: 0.5, z: 0.5};
       this.sceneGraph.attach(s.id, p.id);
@@ -243,7 +240,7 @@ export class Ti3DEngine {
       const f = this.createEntity('Floor');
       f.components[ComponentType.MESH].meshType = 'Plane';
       f.components[ComponentType.MESH].color = '#ffffff';
-      f.components[ComponentType.MESH].textureIndex = 3; // Bricks
+      f.components[ComponentType.MESH].textureIndex = 3;
       f.components[ComponentType.TRANSFORM].position = {x: 0, y: -2, z: 0};
       f.components[ComponentType.TRANSFORM].scale = {x: 10, y: 0.1, z: 10};
 
@@ -252,22 +249,13 @@ export class Ti3DEngine {
   }
 
   syncTransforms() {
-      this.sceneGraph.update((id) => {
-          const idx = this.ecs.getEntityIndex(id);
-          if (idx === undefined || !this.ecs.store.isActive[idx]) return null;
-          const s = this.ecs.store;
-          const t = this.tempTransformData;
-          t[0] = s.posX[idx]; t[1] = s.posY[idx]; t[2] = s.posZ[idx];
-          t[3] = s.rotX[idx]; t[4] = s.rotY[idx]; t[5] = s.rotZ[idx];
-          t[6] = s.scaleX[idx]; t[7] = s.scaleY[idx]; t[8] = s.scaleZ[idx];
-          return t;
-      });
+      // SceneGraph.update() handles the dirty flags and matrix re-calculation
+      this.sceneGraph.update();
   }
 
   tick(deltaTime: number) {
       const now = performance.now();
       
-      // FPS Calculation
       this.frameCount++;
       if (now - this.lastFpsTime >= 1000) {
           this.metrics.fps = this.frameCount;
@@ -276,12 +264,17 @@ export class Ti3DEngine {
       }
 
       if (this.isPlaying) {
-          // simple animation
           const sId = Array.from(this.ecs.idToIndex.entries()).find(x => this.ecs.store.names[x[1]] === 'Orbiting Satellite')?.[0];
           if (sId) {
               const idx = this.ecs.idToIndex.get(sId)!;
-              this.ecs.store.rotY[idx] += deltaTime * 2.0;
-              this.sceneGraph.setDirty(sId);
+              // Direct optimization: Modify Decomposed Rotation directly
+              // Note: Ideally use a helper, but raw access is fine here
+              this.ecs.store.setRotation(
+                  idx, 
+                  this.ecs.store.rotX[idx], 
+                  this.ecs.store.rotY[idx] + deltaTime * 2.0, 
+                  this.ecs.store.rotZ[idx]
+              );
           }
           
           this.physics.update(deltaTime, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
@@ -289,7 +282,7 @@ export class Ti3DEngine {
 
       this.syncTransforms();
       
-      // --- Logic Graph Execution (Compiled) ---
+      // Graph Execution
       this.debugRenderer.begin();
       this.nodeResults.clear();
       
@@ -297,20 +290,16 @@ export class Ti3DEngine {
           const inputs = step.inputs.map(link => {
               if (!link) return null;
               const res = this.nodeResults.get(link.nodeId);
-              // If result is object and has key matching pinId, use that
               if (res && typeof res === 'object' && link.pinId in res && !ArrayBuffer.isView(res)) {
                   return res[link.pinId];
               }
-              // Fallback for simple single-output nodes
               return res;
           });
           
           try {
              const result = step.def.execute(inputs, step.data, this);
              this.nodeResults.set(step.id, result);
-          } catch(e) {
-              // Suppress execution errors for smoother editing
-          }
+          } catch(e) { }
       }
 
       this.renderer.render(
@@ -321,15 +310,13 @@ export class Ti3DEngine {
           this.selectedIds
       );
       
-      // Render Debug Layer
       this.debugRenderer.render(this.viewProjectionMatrix);
 
-      // Metrics Update
       const end = performance.now();
       this.metrics.frameTime = end - now;
       this.metrics.drawCalls = this.renderer.drawCalls;
       this.metrics.triangleCount = this.renderer.triangleCount;
-      this.metrics.entityCount = this.ecs.idToIndex.size; // Active proxies might be less, but tracking map size
+      this.metrics.entityCount = this.ecs.idToIndex.size;
   }
   
   start() { this.isPlaying = true; this.notifyUI(); }
