@@ -1,10 +1,5 @@
 // services/engine.ts
 
-/**
- * High Performance WebGL Engine Core
- * Features: Data-Oriented ECS (SoA), Geometry Instancing, Dirty Flags, Texture Arrays, Save/Load, Undo/Redo, Debug Graph
- */
-
 import { Entity, ComponentType, GraphNode, GraphConnection, PerformanceMetrics } from '../types';
 import { SceneGraph } from './SceneGraph';
 import { Mat4, Mat4Utils, RayUtils, Vec3Utils, TMP_MAT4_1, TMP_MAT4_2 } from './math';
@@ -32,14 +27,16 @@ export class Ti3DEngine {
   
   isPlaying: boolean = false;
   selectedIds: Set<string> = new Set();
+  
+  // OPTIMIZATION: Map string IDs to Dense Indices for rendering
+  selectedIndices: Set<number> = new Set();
+
   private listeners: (() => void)[] = [];
 
   // Logic Graph State
   private executionList: ExecutionStep[] = [];
   private nodeResults = new Map<string, any>(); 
 
-  private tempTransformData = new Float32Array(9);
-  
   // Performance
   metrics: PerformanceMetrics = { fps: 60, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0 };
   private lastFrameTime = 0;
@@ -49,8 +46,6 @@ export class Ti3DEngine {
   constructor() {
     this.ecs = new SoAEntitySystem();
     this.sceneGraph = new SceneGraph();
-    
-    // --- FIX: Inject ECS context here ---
     this.sceneGraph.setContext(this.ecs); 
     
     this.renderer = new WebGLRenderer();
@@ -59,42 +54,30 @@ export class Ti3DEngine {
     this.history = new HistorySystem();
     
     this.initDemoScene();
-    
-    // Initial Snapshot
     this.pushUndoState();
   }
   
-  pushUndoState() {
-      this.history.pushState(this.ecs);
-  }
-  
-  undo() {
-      if(this.history.undo(this.ecs, this.sceneGraph)) this.notifyUI();
-  }
-  
-  redo() {
-      if(this.history.redo(this.ecs, this.sceneGraph)) this.notifyUI();
-  }
+  pushUndoState() { this.history.pushState(this.ecs); }
+  undo() { if(this.history.undo(this.ecs, this.sceneGraph)) this.notifyUI(); }
+  redo() { if(this.history.redo(this.ecs, this.sceneGraph)) this.notifyUI(); }
 
-  saveScene(): string {
-      return this.ecs.serialize();
-  }
-  
-  loadScene(json: string) {
-      this.ecs.deserialize(json, this.sceneGraph);
-      this.notifyUI();
-  }
+  saveScene(): string { return this.ecs.serialize(); }
+  loadScene(json: string) { this.ecs.deserialize(json, this.sceneGraph); this.notifyUI(); }
 
   initGL(canvas: HTMLCanvasElement) { 
       this.renderer.init(canvas); 
-      if (this.renderer.gl) {
-          this.debugRenderer.init(this.renderer.gl);
-      }
+      if (this.renderer.gl) this.debugRenderer.init(this.renderer.gl);
   }
   resize(width: number, height: number) { this.renderer.resize(width, height); }
 
   setSelected(ids: string[]) {
       this.selectedIds = new Set(ids);
+      // OPTIMIZATION: Pre-calculate indices for the render loop
+      this.selectedIndices.clear();
+      ids.forEach(id => {
+          const idx = this.ecs.idToIndex.get(id);
+          if (idx !== undefined) this.selectedIndices.add(idx);
+      });
       this.notifyUI();
   }
   
@@ -114,9 +97,7 @@ export class Ti3DEngine {
           if (!node) return;
 
           const inputConns = connections.filter(c => c.toNode === nodeId);
-          for(const c of inputConns) {
-              visit(c.fromNode);
-          }
+          for(const c of inputConns) visit(c.fromNode);
 
           visited.add(nodeId);
 
@@ -136,9 +117,7 @@ export class Ti3DEngine {
           }
       };
 
-      for (const node of nodes) {
-          visit(node.id);
-      }
+      for (const node of nodes) visit(node.id);
   }
 
   viewProjectionMatrix = Mat4Utils.create();
@@ -168,19 +147,14 @@ export class Ti3DEngine {
 
           const worldMatrix = this.sceneGraph.getWorldMatrix(id);
           if (!worldMatrix) continue;
-
-          // Note: Invert might be expensive, optimize later if needed
           if (!Mat4Utils.invert(worldMatrix, invWorld)) continue;
 
           Vec3Utils.transformMat4(ray.origin, invWorld, localRay.origin);
           Vec3Utils.transformMat4Normal(ray.direction, invWorld, localRay.direction);
 
           let t: number | null = null;
-          if (meshType === 2) { 
-              t = RayUtils.intersectSphere(localRay, {x:0, y:0, z:0}, 0.5);
-          } else {
-              t = RayUtils.intersectBox(localRay, {x:-0.5, y:-0.5, z:-0.5}, {x:0.5, y:0.5, z:0.5});
-          }
+          if (meshType === 2) t = RayUtils.intersectSphere(localRay, {x:0, y:0, z:0}, 0.5);
+          else t = RayUtils.intersectBox(localRay, {x:-0.5, y:-0.5, z:-0.5}, {x:0.5, y:0.5, z:0.5});
 
           if (t !== null && t > 0) {
               if (t < minDist) {
@@ -194,10 +168,8 @@ export class Ti3DEngine {
 
   selectEntitiesInRect(x: number, y: number, w: number, h: number): string[] {
       const results: string[] = [];
-      const minX = Math.min(x, x + w);
-      const maxX = Math.max(x, x + w);
-      const minY = Math.min(y, y + h);
-      const maxY = Math.max(y, y + h);
+      const minX = Math.min(x, x + w), maxX = Math.max(x, x + w);
+      const minY = Math.min(y, y + h), maxY = Math.max(y, y + h);
 
       for (const [id, index] of this.ecs.idToIndex) {
           if (!this.ecs.store.isActive[index]) continue;
@@ -249,7 +221,6 @@ export class Ti3DEngine {
   }
 
   syncTransforms() {
-      // SceneGraph.update() handles the dirty flags and matrix re-calculation
       this.sceneGraph.update();
   }
 
@@ -263,26 +234,20 @@ export class Ti3DEngine {
           this.lastFpsTime = now;
       }
 
+      // 1. Physics
       if (this.isPlaying) {
           const sId = Array.from(this.ecs.idToIndex.entries()).find(x => this.ecs.store.names[x[1]] === 'Orbiting Satellite')?.[0];
           if (sId) {
               const idx = this.ecs.idToIndex.get(sId)!;
-              // Direct optimization: Modify Decomposed Rotation directly
-              // Note: Ideally use a helper, but raw access is fine here
-              this.ecs.store.setRotation(
-                  idx, 
-                  this.ecs.store.rotX[idx], 
-                  this.ecs.store.rotY[idx] + deltaTime * 2.0, 
-                  this.ecs.store.rotZ[idx]
-              );
+              this.ecs.store.setRotation(idx, this.ecs.store.rotX[idx], this.ecs.store.rotY[idx] + deltaTime * 2.0, this.ecs.store.rotZ[idx]);
           }
-          
           this.physics.update(deltaTime, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
       }
 
+      // 2. Scene Graph
       this.syncTransforms();
       
-      // Graph Execution
+      // 3. Script / Logic
       this.debugRenderer.begin();
       this.nodeResults.clear();
       
@@ -295,19 +260,20 @@ export class Ti3DEngine {
               }
               return res;
           });
-          
           try {
              const result = step.def.execute(inputs, step.data, this);
              this.nodeResults.set(step.id, result);
           } catch(e) { }
       }
 
+      // 4. Rendering
       this.renderer.render(
           this.ecs.store, 
-          this.ecs.idToIndex, 
-          this.sceneGraph, 
-          this.viewProjectionMatrix, 
-          this.selectedIds
+          this.ecs.count, 
+          this.selectedIndices,
+          this.viewProjectionMatrix,
+          this.canvasWidth,
+          this.canvasHeight
       );
       
       this.debugRenderer.render(this.viewProjectionMatrix);
