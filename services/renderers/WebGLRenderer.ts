@@ -105,7 +105,7 @@ export class WebGLRenderer {
         const gl = this.gl;
         gl.enable(gl.DEPTH_TEST);
         
-        // 🔴 FIX: Disable CULL_FACE initially to prevent invisible geometry due to winding order
+        // Disable CULL_FACE initially to prevent invisible geometry due to winding order
         gl.disable(gl.CULL_FACE); 
         
         gl.clearColor(0.1, 0.1, 0.1, 1.0);
@@ -117,7 +117,7 @@ export class WebGLRenderer {
         this.program = this.createProgram(gl, vs, fs);
         if (!this.program) return;
 
-        // 🟡 DEBUG: Verify attribute locations exist (not optimized out)
+        // DEBUG: Verify attribute locations exist (not optimized out)
         console.log("Attrib Locations:", 
             gl.getAttribLocation(this.program, "a_position"),
             gl.getAttribLocation(this.program, "a_normal"),
@@ -159,7 +159,7 @@ export class WebGLRenderer {
         gl.bindTexture(gl.TEXTURE_2D_ARRAY, texture);
         gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, width, height, depth);
 
-        // 🔴 FIX: Explicit Wrap Parameters are mandatory for 2D Arrays on some drivers
+        // Explicit Wrap Parameters are mandatory for 2D Arrays on some drivers
         gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.REPEAT);
         gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.REPEAT);
         gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -203,7 +203,8 @@ export class WebGLRenderer {
         const vao = gl.createVertexArray();
         gl.bindVertexArray(vao);
 
-        const createBuffer = (type: number, src: ArrayBuffer) => {
+        // FIX: Allow ArrayBufferView (Float32Array/Uint16Array)
+        const createBuffer = (type: number, src: ArrayBuffer | ArrayBufferView) => {
             const buf = gl.createBuffer();
             gl.bindBuffer(type, buf);
             gl.bufferData(type, src, gl.STATIC_DRAW);
@@ -228,7 +229,7 @@ export class WebGLRenderer {
         // Instanced attributes
         const instBuf = gl.createBuffer();
         
-        // 🔴 FIX: Explicitly bind instance buffer so pointers are correctly linked
+        // Explicitly bind instance buffer so pointers are correctly linked
         gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
         gl.bufferData(gl.ARRAY_BUFFER, this.instanceData.byteLength, gl.DYNAMIC_DRAW);
         
@@ -323,7 +324,7 @@ export class WebGLRenderer {
         if (!this.gl || !this.program) return;
         const gl = this.gl;
         
-        // 🔴 FIX: CRITICAL VIEWPORT SYNC
+        // CRITICAL VIEWPORT SYNC
         if (gl.canvas.width !== width || gl.canvas.height !== height) {
             gl.canvas.width = width;
             gl.canvas.height = height;

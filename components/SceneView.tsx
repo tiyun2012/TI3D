@@ -1,8 +1,7 @@
-
 import React, { useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react';
 import { Entity, ToolType, PerformanceMetrics } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
-import { Mat4Utils } from '../services/math';
+import { Mat4Utils, Vec3Utils } from '../services/math';
 import { engineInstance } from '../services/engine';
 import { Icon } from './Icon';
 import { Gizmo } from './Gizmo';
@@ -18,7 +17,6 @@ interface SceneViewProps {
 // Optimization: Isolated component to prevent SceneView re-renders
 const StatsOverlay: React.FC = () => {
     const [metrics, setMetrics] = useState<PerformanceMetrics>(engineInstance.metrics);
-    
     useEffect(() => {
         const interval = setInterval(() => {
             setMetrics({...engineInstance.metrics});
@@ -43,7 +41,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   
   // Optimization: Stable viewport state
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
-
   const [camera, setCamera] = useState({
     target: { x: 0, y: 0, z: 0 },
     theta: Math.PI / 4, 
@@ -233,17 +230,37 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           radius: Math.max(1, dragState.startCamera.radius - zoomDelta)
         }));
       } else if (dragState.mode === 'PAN') {
+        // Fix: Correct 3D Panning using Basis Vectors
         const panSpeed = dragState.startCamera.radius * 0.002;
-        const sinT = Math.sin(dragState.startCamera.theta);
-        const cosT = Math.cos(dragState.startCamera.theta);
+        
+        // 1. Recompute basis vectors from start camera angles
+        // Eye (relative to target 0,0,0 for direction calc)
+        const eyeX = dragState.startCamera.radius * Math.sin(dragState.startCamera.phi) * Math.cos(dragState.startCamera.theta);
+        const eyeY = dragState.startCamera.radius * Math.cos(dragState.startCamera.phi);
+        const eyeZ = dragState.startCamera.radius * Math.sin(dragState.startCamera.phi) * Math.sin(dragState.startCamera.theta);
+        
+        const eyeRel = { x: eyeX, y: eyeY, z: eyeZ };
+        // Forward is roughly -Eye
+        const forward = Vec3Utils.normalize(Vec3Utils.scale(eyeRel, -1, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+        
+        // Right = Cross(Forward, WorldUp)
+        const worldUp = { x: 0, y: 1, z: 0 };
+        const right = Vec3Utils.normalize(Vec3Utils.cross(forward, worldUp, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+        
+        // CameraUp = Cross(Right, Forward) (Orthogonal Up)
+        const camUp = Vec3Utils.normalize(Vec3Utils.cross(right, forward, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+        
+        // 2. Calculate movement
+        // Mouse Right (+dx) -> World Left (-Right)
+        // Mouse Down (+dy) -> World Up (+CamUp) (because +y is down in screen)
+        const moveX = Vec3Utils.scale(right, -dx * panSpeed, {x:0,y:0,z:0});
+        const moveY = Vec3Utils.scale(camUp, dy * panSpeed, {x:0,y:0,z:0});
+        
+        const delta = Vec3Utils.add(moveX, moveY, {x:0,y:0,z:0});
         
         setCamera(prev => ({
             ...prev,
-            target: {
-                x: dragState.startCamera.target.x - (dx * cosT - dy * sinT) * panSpeed,
-                y: dragState.startCamera.target.y + dy * panSpeed,
-                z: dragState.startCamera.target.z - (dx * sinT + dy * cosT) * panSpeed
-            }
+            target: Vec3Utils.add(dragState.startCamera.target, delta, {x:0,y:0,z:0})
         }));
       }
     };
@@ -306,8 +323,21 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         
         <div className="absolute top-3 left-3 flex gap-2 z-20">
             <div className="bg-black/40 backdrop-blur border border-white/5 rounded-md flex p-1 text-text-secondary">
-                 <button className="p-1 hover:text-white rounded hover:bg-white/10"><Icon name="Box" size={14} /></button>
-                 <button className="p-1 hover:text-white rounded hover:bg-white/10" onClick={() => engineInstance.toggleGrid()}><Icon name="Grid" size={14} /></button>
+                 <button 
+                    className="p-1 hover:text-white rounded hover:bg-white/10" 
+                    title="View Mode" 
+                    aria-label="View Mode"
+                 >
+                    <Icon name="Box" size={14} />
+                 </button>
+                 <button 
+                    className="p-1 hover:text-white rounded hover:bg-white/10" 
+                    onClick={() => engineInstance.toggleGrid()} 
+                    title="Toggle Grid" 
+                    aria-label="Toggle Grid"
+                 >
+                    <Icon name="Grid" size={14} />
+                 </button>
             </div>
             <div className="bg-black/40 backdrop-blur border border-white/5 rounded-md flex items-center px-2 text-[10px] text-text-secondary">
                 <span>Perspective</span>
