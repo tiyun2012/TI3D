@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Entity, ComponentType } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
@@ -27,7 +26,6 @@ const HierarchyItem: React.FC<{
   depth: number;
 }> = ({ entityId, entities, sceneGraph, selectedIds, onSelect, depth }) => {
   const [expanded, setExpanded] = useState(true);
-  
   const entity = entities.find(e => e.id === entityId);
   if (!entity) return null;
 
@@ -112,8 +110,20 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
         <div className="flex items-center justify-between text-xs font-bold text-text-secondary px-1">
             <span>HIERARCHY</span>
             <div className="flex gap-1">
-                <button className="p-1 hover:text-white"><Icon name="Plus" size={12} /></button>
-                <button className="p-1 hover:text-white"><Icon name="MoreHorizontal" size={12} /></button>
+                <button 
+                    className="p-1 hover:text-white"
+                    title="Create Entity"
+                    aria-label="Create Entity"
+                >
+                    <Icon name="Plus" size={12} />
+                </button>
+                <button 
+                    className="p-1 hover:text-white"
+                    title="Options"
+                    aria-label="Options"
+                >
+                    <Icon name="MoreHorizontal" size={12} />
+                </button>
             </div>
         </div>
         <div className="relative">
@@ -121,6 +131,8 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
             <input 
                 type="text" 
                 placeholder="Search..." 
+                aria-label="Search Hierarchy"
+                title="Search Hierarchy"
                 className="w-full bg-input-bg text-xs py-1 pl-7 pr-2 rounded outline-none border border-transparent focus:border-accent text-white" 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}

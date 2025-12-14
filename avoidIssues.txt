@@ -38,10 +38,15 @@
 
 ### 5. SCENE GRAPH (`services/SceneGraph.ts`)
 - **ITERATION OVER RECURSION:** Avoid recursive functions for `updateWorldMatrix` or `setDirty`. Use a stack-based `while` loop to prevent stack overflow crashes in deep hierarchies (100+ entities).
-### 6. COMMENT & LOST 
-- **  keeping all comments, ensure don't cause lost working features 
 
+---
 
+### 6. COMMENT 
+- **PRESERVATION:** Keep all comments during refactoring. 
 
+---
 
-  
+### 7. CSS & COMPATIBILITY
+- **VENDOR PREFIXES:** Always include standard vendor prefixes for newer CSS features to ensure cross-browser support (e.g., `-webkit-backdrop-filter` alongside `backdrop-filter`).
+### 8. LOST
+-** Ensure no features are lost.

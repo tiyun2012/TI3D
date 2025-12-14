@@ -22,6 +22,8 @@
 /* --- Planar Handles (The squares between axes) --- */
 .gizmo-plane-handle {
   transition: opacity 0.2s ease, fill-opacity 0.2s ease;
+  /* Fix: Add webkit prefix for Safari support */
+  -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
 }
 
