@@ -3,7 +3,8 @@ import { GraphNode, GraphConnection } from '../types';
 import { engineInstance } from '../services/engine';
 import { NodeRegistry, getTypeColor } from '../services/NodeRegistry';
 
-// ... (LayoutConfig and GraphMath remain unchanged) ...
+// ... [LayoutConfig and GraphMath constants remain unchanged] ...
+
 const LayoutConfig = {
     GRID_SIZE: 20,
     NODE_WIDTH: 180,
@@ -82,6 +83,7 @@ export const NodeGraph: React.FC = () => {
     const [connecting, setConnecting] = useState<{ nodeId: string, pinId: string, type: 'input'|'output', x: number, y: number, dataType: string } | null>(null);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, visible: boolean } | null>(null);
     const [searchFilter, setSearchFilter] = useState('');
+    
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const [selectionBox, setSelectionBox] = useState<{ startX: number, startY: number, currentX: number, currentY: number } | null>(null);
 
@@ -90,18 +92,20 @@ export const NodeGraph: React.FC = () => {
     const containerRef = useRef<HTMLDivElement>(null);
     const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const pathRefs = useRef<Map<string, SVGPathElement>>(new Map());
+    
     const activeListenersRef = useRef<{ move?: (ev: MouseEvent) => void; up?: (ev: MouseEvent) => void }>({});
 
+    // OPTIMIZATION: Debounce graph compilation
     useEffect(() => {
         const timeoutId = setTimeout(() => {
             engineInstance.compileGraph(nodes, connections);
-        }, 150); 
+        }, 150); // 150ms debounce
         return () => clearTimeout(timeoutId);
     }, [nodes, connections]);
 
+    // OPTIMIZATION: Fast Node Lookup Map
     const nodeMap = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes]);
 
-    // ... (rest of the component remains similar, using nodeMap and optimized logic)
     const getPortType = useCallback((nodeId: string, pinId: string, type: 'input' | 'output') => {
         const node = nodeMap.get(nodeId);
         if (!node) return 'any';
@@ -169,6 +173,7 @@ export const NodeGraph: React.FC = () => {
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
 
+        // Pan
         if (e.button === 1 || (e.button === 0 && e.altKey)) {
             e.preventDefault();
             cleanupListeners();
@@ -197,7 +202,9 @@ export const NodeGraph: React.FC = () => {
             activeListenersRef.current = { move: onMove, up: onUp };
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
-        } else if (e.button === 0) {
+        }
+        // Selection Box (Left Click)
+        else if (e.button === 0) {
             if (!e.shiftKey && !e.ctrlKey) {
                 setSelectedNodeIds(new Set());
             }
@@ -291,12 +298,17 @@ export const NodeGraph: React.FC = () => {
                 const pathEl = pathRefs.current.get(c.id);
                 if (!pathEl) return null;
 
+                const isFromSelected = currentSelection.has(c.fromNode);
+                const isToSelected = currentSelection.has(c.toNode);
+
                 return {
                     pathEl,
                     fromNodeId: c.fromNode,
                     fromPin: c.fromPin,
                     toNodeId: c.toNode,
-                    toPin: c.toPin
+                    toPin: c.toPin,
+                    isFromSelected,
+                    isToSelected
                 };
             })
             .filter(Boolean);
@@ -368,7 +380,6 @@ export const NodeGraph: React.FC = () => {
         window.addEventListener('mouseup', onUp);
     }, [nodes, connections, cleanupListeners, selectedNodeIds, nodeMap]);
 
-    // ... (Pin handling and render logic updated similarly) ...
     const handlePinDown = useCallback((e: React.MouseEvent, nodeId: string, pinId: string, type: 'input'|'output') => {
         e.stopPropagation();
         e.preventDefault();
@@ -571,6 +582,8 @@ export const NodeGraph: React.FC = () => {
                                         {def.type === 'Float' && (
                                             <input 
                                                 type="text" 
+                                                aria-label="Float value" 
+                                                title="Float value"
                                                 className="w-full h-6 bg-black/40 text-xs text-white px-1 rounded border border-white/10"
                                                 value={node.data?.value || "0"}
                                                 onChange={(e) => setNodes(p => p.map(n => n.id===node.id ? {...n, data: {value: e.target.value}} : n))}
@@ -610,7 +623,15 @@ export const NodeGraph: React.FC = () => {
                     style={{ left: contextMenu.x, top: contextMenu.y }}
                     onMouseDown={e => e.stopPropagation()}
                 >
-                    <input autoFocus placeholder="Search..." className="p-2 bg-[#1a1a1a] text-white outline-none border-b border-black/50" value={searchFilter} onChange={e => setSearchFilter(e.target.value)} />
+                    <input 
+                        autoFocus 
+                        placeholder="Search..." 
+                        aria-label="Search nodes"
+                        title="Search nodes"
+                        className="p-2 bg-[#1a1a1a] text-white outline-none border-b border-black/50" 
+                        value={searchFilter} 
+                        onChange={e => setSearchFilter(e.target.value)} 
+                    />
                     <div className="max-h-64 overflow-y-auto">
                          {Object.values(NodeRegistry).filter(d => d.title.toLowerCase().includes(searchFilter.toLowerCase())).map(def => (
                              <button key={def.type} className="w-full text-left px-3 py-2 text-gray-300 hover:bg-blue-600 hover:text-white" onClick={() => addNode(def.type)}>{def.title}</button>
