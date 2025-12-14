@@ -8,12 +8,12 @@ const LayoutConfig = {
     GRID_SIZE: 20,
     NODE_WIDTH: 180,
     REROUTE_SIZE: 12,
-    HEADER_HEIGHT: 36, // Explicit pixel height (matches h-9 approx, but exact)
-    ITEM_HEIGHT: 24,   // Explicit pixel height (matches h-6)
+    HEADER_HEIGHT: 36, // Explicit pixel height
+    ITEM_HEIGHT: 24,   // Explicit pixel height
     PIN_RADIUS: 6,
     BORDER: 1,         // Assumes 1px border
-    GAP: 4,            // Vertical gap between rows (replaces space-y-1)
-    PADDING_TOP: 8,    // Top padding for the body (replaces p-2 top)
+    GAP: 4,            // Vertical gap between rows
+    PADDING_TOP: 8,    // Top padding for the body
     WIRE_GAP: 0 
 };
 
@@ -100,7 +100,7 @@ export const NodeGraph: React.FC = () => {
     useEffect(() => {
         const timeoutId = setTimeout(() => {
             engineInstance.compileGraph(nodes, connections);
-        }, 150); // 150ms debounce
+        }, 150); 
         return () => clearTimeout(timeoutId);
     }, [nodes, connections]);
 
@@ -174,7 +174,6 @@ export const NodeGraph: React.FC = () => {
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
 
-        // Pan
         if (e.button === 1 || (e.button === 0 && e.altKey)) {
             e.preventDefault();
             cleanupListeners();
@@ -203,9 +202,7 @@ export const NodeGraph: React.FC = () => {
             activeListenersRef.current = { move: onMove, up: onUp };
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
-        }
-        // Selection Box (Left Click)
-        else if (e.button === 0) {
+        } else if (e.button === 0) {
             if (!e.shiftKey && !e.ctrlKey) {
                 setSelectedNodeIds(new Set());
             }
