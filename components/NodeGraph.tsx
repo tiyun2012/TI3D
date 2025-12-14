@@ -3,21 +3,21 @@ import { GraphNode, GraphConnection } from '../types';
 import { engineInstance } from '../services/engine';
 import { NodeRegistry, getTypeColor } from '../services/NodeRegistry';
 
-// ... [LayoutConfig and GraphMath constants remain unchanged] ...
-
+// --- 1. Shared Layout Constants (Explicit Pixels) ---
 const LayoutConfig = {
     GRID_SIZE: 20,
     NODE_WIDTH: 180,
     REROUTE_SIZE: 12,
-    HEADER_HEIGHT: 36,
-    ITEM_HEIGHT: 24,
+    HEADER_HEIGHT: 36, // Matches exact pixel height
+    ITEM_HEIGHT: 24,   // Matches exact pixel height
     PIN_RADIUS: 6,
-    BORDER: 1,
-    GAP: 4,
-    PADDING_TOP: 8,
+    BORDER: 1,         // Assumes 1px border
+    GAP: 4,            // Vertical gap between rows
+    PADDING_TOP: 8,    // Top padding for the body
     WIRE_GAP: 0 
 };
 
+// --- 2. Math Helpers ---
 const GraphMath = {
     getPinPosition: (node: GraphNode, pinId: string, type: 'input' | 'output') => {
         if (node.type === 'Reroute') {
@@ -40,6 +40,7 @@ const GraphMath = {
             index += inIdx !== -1 ? inIdx : 0;
         }
 
+        // Exact math matching the DOM layout logic
         const yOffset = LayoutConfig.BORDER + LayoutConfig.HEADER_HEIGHT + LayoutConfig.PADDING_TOP + 
                        (index * (LayoutConfig.ITEM_HEIGHT + LayoutConfig.GAP)) + (LayoutConfig.ITEM_HEIGHT / 2);
         
@@ -92,18 +93,15 @@ export const NodeGraph: React.FC = () => {
     const containerRef = useRef<HTMLDivElement>(null);
     const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const pathRefs = useRef<Map<string, SVGPathElement>>(new Map());
-    
     const activeListenersRef = useRef<{ move?: (ev: MouseEvent) => void; up?: (ev: MouseEvent) => void }>({});
 
-    // OPTIMIZATION: Debounce graph compilation
     useEffect(() => {
         const timeoutId = setTimeout(() => {
             engineInstance.compileGraph(nodes, connections);
-        }, 150); // 150ms debounce
+        }, 150); 
         return () => clearTimeout(timeoutId);
     }, [nodes, connections]);
 
-    // OPTIMIZATION: Fast Node Lookup Map
     const nodeMap = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes]);
 
     const getPortType = useCallback((nodeId: string, pinId: string, type: 'input' | 'output') => {
@@ -173,7 +171,6 @@ export const NodeGraph: React.FC = () => {
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
 
-        // Pan
         if (e.button === 1 || (e.button === 0 && e.altKey)) {
             e.preventDefault();
             cleanupListeners();
@@ -202,9 +199,7 @@ export const NodeGraph: React.FC = () => {
             activeListenersRef.current = { move: onMove, up: onUp };
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
-        }
-        // Selection Box (Left Click)
-        else if (e.button === 0) {
+        } else if (e.button === 0) {
             if (!e.shiftKey && !e.ctrlKey) {
                 setSelectedNodeIds(new Set());
             }
@@ -298,17 +293,12 @@ export const NodeGraph: React.FC = () => {
                 const pathEl = pathRefs.current.get(c.id);
                 if (!pathEl) return null;
 
-                const isFromSelected = currentSelection.has(c.fromNode);
-                const isToSelected = currentSelection.has(c.toNode);
-
                 return {
                     pathEl,
                     fromNodeId: c.fromNode,
                     fromPin: c.fromPin,
                     toNodeId: c.toNode,
-                    toPin: c.toPin,
-                    isFromSelected,
-                    isToSelected
+                    toPin: c.toPin
                 };
             })
             .filter(Boolean);
@@ -566,33 +556,51 @@ export const NodeGraph: React.FC = () => {
                              ) : (
                                 <>
                                     <div 
-                                        className={`h-9 px-3 flex items-center justify-between border-b border-white/5 rounded-t-md cursor-grab active:cursor-grabbing ${isSelected ? 'bg-accent/20' : 'bg-white/5'}`}
+                                        className={`px-3 flex items-center justify-between border-b border-white/5 rounded-t-md cursor-grab active:cursor-grabbing ${isSelected ? 'bg-accent/20' : 'bg-white/5'}`}
+                                        style={{ height: LayoutConfig.HEADER_HEIGHT }}
                                         onMouseDown={(e) => handleNodeDragStart(e, node)}
                                     >
                                         <span className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-gray-200'}`}>{def.title}</span>
                                     </div>
-                                    <div className="p-2 space-y-1">
+                                    <div 
+                                        style={{ 
+                                            paddingTop: LayoutConfig.PADDING_TOP,
+                                            paddingLeft: 8,
+                                            paddingRight: 8,
+                                            paddingBottom: 4
+                                        }}
+                                    >
                                         {def.inputs.map(input => (
-                                            <div key={input.id} className="relative h-6 flex items-center">
+                                            <div 
+                                                key={input.id} 
+                                                className="relative flex items-center"
+                                                style={{ height: LayoutConfig.ITEM_HEIGHT, marginBottom: LayoutConfig.GAP }}
+                                            >
                                                 {renderPort(node.id, input.id, 'input', input.color || getTypeColor(input.type))}
                                                 <span className="text-[10px] text-gray-400 ml-2">{input.name}</span>
                                             </div>
                                         ))}
                                         
                                         {def.type === 'Float' && (
-                                            <input 
-                                                type="text" 
-                                                aria-label="Float value" 
-                                                title="Float value"
-                                                className="w-full h-6 bg-black/40 text-xs text-white px-1 rounded border border-white/10"
-                                                value={node.data?.value || "0"}
-                                                onChange={(e) => setNodes(p => p.map(n => n.id===node.id ? {...n, data: {value: e.target.value}} : n))}
-                                                onMouseDown={e => e.stopPropagation()}
-                                            />
+                                            <div style={{ height: LayoutConfig.ITEM_HEIGHT, marginBottom: LayoutConfig.GAP }} className="relative flex items-center">
+                                                <input 
+                                                    type="text" 
+                                                    aria-label="Float value" 
+                                                    title="Float value"
+                                                    className="w-full h-full bg-black/40 text-xs text-white px-1 rounded border border-white/10"
+                                                    value={node.data?.value || "0"}
+                                                    onChange={(e) => setNodes(p => p.map(n => n.id===node.id ? {...n, data: {value: e.target.value}} : n))}
+                                                    onMouseDown={e => e.stopPropagation()}
+                                                />
+                                            </div>
                                         )}
 
                                         {def.outputs.map(output => (
-                                            <div key={output.id} className="relative h-6 flex items-center justify-end">
+                                            <div 
+                                                key={output.id} 
+                                                className="relative flex items-center justify-end"
+                                                style={{ height: LayoutConfig.ITEM_HEIGHT, marginBottom: LayoutConfig.GAP }}
+                                            >
                                                 <span className="text-[10px] text-gray-400 mr-2">{output.name}</span>
                                                 {renderPort(node.id, output.id, 'output', output.color || getTypeColor(output.type))}
                                             </div>
