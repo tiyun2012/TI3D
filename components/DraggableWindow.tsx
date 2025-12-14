@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Icon } from './Icon';
 
@@ -20,7 +19,6 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
         x: Math.max(0, window.innerWidth / 2 - width / 2),
         y: Math.max(0, window.innerHeight / 2 - 300) 
     });
-    
     const [isDragging, setIsDragging] = useState(false);
     const dragOffset = useRef({ x: 0, y: 0 });
 
@@ -76,7 +74,14 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
                     {icon && <Icon name={icon as any} size={16} className="text-accent" />}
                     {title}
                 </span>
-                <button onClick={onClose} className="hover:text-white text-text-secondary"><Icon name="X" size={16}/></button>
+                <button 
+                    onClick={onClose} 
+                    className="hover:text-white text-text-secondary"
+                    title="Close"
+                    aria-label="Close"
+                >
+                    <Icon name="X" size={16}/>
+                </button>
             </div>
             
             <div className="flex-1 overflow-auto custom-scrollbar flex flex-col relative">
