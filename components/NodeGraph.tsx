@@ -8,12 +8,12 @@ const LayoutConfig = {
     GRID_SIZE: 20,
     NODE_WIDTH: 180,
     REROUTE_SIZE: 12,
-    HEADER_HEIGHT: 36, // Matches exact pixel height
-    ITEM_HEIGHT: 24,   // Matches exact pixel height
+    HEADER_HEIGHT: 36, // Explicit pixel height (matches h-9 approx, but exact)
+    ITEM_HEIGHT: 24,   // Explicit pixel height (matches h-6)
     PIN_RADIUS: 6,
     BORDER: 1,         // Assumes 1px border
-    GAP: 4,            // Vertical gap between rows
-    PADDING_TOP: 8,    // Top padding for the body
+    GAP: 4,            // Vertical gap between rows (replaces space-y-1)
+    PADDING_TOP: 8,    // Top padding for the body (replaces p-2 top)
     WIRE_GAP: 0 
 };
 
@@ -93,15 +93,18 @@ export const NodeGraph: React.FC = () => {
     const containerRef = useRef<HTMLDivElement>(null);
     const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const pathRefs = useRef<Map<string, SVGPathElement>>(new Map());
+    
     const activeListenersRef = useRef<{ move?: (ev: MouseEvent) => void; up?: (ev: MouseEvent) => void }>({});
 
+    // OPTIMIZATION: Debounce graph compilation
     useEffect(() => {
         const timeoutId = setTimeout(() => {
             engineInstance.compileGraph(nodes, connections);
-        }, 150); 
+        }, 150); // 150ms debounce
         return () => clearTimeout(timeoutId);
     }, [nodes, connections]);
 
+    // OPTIMIZATION: Fast Node Lookup Map
     const nodeMap = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes]);
 
     const getPortType = useCallback((nodeId: string, pinId: string, type: 'input' | 'output') => {
@@ -171,6 +174,7 @@ export const NodeGraph: React.FC = () => {
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
 
+        // Pan
         if (e.button === 1 || (e.button === 0 && e.altKey)) {
             e.preventDefault();
             cleanupListeners();
@@ -199,7 +203,9 @@ export const NodeGraph: React.FC = () => {
             activeListenersRef.current = { move: onMove, up: onUp };
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
-        } else if (e.button === 0) {
+        }
+        // Selection Box (Left Click)
+        else if (e.button === 0) {
             if (!e.shiftKey && !e.ctrlKey) {
                 setSelectedNodeIds(new Set());
             }
@@ -293,12 +299,17 @@ export const NodeGraph: React.FC = () => {
                 const pathEl = pathRefs.current.get(c.id);
                 if (!pathEl) return null;
 
+                const isFromSelected = currentSelection.has(c.fromNode);
+                const isToSelected = currentSelection.has(c.toNode);
+
                 return {
                     pathEl,
                     fromNodeId: c.fromNode,
                     fromPin: c.fromPin,
                     toNodeId: c.toNode,
-                    toPin: c.toPin
+                    toPin: c.toPin,
+                    isFromSelected,
+                    isToSelected
                 };
             })
             .filter(Boolean);
