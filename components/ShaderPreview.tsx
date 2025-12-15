@@ -18,7 +18,11 @@ void main() {
     fragColor = vec4(0.1, 0.1, 0.1, 1.0); // Dark Gray Background
 }`;
 
-export const ShaderPreview: React.FC = () => {
+interface ShaderPreviewProps {
+    minimal?: boolean;
+}
+
+export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ minimal = false }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const requestRef = useRef<number>(0);
     
@@ -26,7 +30,7 @@ export const ShaderPreview: React.FC = () => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         
-        const gl = canvas.getContext('webgl2');
+        const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
         if (!gl) return;
 
         // Quad Geometry
@@ -67,7 +71,7 @@ export const ShaderPreview: React.FC = () => {
             gl.compileShader(fs);
             
             if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
-                console.warn("Shader Preview Compile Error:", gl.getShaderInfoLog(fs));
+                // console.warn("Shader Preview Compile Error:", gl.getShaderInfoLog(fs));
                 // Keep old program or use fallback if valid
                 if (program) return; 
             }
@@ -86,6 +90,14 @@ export const ShaderPreview: React.FC = () => {
             if (engineInstance.currentShaderSource !== compiledSource) {
                 compiledSource = engineInstance.currentShaderSource;
                 compile(compiledSource);
+            }
+
+            // Sync canvas size to display size
+            const displayWidth = canvas.clientWidth;
+            const displayHeight = canvas.clientHeight;
+            if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+                canvas.width = displayWidth;
+                canvas.height = displayHeight;
             }
 
             gl.viewport(0, 0, canvas.width, canvas.height);
@@ -120,16 +132,16 @@ export const ShaderPreview: React.FC = () => {
     }, []);
 
     return (
-        <div className="w-full h-full bg-black/50 flex flex-col">
-            <div className="p-2 border-b border-white/5 text-[10px] text-text-secondary uppercase font-bold tracking-wider">
-                Material Output
-            </div>
+        <div className={`w-full h-full flex flex-col ${minimal ? 'rounded overflow-hidden' : 'bg-black/50'}`}>
+            {!minimal && (
+                <div className="p-2 border-b border-white/5 text-[10px] text-text-secondary uppercase font-bold tracking-wider">
+                    Material Output
+                </div>
+            )}
             <div className="flex-1 relative bg-[url('https://transparenttextures.com/patterns/checkerboard.png')] bg-repeat">
                 <canvas 
                     ref={canvasRef} 
-                    className="absolute inset-0 w-full h-full" 
-                    width={256} 
-                    height={256} 
+                    className="absolute inset-0 w-full h-full block" 
                 />
             </div>
         </div>

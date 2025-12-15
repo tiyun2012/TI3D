@@ -27,14 +27,24 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
         const inputVars = def.inputs.map(input => {
             const conn = connections.find(c => c.toNode === nodeId && c.toPin === input.id);
             if (conn) {
-                return visit(conn.fromNode); // Generate code for dependency
+                const sourceVar = visit(conn.fromNode); // Generate code for dependency
+                
+                // Handle special case: Split node outputs are separate variables (swizzling)
+                const sourceNode = nodes.find(n => n.id === conn.fromNode);
+                if (sourceNode && sourceNode.type === 'Split') {
+                    // sourceVar is 'v_nodeId', but we need 'v_nodeId_x' etc.
+                    return `${sourceVar}_${conn.fromPin}`;
+                }
+                
+                return sourceVar;
             }
             // Use default/data value
             if (node.data && node.data[input.id] !== undefined) {
                  const val = node.data[input.id];
                  // Ensure floats have decimals for GLSL
                  if (def.type === 'Float' || input.type === 'float') {
-                     return val.toString().includes('.') ? val : val + '.0';
+                     const s = val.toString();
+                     return s.includes('.') ? s : s + '.0';
                  }
                  return val;
             }

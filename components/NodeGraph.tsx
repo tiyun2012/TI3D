@@ -3,18 +3,21 @@ import React, { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffe
 import { GraphNode, GraphConnection } from '../types';
 import { engineInstance } from '../services/engine';
 import { NodeRegistry, getTypeColor } from '../services/NodeRegistry';
+import { ShaderPreview } from './ShaderPreview';
+import { Icon } from './Icon';
 
 // --- 1. Shared Layout Constants (Explicit Pixels) ---
 const LayoutConfig = {
     GRID_SIZE: 20,
     NODE_WIDTH: 180,
+    PREVIEW_NODE_WIDTH: 240, 
     REROUTE_SIZE: 12,
-    HEADER_HEIGHT: 36, // Explicit pixel height
-    ITEM_HEIGHT: 24,   // Explicit pixel height
+    HEADER_HEIGHT: 36, 
+    ITEM_HEIGHT: 24,   
     PIN_RADIUS: 6,
-    BORDER: 1,         // Assumes 1px border
-    GAP: 4,            // Vertical gap between rows
-    PADDING_TOP: 8,    // Top padding for the body
+    BORDER: 1,         
+    GAP: 4,            
+    PADDING_TOP: 8,    
     WIRE_GAP: 0 
 };
 
@@ -41,11 +44,11 @@ const GraphMath = {
             index += inIdx !== -1 ? inIdx : 0;
         }
 
-        // Exact math matching the DOM layout logic
         const yOffset = LayoutConfig.BORDER + LayoutConfig.HEADER_HEIGHT + LayoutConfig.PADDING_TOP + 
                        (index * (LayoutConfig.ITEM_HEIGHT + LayoutConfig.GAP)) + (LayoutConfig.ITEM_HEIGHT / 2);
         
-        const xOffset = type === 'output' ? LayoutConfig.NODE_WIDTH : 0;
+        const width = node.type === 'ShaderOutput' ? LayoutConfig.PREVIEW_NODE_WIDTH : LayoutConfig.NODE_WIDTH;
+        const xOffset = type === 'output' ? width : 0;
         return { x: node.position.x + xOffset, y: node.position.y + yOffset };
     },
 
@@ -54,6 +57,38 @@ const GraphMath = {
         const cX1 = x1 + Math.max(dist, 50);
         const cX2 = x2 - Math.max(dist, 50);
         return `M ${x1} ${y1} C ${cX1} ${y1} ${cX2} ${y2} ${x2} ${y2}`;
+    },
+
+    getBezierPoints: (x1: number, y1: number, x2: number, y2: number, steps: number = 10) => {
+        const dist = Math.abs(x1 - x2) * 0.4;
+        const cp1x = x1 + Math.max(dist, 50);
+        const cp1y = y1;
+        const cp2x = x2 - Math.max(dist, 50);
+        const cp2y = y2;
+        
+        const points = [];
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const mt = 1 - t;
+            const mt2 = mt * mt;
+            const mt3 = mt2 * mt;
+            const t2 = t * t;
+            const t3 = t2 * t;
+            
+            const x = mt3 * x1 + 3 * mt2 * t * cp1x + 3 * mt * t2 * cp2x + t3 * x2;
+            const y = mt3 * y1 + 3 * mt2 * t * cp1y + 3 * mt * t2 * cp2y + t3 * y2;
+            points.push({ x, y });
+        }
+        return points;
+    },
+
+    // Standard Line Intersection
+    lineIntersectsLine: (a1: {x:number, y:number}, a2: {x:number, y:number}, b1: {x:number, y:number}, b2: {x:number, y:number}) => {
+        const det = (a2.x - a1.x) * (b2.y - b1.y) - (b2.x - b1.x) * (a2.y - a1.y);
+        if (det === 0) return false;
+        const lambda = ((b2.y - b1.y) * (b2.x - a1.x) + (b1.x - b2.x) * (b2.y - a1.y)) / det;
+        const gamma = ((a1.y - a2.y) * (b2.x - a1.x) + (a2.x - a1.x) * (b2.y - a1.y)) / det;
+        return (0 < lambda && lambda < 1) && (0 < gamma && gamma < 1);
     },
 
     screenToWorld: (clientX: number, clientY: number, rect: DOMRect, transform: { x: number, y: number, k: number }) => {
@@ -65,18 +100,30 @@ const GraphMath = {
 };
 
 const INITIAL_NODES: GraphNode[] = [
-    { id: '1', type: 'Time', position: { x: 50, y: 100 } },
-    { id: '2', type: 'Sine', position: { x: 280, y: 100 } },
-    { id: '3', type: 'Float', position: { x: 50, y: 250 }, data: { value: "1.5" } },
-    { id: '4', type: 'Add', position: { x: 500, y: 150 } },
-    { id: '5', type: 'WaveViewer', position: { x: 750, y: 150 } }
+    { id: '1', type: 'UV', position: { x: 50, y: 150 } },
+    { id: '2', type: 'Time', position: { x: 50, y: 50 } },
+    { id: '3', type: 'Split', position: { x: 250, y: 150 } },
+    { id: '4', type: 'Multiply', position: { x: 250, y: 300 } }, // Scale
+    { id: 'scale_val', type: 'Float', position: { x: 50, y: 350 }, data: { value: "3.0" } },
+    { id: '5', type: 'Add', position: { x: 450, y: 100 } },
+    { id: '6', type: 'Sine', position: { x: 650, y: 100 } },
+    { id: '7', type: 'Mix', position: { x: 850, y: 200 } },
+    { id: 'col1', type: 'Vec3', position: { x: 600, y: 250 }, data: { x: 0.3, y: 0.0, z: 0.5 } }, // Deep Purple
+    { id: 'col2', type: 'Vec3', position: { x: 600, y: 400 }, data: { x: 0.0, y: 0.8, z: 1.0 } }, // Cyan
+    { id: 'out', type: 'ShaderOutput', position: { x: 1100, y: 250 } }
 ];
 
 const INITIAL_CONNECTIONS: GraphConnection[] = [
-    { id: 'c1', fromNode: '1', fromPin: 'out', toNode: '2', toPin: 'in' },
-    { id: 'c2', fromNode: '2', fromPin: 'out', toNode: '4', toPin: 'a' },
-    { id: 'c3', fromNode: '3', fromPin: 'out', toNode: '4', toPin: 'b' },
-    { id: 'c4', fromNode: '4', fromPin: 'out', toNode: '5', toPin: 'in' },
+    { id: 'c1', fromNode: '1', fromPin: 'uv', toNode: '3', toPin: 'in' },
+    { id: 'c2', fromNode: '3', fromPin: 'x', toNode: '4', toPin: 'a' },
+    { id: 'c3', fromNode: 'scale_val', fromPin: 'out', toNode: '4', toPin: 'b' },
+    { id: 'c4', fromNode: '4', fromPin: 'out', toNode: '5', toPin: 'b' },
+    { id: 'c5', fromNode: '2', fromPin: 'out', toNode: '5', toPin: 'a' },
+    { id: 'c6', fromNode: '5', fromPin: 'out', toNode: '6', toPin: 'in' },
+    { id: 'c7', fromNode: '6', fromPin: 'out', toNode: '7', toPin: 't' },
+    { id: 'c8', fromNode: 'col1', fromPin: 'out', toNode: '7', toPin: 'a' },
+    { id: 'c9', fromNode: 'col2', fromPin: 'out', toNode: '7', toPin: 'b' },
+    { id: 'c10', fromNode: '7', fromPin: 'out', toNode: 'out', toPin: 'rgb' },
 ];
 
 export const NodeGraph: React.FC = () => {
@@ -85,12 +132,16 @@ export const NodeGraph: React.FC = () => {
     const [connecting, setConnecting] = useState<{ nodeId: string, pinId: string, type: 'input'|'output', x: number, y: number, dataType: string } | null>(null);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, visible: boolean } | null>(null);
     const [searchFilter, setSearchFilter] = useState('');
+    const [showGrid, setShowGrid] = useState(true);
     
     // Feature: Auto-connect when dropping on bg
     const [pendingConnection, setPendingConnection] = useState<{ nodeId: string, pinId: string, type: 'input'|'output' } | null>(null);
     
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const [selectionBox, setSelectionBox] = useState<{ startX: number, startY: number, currentX: number, currentY: number } | null>(null);
+    
+    // Feature: Cut Tool
+    const [cutLine, setCutLine] = useState<{ start: {x:number, y:number}, end: {x:number, y:number} } | null>(null);
 
     const transformRef = useRef({ x: 0, y: 0, k: 1 });
     const viewRef = useRef<HTMLDivElement>(null);
@@ -133,14 +184,76 @@ export const NodeGraph: React.FC = () => {
         if (viewRef.current && containerRef.current) {
             const { x, y, k } = transformRef.current;
             viewRef.current.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k})`;
-            containerRef.current.style.backgroundPosition = `${x}px ${y}px`;
-            containerRef.current.style.backgroundSize = `${LayoutConfig.GRID_SIZE * k}px ${LayoutConfig.GRID_SIZE * k}px`;
+            // Only update background if grid is enabled
+            if (showGrid) {
+                containerRef.current.style.backgroundPosition = `${x}px ${y}px`;
+                containerRef.current.style.backgroundSize = `${LayoutConfig.GRID_SIZE * k}px ${LayoutConfig.GRID_SIZE * k}px`;
+                containerRef.current.style.backgroundImage = 'linear-gradient(#333 1px, transparent 1px), linear-gradient(90deg, #333 1px, transparent 1px)';
+            } else {
+                containerRef.current.style.backgroundImage = 'none';
+            }
         }
-    }, []);
+    }, [showGrid]);
 
     useLayoutEffect(() => {
         updateViewportStyle();
     }, [updateViewportStyle]);
+
+    // Keyboard Shortcuts (Delete & Focus)
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Delete Nodes
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (selectedNodeIds.size > 0) {
+                    // Do not delete outputs usually, but for now allow everything
+                    setNodes(prev => prev.filter(n => !selectedNodeIds.has(n.id)));
+                    setConnections(prev => prev.filter(c => !selectedNodeIds.has(c.fromNode) && !selectedNodeIds.has(c.toNode)));
+                    setSelectedNodeIds(new Set());
+                }
+            }
+            // Focus Selection (F)
+            if (e.key === 'f' || e.key === 'F') {
+                const targets = nodes.filter(n => selectedNodeIds.has(n.id));
+                const focusNodes = targets.length > 0 ? targets : nodes;
+                
+                if (focusNodes.length === 0) return;
+
+                // Calculate bounds
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                focusNodes.forEach(n => {
+                    const el = nodeRefs.current.get(n.id);
+                    const w = el ? el.offsetWidth : LayoutConfig.NODE_WIDTH;
+                    const h = el ? el.offsetHeight : 100;
+                    minX = Math.min(minX, n.position.x);
+                    minY = Math.min(minY, n.position.y);
+                    maxX = Math.max(maxX, n.position.x + w);
+                    maxY = Math.max(maxY, n.position.y + h);
+                });
+                
+                const padding = 50;
+                const width = (maxX - minX) + padding * 2;
+                const height = (maxY - minY) + padding * 2;
+                
+                const containerW = containerRef.current?.clientWidth || 800;
+                const containerH = containerRef.current?.clientHeight || 600;
+                
+                let k = Math.min(containerW / width, containerH / height);
+                k = Math.min(Math.max(k, 0.2), 2.0); // Clamp scale
+                
+                const centerX = minX + (maxX - minX) / 2;
+                const centerY = minY + (maxY - minY) / 2;
+                
+                const x = containerW / 2 - centerX * k;
+                const y = containerH / 2 - centerY * k;
+                
+                transformRef.current = { x, y, k };
+                updateViewportStyle();
+            }
+        };
+        
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [nodes, selectedNodeIds, updateViewportStyle]);
 
     const cleanupListeners = useCallback(() => {
         if (activeListenersRef.current.move) window.removeEventListener('mousemove', activeListenersRef.current.move);
@@ -170,16 +283,78 @@ export const NodeGraph: React.FC = () => {
     }, [updateViewportStyle]);
 
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        // --- Right Click Handling ---
         if (e.button === 2) { 
+            e.preventDefault();
+            e.stopPropagation();
+
+            // CTRL + RMB = Cut Tool
+            if (e.ctrlKey) {
+                cleanupListeners();
+                const startX = e.clientX - rect.left;
+                const startY = e.clientY - rect.top;
+                
+                // Convert to World for intersection logic later, but for visual line we use container-space (which is world * zoom + pan)
+                // Actually easier to draw cut line in overlay (screen space)
+                setCutLine({ start: {x: startX, y: startY}, end: {x: startX, y: startY} });
+
+                const onMove = (ev: MouseEvent) => {
+                    setCutLine(prev => prev ? { ...prev, end: { x: ev.clientX - rect.left, y: ev.clientY - rect.top } } : null);
+                };
+
+                const onUp = (ev: MouseEvent) => {
+                    cleanupListeners();
+                    
+                    // Perform Cut Logic
+                    // 1. Convert Cut Line to World Space
+                    const t = transformRef.current;
+                    const worldStart = { x: (startX - t.x) / t.k, y: (startY - t.y) / t.k };
+                    const worldEnd = { x: (ev.clientX - rect.left - t.x) / t.k, y: (ev.clientY - rect.top - t.y) / t.k };
+                    
+                    setConnections(curr => curr.filter(conn => {
+                        const fromNode = nodeMap.get(conn.fromNode);
+                        const toNode = nodeMap.get(conn.toNode);
+                        if (!fromNode || !toNode) return false; // Remove invalid
+
+                        const p1 = GraphMath.getPinPosition(fromNode, conn.fromPin, 'output');
+                        const p2 = GraphMath.getPinPosition(toNode, conn.toPin, 'input');
+                        p1.x += LayoutConfig.WIRE_GAP;
+                        p2.x -= LayoutConfig.WIRE_GAP;
+
+                        // Check intersection with Bezier
+                        const bezierPoints = GraphMath.getBezierPoints(p1.x, p1.y, p2.x, p2.y);
+                        let intersected = false;
+                        for(let i=0; i<bezierPoints.length-1; i++) {
+                            if (GraphMath.lineIntersectsLine(worldStart, worldEnd, bezierPoints[i], bezierPoints[i+1])) {
+                                intersected = true;
+                                break;
+                            }
+                        }
+                        return !intersected; // Keep if not intersected
+                    }));
+
+                    setCutLine(null);
+                };
+
+                activeListenersRef.current = { move: onMove, up: onUp };
+                window.addEventListener('mousemove', onMove);
+                window.addEventListener('mouseup', onUp);
+                return;
+            }
+
+            // Normal RMB = Context Menu
             setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
             setPendingConnection(null);
             return;
         }
+        
+        // Clear Context Menu on Left Click
         setContextMenu(null);
 
-        const rect = containerRef.current?.getBoundingClientRect();
-        if (!rect) return;
-
+        // --- Middle Click / Alt+Click = Pan ---
         if (e.button === 1 || (e.button === 0 && e.altKey)) {
             e.preventDefault();
             cleanupListeners();
@@ -209,6 +384,7 @@ export const NodeGraph: React.FC = () => {
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
         } else if (e.button === 0) {
+            // --- Left Click = Selection Box ---
             if (!e.shiftKey && !e.ctrlKey) {
                 setSelectedNodeIds(new Set());
             }
@@ -234,14 +410,23 @@ export const NodeGraph: React.FC = () => {
                      
                      const newSelected = new Set(e.shiftKey || e.ctrlKey ? selectedNodeIds : []);
                      
+                     // Convert selection box to world space for checking
+                     const t = transformRef.current;
+                     const wMinX = (minX - t.x) / t.k;
+                     const wMaxX = (maxX - t.x) / t.k;
+                     const wMinY = (minY - t.y) / t.k;
+                     const wMaxY = (maxY - t.y) / t.k;
+
                      nodeRefs.current.forEach((el, id) => {
-                         const nodeRect = el.getBoundingClientRect();
-                         const nx = nodeRect.left - rect.left;
-                         const ny = nodeRect.top - rect.top;
-                         const nw = nodeRect.width;
-                         const nh = nodeRect.height;
+                         const node = nodeMap.get(id);
+                         if (!node) return;
+                         // Check intersection of Node Rect with Selection Rect in World Space
+                         const nx = node.position.x;
+                         const ny = node.position.y;
+                         const nw = el.offsetWidth;
+                         const nh = el.offsetHeight;
                          
-                         if (minX < nx + nw && maxX > nx && minY < ny + nh && maxY > ny) {
+                         if (wMinX < nx + nw && wMaxX > nx && wMinY < ny + nh && wMaxY > ny) {
                              newSelected.add(id);
                          }
                      });
@@ -259,7 +444,7 @@ export const NodeGraph: React.FC = () => {
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
         }
-    }, [cleanupListeners, updateViewportStyle, selectedNodeIds]);
+    }, [cleanupListeners, updateViewportStyle, selectedNodeIds, nodeMap]);
 
     const handleNodeDragStart = useCallback((e: React.MouseEvent, node: GraphNode) => {
         e.stopPropagation();
@@ -451,6 +636,8 @@ export const NodeGraph: React.FC = () => {
     const addNode = (type: string) => {
         if(!contextMenu || !containerRef.current) return;
         const rect = containerRef.current.getBoundingClientRect();
+        
+        // Exact position from contextMenu state (which captured e.clientX/Y)
         const pos = GraphMath.screenToWorld(contextMenu.x, contextMenu.y, rect, transformRef.current);
         const newNodeId = crypto.randomUUID();
         
@@ -567,6 +754,17 @@ export const NodeGraph: React.FC = () => {
              <div className="absolute inset-0 pointer-events-none opacity-20"
                 style={{ backgroundImage: 'linear-gradient(#333 1px, transparent 1px), linear-gradient(90deg, #333 1px, transparent 1px)' }}
             />
+            
+            {/* Grid Toggle Icon */}
+            <div className="absolute top-2 left-2 z-50">
+                <button 
+                    onClick={() => setShowGrid(!showGrid)} 
+                    className={`p-1.5 rounded hover:bg-white/10 transition-colors ${showGrid ? 'text-white' : 'text-text-secondary opacity-50'}`}
+                    title="Toggle Grid"
+                >
+                    <Icon name="Grid" size={16} />
+                </button>
+            </div>
 
             <div ref={viewRef} className="w-full h-full origin-top-left will-change-transform" style={{ transform: `translate3d(0px, 0px, 0) scale(1)` }}>
                 <svg className="absolute top-0 left-0 overflow-visible pointer-events-none w-1 h-1">
@@ -592,6 +790,7 @@ export const NodeGraph: React.FC = () => {
                     const def = NodeRegistry[node.type];
                     if(!def) return null;
                     const isReroute = node.type === 'Reroute';
+                    const isShaderOutput = node.type === 'ShaderOutput';
                     const isSelected = selectedNodeIds.has(node.id);
                     
                     const borderStyle = isSelected ? 'ring-1 ring-accent border-accent' : 'border-white/10';
@@ -604,7 +803,7 @@ export const NodeGraph: React.FC = () => {
                                 ${isReroute ? '' : `rounded-md shadow-xl border bg-[#1e1e1e] ${borderStyle}`}`}
                             style={{ 
                                 transform: `translate(${node.position.x}px, ${node.position.y}px)`,
-                                width: isReroute ? LayoutConfig.REROUTE_SIZE : LayoutConfig.NODE_WIDTH, 
+                                width: isReroute ? LayoutConfig.REROUTE_SIZE : (isShaderOutput ? LayoutConfig.PREVIEW_NODE_WIDTH : LayoutConfig.NODE_WIDTH), 
                                 height: isReroute ? LayoutConfig.REROUTE_SIZE : 'auto'
                             }}
                         >
@@ -643,17 +842,27 @@ export const NodeGraph: React.FC = () => {
                                             </div>
                                         ))}
                                         
-                                        {def.type === 'Float' && (
-                                            <div style={{ height: LayoutConfig.ITEM_HEIGHT, marginBottom: LayoutConfig.GAP }} className="relative flex items-center">
-                                                <input 
-                                                    type="text" 
-                                                    aria-label="Float value" 
-                                                    title="Float value"
-                                                    className="w-full h-full bg-black/40 text-xs text-white px-1 rounded border border-white/10"
-                                                    value={node.data?.value || "0"}
-                                                    onChange={(e) => setNodes(p => p.map(n => n.id===node.id ? {...n, data: {value: e.target.value}} : n))}
-                                                    onMouseDown={e => e.stopPropagation()}
-                                                />
+                                        {(def.type === 'Float' || def.type === 'Vec3') && node.data && (
+                                            <div style={{ marginBottom: LayoutConfig.GAP }} className="relative flex flex-col gap-1 px-1">
+                                                {Object.entries(node.data).map(([key, val]) => (
+                                                    <div key={key} className="flex items-center gap-1">
+                                                        <span className="text-[9px] text-gray-500 uppercase w-3">{key}</span>
+                                                        <input 
+                                                            type="text" 
+                                                            aria-label={`${key} value`} 
+                                                            className="w-full bg-black/40 text-[10px] text-white px-1 rounded border border-white/10 h-5"
+                                                            value={val as string}
+                                                            onChange={(e) => setNodes(p => p.map(n => n.id===node.id ? {...n, data: {...n.data, [key]: e.target.value}} : n))}
+                                                            onMouseDown={e => e.stopPropagation()}
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                        
+                                        {isShaderOutput && (
+                                            <div style={{ height: 200, marginBottom: LayoutConfig.GAP }} className="relative border border-white/5 rounded overflow-hidden mt-2">
+                                                <ShaderPreview minimal />
                                             </div>
                                         )}
 
@@ -675,6 +884,7 @@ export const NodeGraph: React.FC = () => {
                 })}
             </div>
             
+            {/* Selection Box */}
             {selectionBox && (
                 <div 
                     className="absolute border border-accent bg-accent/20 pointer-events-none z-50"
@@ -686,10 +896,23 @@ export const NodeGraph: React.FC = () => {
                     }}
                 />
             )}
+            
+            {/* Cut Tool Line */}
+            {cutLine && (
+                <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-50">
+                    <svg className="w-full h-full">
+                        <line 
+                            x1={cutLine.start.x} y1={cutLine.start.y} 
+                            x2={cutLine.end.x} y2={cutLine.end.y} 
+                            stroke="red" strokeWidth="2" strokeDasharray="5,5" 
+                        />
+                    </svg>
+                </div>
+            )}
 
             {contextMenu && contextMenu.visible && (
                 <div 
-                    className="fixed w-48 bg-[#252525] border border-black shadow-2xl rounded text-xs flex flex-col z-50 overflow-hidden"
+                    className="fixed w-48 bg-[#252525] border border-black shadow-2xl rounded text-xs flex flex-col z-[100] overflow-hidden"
                     style={{ left: contextMenu.x, top: contextMenu.y }}
                     onMouseDown={e => e.stopPropagation()}
                 >
@@ -707,7 +930,7 @@ export const NodeGraph: React.FC = () => {
                         value={searchFilter} 
                         onChange={e => setSearchFilter(e.target.value)} 
                     />
-                    <div className="max-h-64 overflow-y-auto">
+                    <div className="max-h-64 overflow-y-auto custom-scrollbar">
                          {Object.values(NodeRegistry)
                             .filter(d => d.title.toLowerCase().includes(searchFilter.toLowerCase()))
                             .map(def => (

@@ -1,8 +1,7 @@
 
-
 // services/NodeRegistry.ts
 
-import { Ti3DEngine } from './engine';
+import type { Ti3DEngine } from './engine';
 import { Mat4Utils } from './math';
 
 export type DataType = 'float' | 'vec2' | 'vec3' | 'vec4' | 'mat4' | 'stream' | 'texture' | 'any';
@@ -53,9 +52,33 @@ export const NodeRegistry: Record<string, NodeDef> = {
       category: 'Shader',
       title: 'UV Coord',
       inputs: [],
-      outputs: [{ id: 'uv', name: 'UV', type: 'vec2' }],
-      execute: () => ({ x:0, y:0 }), 
-      glsl: (inVars, id) => `vec2 ${id} = v_uv;`
+      outputs: [{ id: 'uv', name: 'UV', type: 'vec3' }], // vec3 for compatibility with Split (which assumes .z access safe)
+      execute: () => ({ x:0, y:0, z:0 }), 
+      glsl: (inVars, id) => `vec3 ${id} = vec3(v_uv, 0.0);`
+  },
+
+  'Split': {
+      type: 'Split',
+      category: 'Shader Math',
+      title: 'Split',
+      inputs: [{ id: 'in', name: 'Vec2/3/4', type: 'any' }],
+      outputs: [
+          { id: 'x', name: 'X', type: 'float' },
+          { id: 'y', name: 'Y', type: 'float' },
+          { id: 'z', name: 'Z', type: 'float' },
+          { id: 'w', name: 'W', type: 'float' }
+      ],
+      execute: (i) => ({ x: i[0]?.x||0, y: i[0]?.y||0, z: i[0]?.z||0 }),
+      glsl: (inVars, id) => {
+          // Simplified for vec2/vec3 support. We rely on ShaderCompiler to append _x, _y etc. when connecting.
+          const v = inVars[0] || 'vec3(0.0)';
+          return `
+          float ${id}_x = ${v}.x;
+          float ${id}_y = ${v}.y;
+          float ${id}_z = ${v}.z; 
+          float ${id}_w = 0.0; // dummy
+          `;
+      }
   },
 
   'Fract': {
@@ -101,7 +124,12 @@ export const NodeRegistry: Record<string, NodeDef> = {
     inputs: [],
     outputs: [{ id: 'out', name: 'Value', type: 'float' }],
     execute: (_, data) => parseFloat(data?.value || '0'),
-    glsl: (inVars, id, data) => `float ${id} = ${data?.value || '0.0'};`
+    glsl: (inVars, id, data) => {
+        const val = parseFloat(data?.value || '0.0');
+        // Force decimal point for floats
+        const str = val.toString();
+        return `float ${id} = ${str.includes('.') ? str : str + '.0'};`;
+    }
   },
 
   'Vec3': {
@@ -128,6 +156,16 @@ export const NodeRegistry: Record<string, NodeDef> = {
     glsl: (inVars, id) => `float ${id} = sin(${inVars[0] || '0.0'});`
   },
 
+  'Cosine': {
+    type: 'Cosine',
+    category: 'Math',
+    title: 'Cosine',
+    inputs: [{ id: 'in', name: 'In', type: 'float' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+    execute: (inputs) => Math.cos(inputs[0] || 0),
+    glsl: (inVars, id) => `float ${id} = cos(${inVars[0] || '0.0'});`
+  },
+
   'Add': {
     type: 'Add',
     category: 'Math',
@@ -139,6 +177,19 @@ export const NodeRegistry: Record<string, NodeDef> = {
     outputs: [{ id: 'out', name: 'Out', type: 'float' }],
     execute: (inputs) => (inputs[0] || 0) + (inputs[1] || 0),
     glsl: (inVars, id) => `float ${id} = ${inVars[0] || '0.0'} + ${inVars[1] || '0.0'};`
+  },
+
+  'Multiply': {
+    type: 'Multiply',
+    category: 'Math',
+    title: 'Multiply',
+    inputs: [
+        { id: 'a', name: 'A', type: 'float' },
+        { id: 'b', name: 'B', type: 'float' }
+    ],
+    outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+    execute: (inputs) => (inputs[0] || 0) * (inputs[1] || 0),
+    glsl: (inVars, id) => `float ${id} = ${inVars[0] || '0.0'} * ${inVars[1] || '1.0'};`
   },
   
   'WaveViewer': {
