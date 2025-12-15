@@ -1,3 +1,4 @@
+
 import React, { useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react';
 import { Entity, ToolType, PerformanceMetrics } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
@@ -220,7 +221,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       if (dragState.mode === 'ORBIT') {
         setCamera(prev => ({
           ...prev,
-          theta: dragState.startCamera.theta - dx * 0.01,
+          // Fixed: Changed from subtraction to addition to match standard DCC camera controls
+          // (Dragging Right -> Camera orbits Left -> Object appears to rotate Right)
+          theta: dragState.startCamera.theta + dx * 0.01,
           phi: Math.max(0.1, Math.min(Math.PI - 0.1, dragState.startCamera.phi - dy * 0.01))
         }));
       } else if (dragState.mode === 'ZOOM') {

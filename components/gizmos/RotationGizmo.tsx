@@ -172,6 +172,9 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         Mat4Utils.copy(accum, baseMat);
 
         // Reverse Order for Hierarchy (Outer -> Inner)
+        // For intrinsic euler, the 'first' applied rotation in the list (e.g. X in XYZ) 
+        // is the most local, deepest child in the hierarchy.
+        // We need to render the rings corresponding to these axes.
         const reversedAxes = [...axes].reverse();
 
         reversedAxes.forEach((axisChar) => {
@@ -253,6 +256,8 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             if (dragState.axis !== 'VIEW') {
                 const viewDir = GizmoMath.normalize(GizmoMath.sub(basis.cameraPosition, origin));
                 const dot = GizmoMath.dot(viewDir, dragState.axisVector);
+                // Standard UI feel: If axis points away, standard rotation looks inverted on screen.
+                // Flip it so mouse motion direction aligns with visual ring rotation direction.
                 if (dot < 0) totalDelta = -totalDelta;
             }
 
