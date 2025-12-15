@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Entity, ComponentType } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
@@ -104,49 +105,45 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
   const [searchTerm, setSearchTerm] = useState('');
 
   return (
-    <div className="h-full bg-panel flex flex-col font-sans border-r border-black/20">
-      {/* Header */}
-      <div className="p-2 border-b border-black/20 bg-panel-header flex flex-col gap-2">
-        <div className="flex items-center justify-between text-xs font-bold text-text-secondary px-1">
-            <span>HIERARCHY</span>
-            <div className="flex gap-1">
-                <button 
-                    className="p-1 hover:text-white"
-                    title="Create Entity"
-                    aria-label="Create Entity"
-                >
-                    <Icon name="Plus" size={12} />
-                </button>
-                <button 
-                    className="p-1 hover:text-white"
-                    title="Options"
-                    aria-label="Options"
-                >
-                    <Icon name="MoreHorizontal" size={12} />
-                </button>
-            </div>
-        </div>
-        <div className="relative">
+    <div className="h-full flex flex-col font-sans">
+      {/* Compact Toolbar Header */}
+      <div className="p-2 border-b border-white/5 bg-black/20 flex items-center gap-2 shrink-0">
+        <div className="relative flex-1">
             <Icon name="Search" size={12} className="absolute left-2 top-1.5 text-text-secondary" />
             <input 
                 type="text" 
                 placeholder="Search..." 
                 aria-label="Search Hierarchy"
                 title="Search Hierarchy"
-                className="w-full bg-input-bg text-xs py-1 pl-7 pr-2 rounded outline-none border border-transparent focus:border-accent text-white" 
+                className="w-full bg-black/40 text-xs py-1 pl-7 pr-2 rounded outline-none border border-transparent focus:border-accent text-white placeholder:text-white/20 transition-all" 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
             />
         </div>
+        <div className="flex gap-0.5">
+            <button 
+                className="p-1.5 hover:bg-white/10 rounded text-text-secondary hover:text-white transition-colors"
+                title="Create Entity"
+                aria-label="Create Entity"
+            >
+                <Icon name="Plus" size={14} />
+            </button>
+            <button 
+                className="p-1.5 hover:bg-white/10 rounded text-text-secondary hover:text-white transition-colors"
+                title="Options"
+                aria-label="Options"
+            >
+                <Icon name="MoreHorizontal" size={14} />
+            </button>
+        </div>
       </div>
 
       {/* Tree List */}
-      <div className="flex-1 overflow-y-auto py-2">
+      <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
         <div 
             className="flex items-center gap-2 text-xs text-text-primary px-3 py-1 font-semibold opacity-70 cursor-default"
             onClick={() => onSelect([])}
         >
-            {/* Fix: 'Scene' is not a valid Lucide icon name. Used 'Cuboid' instead. */}
             <Icon name="Cuboid" size={12} />
             <span>MainScene</span>
         </div>
@@ -167,8 +164,9 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
       </div>
       
       {/* Footer Info */}
-      <div className="p-1 text-[10px] text-text-secondary bg-panel-header border-t border-black/20 text-center">
-        {entities.length} Objects
+      <div className="px-2 py-1 text-[9px] text-text-secondary bg-black/20 border-t border-white/5 flex justify-between items-center shrink-0">
+        <span>{entities.length} Objects</span>
+        <span className="opacity-50">Read-only</span>
       </div>
     </div>
   );
