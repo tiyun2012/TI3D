@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react';
 import { GraphNode, GraphConnection } from '../types';
 import { engineInstance } from '../services/engine';
@@ -85,6 +86,9 @@ export const NodeGraph: React.FC = () => {
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, visible: boolean } | null>(null);
     const [searchFilter, setSearchFilter] = useState('');
     
+    // Feature: Auto-connect when dropping on bg
+    const [pendingConnection, setPendingConnection] = useState<{ nodeId: string, pinId: string, type: 'input'|'output' } | null>(null);
+    
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const [selectionBox, setSelectionBox] = useState<{ startX: number, startY: number, currentX: number, currentY: number } | null>(null);
 
@@ -93,6 +97,7 @@ export const NodeGraph: React.FC = () => {
     const containerRef = useRef<HTMLDivElement>(null);
     const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const pathRefs = useRef<Map<string, SVGPathElement>>(new Map());
+    const hoverPortRef = useRef<boolean>(false);
     
     const activeListenersRef = useRef<{ move?: (ev: MouseEvent) => void; up?: (ev: MouseEvent) => void }>({});
 
@@ -167,6 +172,7 @@ export const NodeGraph: React.FC = () => {
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
         if (e.button === 2) { 
             setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
+            setPendingConnection(null);
             return;
         }
         setContextMenu(null);
@@ -389,16 +395,24 @@ export const NodeGraph: React.FC = () => {
         const pos = GraphMath.screenToWorld(e.clientX, e.clientY, rect, transformRef.current);
         const dataType = getPortType(nodeId, pinId, type);
         
-        setConnecting({ nodeId, pinId, type, x: pos.x, y: pos.y, dataType });
+        // Start Connecting State
+        const connectionData = { nodeId, pinId, type, x: pos.x, y: pos.y, dataType };
+        setConnecting(connectionData);
 
         const onMove = (ev: MouseEvent) => {
             const worldPos = GraphMath.screenToWorld(ev.clientX, ev.clientY, rect, transformRef.current);
             setConnecting(prev => prev ? { ...prev, x: worldPos.x, y: worldPos.y } : null);
         };
         
-        const onUp = () => {
+        const onUp = (ev: MouseEvent) => {
             cleanupListeners();
             setConnecting(null);
+            
+            // Workflow: Drop on background triggers Context Menu
+            if (!hoverPortRef.current) {
+                setContextMenu({ x: ev.clientX, y: ev.clientY, visible: true });
+                setPendingConnection({ nodeId, pinId, type });
+            }
         };
 
         activeListenersRef.current = { move: onMove, up: onUp };
@@ -408,6 +422,8 @@ export const NodeGraph: React.FC = () => {
 
     const handlePinUp = useCallback((e: React.MouseEvent, nodeId: string, pinId: string, type: 'input'|'output') => {
         e.stopPropagation();
+        // Flag that we hit a port so global onUp doesn't trigger context menu
+        hoverPortRef.current = true;
         
         setConnecting(prev => {
             if (prev && prev.nodeId !== nodeId && prev.type !== type) {
@@ -437,10 +453,46 @@ export const NodeGraph: React.FC = () => {
         const rect = containerRef.current.getBoundingClientRect();
         const pos = GraphMath.screenToWorld(contextMenu.x, contextMenu.y, rect, transformRef.current);
         const newNodeId = crypto.randomUUID();
-        setNodes(p => [...p, { id: newNodeId, type, position: pos, data: {} }]);
+        
+        const newNode: GraphNode = { id: newNodeId, type, position: pos, data: {} };
+        
+        setNodes(p => [...p, newNode]);
         setSelectedNodeIds(new Set([newNodeId]));
         setContextMenu(null);
         setSearchFilter('');
+
+        // Auto-connect if pending link
+        if (pendingConnection) {
+            const def = NodeRegistry[type];
+            if (def) {
+                // Determine opposite port type needed
+                const targetType = pendingConnection.type === 'input' ? 'output' : 'input';
+                const ports = targetType === 'input' ? def.inputs : def.outputs;
+                
+                // Find first compatible port
+                const compatiblePort = ports.find(p => {
+                    const typeA = getPortType(pendingConnection.nodeId, pendingConnection.pinId, pendingConnection.type);
+                    return isCompatible(typeA, p.type);
+                });
+
+                if (compatiblePort) {
+                    const source = pendingConnection.type === 'output' 
+                        ? { nodeId: pendingConnection.nodeId, pinId: pendingConnection.pinId } 
+                        : { nodeId: newNodeId, pinId: compatiblePort.id };
+                        
+                    const target = pendingConnection.type === 'output'
+                        ? { nodeId: newNodeId, pinId: compatiblePort.id }
+                        : { nodeId: pendingConnection.nodeId, pinId: pendingConnection.pinId };
+
+                    setConnections(curr => [...curr, { 
+                        id: crypto.randomUUID(), 
+                        fromNode: source.nodeId, fromPin: source.pinId, 
+                        toNode: target.nodeId, toPin: target.pinId 
+                    }]);
+                }
+            }
+            setPendingConnection(null);
+        }
     };
 
     const renderPort = (nodeId: string, pinId: string, type: 'input'|'output', color?: string) => {
@@ -476,6 +528,8 @@ export const NodeGraph: React.FC = () => {
                 }}
                 onMouseDown={(e) => handlePinDown(e, nodeId, pinId, type)}
                 onMouseUp={(e) => handlePinUp(e, nodeId, pinId, type)}
+                onMouseEnter={() => { hoverPortRef.current = true; }}
+                onMouseLeave={() => { hoverPortRef.current = false; }}
             />
         );
     };
@@ -639,6 +693,11 @@ export const NodeGraph: React.FC = () => {
                     style={{ left: contextMenu.x, top: contextMenu.y }}
                     onMouseDown={e => e.stopPropagation()}
                 >
+                    <div className="bg-[#1a1a1a] p-2 border-b border-black/50">
+                        <span className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">
+                            {pendingConnection ? 'Link New Node' : 'Add Node'}
+                        </span>
+                    </div>
                     <input 
                         autoFocus 
                         placeholder="Search..." 
@@ -649,8 +708,13 @@ export const NodeGraph: React.FC = () => {
                         onChange={e => setSearchFilter(e.target.value)} 
                     />
                     <div className="max-h-64 overflow-y-auto">
-                         {Object.values(NodeRegistry).filter(d => d.title.toLowerCase().includes(searchFilter.toLowerCase())).map(def => (
-                             <button key={def.type} className="w-full text-left px-3 py-2 text-gray-300 hover:bg-blue-600 hover:text-white" onClick={() => addNode(def.type)}>{def.title}</button>
+                         {Object.values(NodeRegistry)
+                            .filter(d => d.title.toLowerCase().includes(searchFilter.toLowerCase()))
+                            .map(def => (
+                             <button key={def.type} className="w-full text-left px-3 py-2 text-gray-300 hover:bg-accent hover:text-white flex items-center justify-between group" onClick={() => addNode(def.type)}>
+                                 <span>{def.title}</span>
+                                 <span className="text-[9px] text-gray-600 group-hover:text-white/70">{def.category}</span>
+                             </button>
                          ))}
                     </div>
                 </div>
