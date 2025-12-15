@@ -1,9 +1,11 @@
 
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect, useRef } from 'react';
 import { Icon } from './Icon';
 import { assetManager } from '../services/AssetManager';
 import { EditorContext } from '../contexts/EditorContext';
 import { WindowManagerContext } from './WindowManager';
+import { MATERIAL_TEMPLATES } from '../services/MaterialTemplates';
+import { engineInstance } from '../services/engine';
 
 export const ProjectPanel: React.FC = () => {
     const [tab, setTab] = useState<'PROJECT' | 'CONSOLE'>('PROJECT');
@@ -12,6 +14,11 @@ export const ProjectPanel: React.FC = () => {
     const [scale, setScale] = useState(40);
     const { setEditingMaterialId } = useContext(EditorContext)!;
     const wm = useContext(WindowManagerContext);
+    
+    // UI State
+    const [showCreateMenu, setShowCreateMenu] = useState(false);
+    const [contextMenu, setContextMenu] = useState<{ x: number, y: number, assetId: string, visible: boolean } | null>(null);
+    const [refresh, setRefresh] = useState(0);
 
     const allAssets = assetManager.getAllAssets();
     const filteredAssets = allAssets.filter(a => {
@@ -19,6 +26,13 @@ export const ProjectPanel: React.FC = () => {
         if (!a.name.toLowerCase().includes(search.toLowerCase())) return false;
         return true;
     });
+
+    // Close menus on click away
+    useEffect(() => {
+        const close = () => { setShowCreateMenu(false); setContextMenu(null); };
+        window.addEventListener('click', close);
+        return () => window.removeEventListener('click', close);
+    }, []);
 
     const handleDragStart = (e: React.DragEvent, assetId: string) => {
         e.dataTransfer.setData('application/ti3d-asset', assetId);
@@ -33,15 +47,36 @@ export const ProjectPanel: React.FC = () => {
         }
     };
 
-    const createMaterial = () => {
-        assetManager.createMaterial(`New Material ${Math.floor(Math.random() * 1000)}`);
-        // Force refresh via local state toggle or specialized hook in future
-        // For now, re-render happens naturally via parent or we can use a dummy state
-        setSearch(s => s); // dummy refresh
+    const handleContextMenu = (e: React.MouseEvent, assetId: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setContextMenu({ x: e.clientX, y: e.clientY, assetId, visible: true });
+    };
+
+    // Actions
+    const createMaterial = (templateIndex?: number) => {
+        const tpl = templateIndex !== undefined ? MATERIAL_TEMPLATES[templateIndex] : undefined;
+        assetManager.createMaterial(`New Material ${Math.floor(Math.random() * 1000)}`, tpl);
+        setRefresh(r => r + 1);
+    };
+
+    const duplicateAsset = (id: string) => {
+        const asset = assetManager.getAsset(id);
+        if (asset && asset.type === 'MATERIAL') {
+            assetManager.duplicateMaterial(id);
+            setRefresh(r => r + 1);
+        }
+    };
+
+    const applyMaterial = (assetId: string) => {
+        const asset = assetManager.getAsset(assetId);
+        if (asset && asset.type === 'MATERIAL') {
+            engineInstance.applyMaterialToSelected(assetId);
+        }
     };
 
     return (
-        <div className="h-full bg-panel flex flex-col font-sans border-t border-black/20">
+        <div className="h-full bg-panel flex flex-col font-sans border-t border-black/20" onContextMenu={(e) => e.preventDefault()}>
             {/* Toolbar / Tabs */}
             <div className="flex items-center justify-between bg-panel-header px-2 py-1 border-b border-black/20">
                 <div className="flex gap-2">
@@ -61,13 +96,33 @@ export const ProjectPanel: React.FC = () => {
                 
                 {tab === 'PROJECT' && (
                     <div className="flex items-center gap-2">
-                        <button 
-                            onClick={createMaterial}
-                            className="p-1 hover:bg-white/10 rounded text-accent"
-                            title="Create Material"
-                        >
-                            <Icon name="PlusSquare" size={16} />
-                        </button>
+                        <div className="relative">
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); setShowCreateMenu(!showCreateMenu); }}
+                                className={`p-1 hover:bg-white/10 rounded flex items-center gap-1 transition-colors ${showCreateMenu ? 'bg-white/10 text-white' : 'text-accent'}`}
+                                title="Create Asset"
+                            >
+                                <Icon name="PlusSquare" size={16} />
+                                <Icon name="ChevronDown" size={10} />
+                            </button>
+                            
+                            {/* Create Menu */}
+                            {showCreateMenu && (
+                                <div className="absolute top-full right-0 mt-1 w-40 bg-[#252525] border border-white/10 shadow-xl rounded z-50 py-1 text-xs">
+                                    <div className="px-3 py-1 text-[9px] text-text-secondary uppercase font-bold tracking-wider opacity-50">Create Material</div>
+                                    {MATERIAL_TEMPLATES.map((tpl, i) => (
+                                        <div 
+                                            key={i} 
+                                            className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer"
+                                            onClick={() => createMaterial(i)}
+                                        >
+                                            {tpl.name}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
                         <input 
                             type="range" min="30" max="80" 
                             value={scale} onChange={(e) => setScale(Number(e.target.value))}
@@ -103,16 +158,17 @@ export const ProjectPanel: React.FC = () => {
             {/* Content Area */}
             <div className="flex-1 overflow-y-auto p-2 bg-[#1a1a1a]">
                 {tab === 'PROJECT' && (
-                    <div className="grid grid-cols-[repeat(auto-fill,minmax(80px,1fr))] gap-2">
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(80px,1fr))] gap-2 pb-20">
                         {filteredAssets.map((asset) => {
                             const isMat = asset.type === 'MATERIAL';
                             return (
                                 <div 
                                     key={asset.id} 
-                                    className="flex flex-col items-center group cursor-pointer p-2 rounded-md hover:bg-white/10 transition-colors border border-transparent hover:border-white/5 active:bg-white/20"
+                                    className="flex flex-col items-center group cursor-pointer p-2 rounded-md hover:bg-white/10 transition-colors border border-transparent hover:border-white/5 active:bg-white/20 relative"
                                     draggable={asset.type === 'MESH'} // Only drag meshes for now
                                     onDragStart={(e) => asset.type === 'MESH' && handleDragStart(e, asset.id)}
                                     onDoubleClick={() => handleDoubleClick(asset.id)}
+                                    onContextMenu={(e) => handleContextMenu(e, asset.id)}
                                 >
                                     <div 
                                         className="flex items-center justify-center bg-black/20 rounded mb-2 shadow-inner"
@@ -146,6 +202,32 @@ export const ProjectPanel: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {/* Context Menu Portal */}
+            {contextMenu && contextMenu.visible && (
+                <div 
+                    className="fixed bg-[#252525] border border-white/10 shadow-2xl rounded py-1 z-[9999] min-w-[160px] text-xs"
+                    style={{ left: contextMenu.x, top: contextMenu.y }}
+                    onClick={(e) => e.stopPropagation()} // Prevent closing immediately
+                >
+                    {assetManager.getAsset(contextMenu.assetId)?.type === 'MATERIAL' && (
+                        <>
+                            <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" 
+                                onClick={() => { applyMaterial(contextMenu.assetId); setContextMenu(null); }}>
+                                <Icon name="Stamp" size={12} /> Apply to Selected
+                            </div>
+                            <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" 
+                                onClick={() => { duplicateAsset(contextMenu.assetId); setContextMenu(null); }}>
+                                <Icon name="Copy" size={12} /> Duplicate
+                            </div>
+                            <div className="border-t border-white/10 my-1"></div>
+                        </>
+                    )}
+                    <div className="px-3 py-1.5 hover:bg-red-500/20 hover:text-red-400 cursor-pointer flex items-center gap-2">
+                        <Icon name="Trash2" size={12} /> Delete
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

@@ -1,3 +1,4 @@
+
 // services/engine.ts
 
 import { Entity, ComponentType, GraphNode, GraphConnection, PerformanceMetrics } from '../types';
@@ -97,6 +98,28 @@ export class Ti3DEngine {
   
   toggleGrid() {
       this.renderer.showGrid = !this.renderer.showGrid;
+      this.notifyUI();
+  }
+
+  // --- Material Management ---
+  
+  applyMaterialToSelected(materialAssetId: string) {
+      if (this.selectedIds.size === 0) return;
+      
+      const matId = assetManager.getMaterialID(materialAssetId);
+      if (!matId) return;
+
+      this.pushUndoState();
+      
+      this.selectedIds.forEach(entityId => {
+          const idx = this.ecs.idToIndex.get(entityId);
+          if (idx !== undefined && this.ecs.store.isActive[idx]) {
+              // Set Material Index in ECS
+              this.ecs.store.materialIndex[idx] = matId;
+          }
+      });
+      
+      console.log(`[Engine] Applied Material ID ${matId} to ${this.selectedIds.size} entities.`);
       this.notifyUI();
   }
 

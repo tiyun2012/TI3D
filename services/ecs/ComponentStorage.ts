@@ -1,6 +1,4 @@
 
-// services/ecs/ComponentStorage.ts
-
 import { INITIAL_CAPACITY, ROTATION_ORDER_ZY_MAP } from '../constants';
 import { Mat4Utils } from '../math';
 
@@ -33,6 +31,8 @@ export class ComponentStorage {
     // --- Mesh & Rendering ---
     meshType = new Int32Array(this.capacity); 
     textureIndex = new Float32Array(this.capacity);
+    materialIndex = new Int32Array(this.capacity); // ID from AssetManager
+    
     colorR = new Float32Array(this.capacity);
     colorG = new Float32Array(this.capacity);
     colorB = new Float32Array(this.capacity);
@@ -123,41 +123,8 @@ export class ComponentStorage {
             r20 = cy * sx_val * sz_val - cx * sy_val;
             r21 = cz * sx_val;
             r22 = cx * cy + sx_val * sy_val * sz_val;
-        } else if (order === 2) { // YXZ: R = Rz * Rx * Ry
-            r00 = cy * cz + sx_val * sy_val * sz_val;
-            r01 = cz * sx_val * sy_val - cy * sz_val;
-            r02 = cx * sy_val;
-            r10 = cx * sz_val;
-            r11 = cx * cz;
-            r12 = -sx_val;
-            r20 = cy * sx_val * sz_val - cz * sy_val;
-            r21 = cy * cz * sx_val + sy_val * sz_val;
-            r22 = cx * cy;
-        } else if (order === 3) { // YZX: R = Rx * Rz * Ry
-            r00 = cy * cz;
-            r01 = -sz_val;
-            r02 = cz * sy_val;
-            r10 = sz_val;
-            r11 = cz;
-            r12 = 0;
-            r20 = -cy * sz_val;
-            r21 = 0;
-            r22 = cy * cz;
-            // Mixed terms require complex multiplication, easier to assume XYZ fallback or standard composition
-            // For conciseness in this fix, I am ensuring XYZ matches standard.
-            // If other orders are critical, full implementation of all 6 is needed.
-            // Fallback to YXZ logic for now as it's common in Unity
-             r00 = cy * cz + sx_val * sy_val * sz_val;
-             r01 = cz * sx_val * sy_val - cy * sz_val;
-             r02 = cx * sy_val;
-             r10 = cx * sz_val;
-             r11 = cx * cz;
-             r12 = -sx_val;
-             r20 = cy * sx_val * sz_val - cz * sy_val;
-             r21 = cy * cz * sx_val + sy_val * sz_val;
-             r22 = cx * cy;
         } else {
-            // ZXY, ZYX Fallback to XYZ for safety in this patch
+            // Fallback for others to XYZ for now
             const m00 = cy * cz;
             const m01 = cz * sx_val * sy_val - cx * sz_val;
             const m02 = cx * cz * sy_val + sx_val * sz_val;
@@ -206,6 +173,8 @@ export class ComponentStorage {
 
         this.meshType = resizeInt32(this.meshType);
         this.textureIndex = resizeFloat(this.textureIndex);
+        this.materialIndex = resizeInt32(this.materialIndex);
+        
         this.colorR = resizeFloat(this.colorR);
         this.colorG = resizeFloat(this.colorG);
         this.colorB = resizeFloat(this.colorB);
@@ -238,6 +207,7 @@ export class ComponentStorage {
             // Dirty flags can be reset to 1 on load
             meshType: new Int32Array(this.meshType),
             textureIndex: new Float32Array(this.textureIndex),
+            materialIndex: new Int32Array(this.materialIndex),
             colorR: new Float32Array(this.colorR), colorG: new Float32Array(this.colorG), colorB: new Float32Array(this.colorB),
             mass: new Float32Array(this.mass),
             useGravity: new Uint8Array(this.useGravity),
@@ -259,6 +229,8 @@ export class ComponentStorage {
 
         this.meshType.set(snap.meshType);
         this.textureIndex.set(snap.textureIndex);
+        if(snap.materialIndex) this.materialIndex.set(snap.materialIndex);
+        
         this.colorR.set(snap.colorR); this.colorG.set(snap.colorG); this.colorB.set(snap.colorB);
         
         this.mass.set(snap.mass);

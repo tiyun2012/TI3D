@@ -115,40 +115,13 @@ const GraphMath = {
     }
 };
 
-const INITIAL_NODES: GraphNode[] = [
-    { id: '1', type: 'UV', position: { x: 50, y: 150 } },
-    { id: '2', type: 'Time', position: { x: 50, y: 50 } },
-    { id: '3', type: 'Split', position: { x: 250, y: 150 } },
-    { id: '4', type: 'Multiply', position: { x: 250, y: 300 } }, // Scale
-    { id: 'scale_val', type: 'Float', position: { x: 50, y: 350 }, data: { value: "3.0" } },
-    { id: '5', type: 'Add', position: { x: 450, y: 100 } },
-    { id: '6', type: 'Sine', position: { x: 650, y: 100 } },
-    { id: '7', type: 'Mix', position: { x: 850, y: 200 } },
-    { id: 'col1', type: 'Vec3', position: { x: 600, y: 250 }, data: { x: 0.3, y: 0.0, z: 0.5 } }, // Deep Purple
-    { id: 'col2', type: 'Vec3', position: { x: 600, y: 400 }, data: { x: 0.0, y: 0.8, z: 1.0 } }, // Cyan
-    { id: 'out', type: 'ShaderOutput', position: { x: 1100, y: 250 } }
-];
-
-const INITIAL_CONNECTIONS: GraphConnection[] = [
-    { id: 'c1', fromNode: '1', fromPin: 'uv', toNode: '3', toPin: 'in' },
-    { id: 'c2', fromNode: '3', fromPin: 'x', toNode: '4', toPin: 'a' },
-    { id: 'c3', fromNode: 'scale_val', fromPin: 'out', toNode: '4', toPin: 'b' },
-    { id: 'c4', fromNode: '4', fromPin: 'out', toNode: '5', toPin: 'b' },
-    { id: 'c5', fromNode: '2', fromPin: 'out', toNode: '5', toPin: 'a' },
-    { id: 'c6', fromNode: '5', fromPin: 'out', toNode: '6', toPin: 'in' },
-    { id: 'c7', fromNode: '6', fromPin: 'out', toNode: '7', toPin: 't' },
-    { id: 'c8', fromNode: 'col1', fromPin: 'out', toNode: '7', toPin: 'a' },
-    { id: 'c9', fromNode: 'col2', fromPin: 'out', toNode: '7', toPin: 'b' },
-    { id: 'c10', fromNode: '7', fromPin: 'out', toNode: 'out', toPin: 'rgb' },
-];
-
 interface NodeGraphProps {
     materialId?: string | null;
 }
 
 export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
-    const [nodes, setNodes] = useState<GraphNode[]>(INITIAL_NODES);
-    const [connections, setConnections] = useState<GraphConnection[]>(INITIAL_CONNECTIONS);
+    const [nodes, setNodes] = useState<GraphNode[]>([]);
+    const [connections, setConnections] = useState<GraphConnection[]>([]);
     const [connecting, setConnecting] = useState<{ nodeId: string, pinId: string, type: 'input'|'output', x: number, y: number, dataType: string } | null>(null);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, visible: boolean } | null>(null);
     const [searchFilter, setSearchFilter] = useState('');
@@ -183,9 +156,9 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
                 engineInstance.compileGraph(asset.data.nodes, asset.data.connections);
             }
         } else {
-            // Default demo state if no material selected
-            // setNodes(INITIAL_NODES);
-            // setConnections(INITIAL_CONNECTIONS);
+            // Clear graph when no material is selected
+            setNodes([]);
+            setConnections([]);
         }
     }, [materialId]);
 
@@ -199,11 +172,12 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
 
     // OPTIMIZATION: Debounce graph compilation
     useEffect(() => {
+        if (!materialId) return; // Don't compile empty/invalid state
         const timeoutId = setTimeout(() => {
             engineInstance.compileGraph(nodes, connections);
         }, 150); 
         return () => clearTimeout(timeoutId);
-    }, [nodes, connections]);
+    }, [nodes, connections, materialId]);
 
     // OPTIMIZATION: Fast Node Lookup Map
     const nodeMap = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes]);
@@ -794,6 +768,18 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
         });
     }, [nodeMap, connections]);
 
+    if (!materialId) {
+        return (
+            <div className="w-full h-full flex flex-col items-center justify-center bg-[#151515] text-text-secondary select-none">
+                <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-4">
+                    <Icon name="Workflow" size={32} className="opacity-50" />
+                </div>
+                <div className="text-sm font-medium">No Material Selected</div>
+                <div className="text-xs opacity-50 mt-1">Double click a material in the Project Panel to edit.</div>
+            </div>
+        );
+    }
+
     return (
         <div 
             ref={containerRef}
@@ -816,16 +802,14 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
                     <Icon name="Grid" size={16} />
                 </button>
                 
-                {materialId && (
-                    <button 
-                        onClick={handleSave} 
-                        className="bg-accent/80 hover:bg-accent text-white px-3 py-1 rounded text-xs flex items-center gap-2 shadow-lg"
-                        title="Save Material"
-                    >
-                        <Icon name="Save" size={12} />
-                        <span>Save</span>
-                    </button>
-                )}
+                <button 
+                    onClick={handleSave} 
+                    className="bg-accent/80 hover:bg-accent text-white px-3 py-1 rounded text-xs flex items-center gap-2 shadow-lg"
+                    title="Save Material"
+                >
+                    <Icon name="Save" size={12} />
+                    <span>Save</span>
+                </button>
             </div>
             
             {/* Info Overlay */}

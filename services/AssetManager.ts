@@ -1,5 +1,6 @@
 
 import { StaticMeshAsset, MaterialAsset, GraphNode, GraphConnection } from '../types';
+import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 
 class AssetManagerService {
     assets = new Map<string, StaticMeshAsset | MaterialAsset>();
@@ -8,11 +9,17 @@ class AssetManagerService {
     meshIntToUuid = new Map<number, string>();
     meshUuidToInt = new Map<string, number>();
     
-    private nextMeshIntId = 100; // Start custom meshes from 100 to leave room for primitives
+    // Material Int Mapping
+    matIntToUuid = new Map<number, string>();
+    matUuidToInt = new Map<string, number>();
+
+    private nextMeshIntId = 100; 
+    private nextMatIntId = 1; // 0 is usually default/error
 
     constructor() {
         this.registerDefaultAssets();
-        this.createDefaultMaterial();
+        // Register default material as ID 1 (Standard)
+        this.createMaterial('Standard', MATERIAL_TEMPLATES[1]);
     }
 
     registerAsset(asset: StaticMeshAsset | MaterialAsset): number {
@@ -24,6 +31,12 @@ class AssetManagerService {
             this.meshIntToUuid.set(intId, asset.id);
             this.meshUuidToInt.set(asset.id, intId);
             return intId;
+        } else if (asset.type === 'MATERIAL') {
+            if (this.matUuidToInt.has(asset.id)) return this.matUuidToInt.get(asset.id)!;
+            const intId = this.nextMatIntId++;
+            this.matIntToUuid.set(intId, asset.id);
+            this.matUuidToInt.set(asset.id, intId);
+            return intId;
         }
         return 0;
     }
@@ -32,9 +45,8 @@ class AssetManagerService {
         return this.assets.get(id);
     }
 
-    getMeshID(uuid: string): number {
-        return this.meshUuidToInt.get(uuid) || 0;
-    }
+    getMeshID(uuid: string): number { return this.meshUuidToInt.get(uuid) || 0; }
+    getMaterialID(uuid: string): number { return this.matUuidToInt.get(uuid) || 0; }
 
     getAllAssets() {
         return Array.from(this.assets.values());
@@ -46,22 +58,35 @@ class AssetManagerService {
 
     // --- Material Management ---
 
-    createMaterial(name: string): MaterialAsset {
+    createMaterial(name: string, template?: MaterialTemplate): MaterialAsset {
         const id = crypto.randomUUID();
+        const base = template || MATERIAL_TEMPLATES[0];
+        
+        // Deep copy nodes/connections to avoid reference issues
+        const nodes = JSON.parse(JSON.stringify(base.nodes));
+        const connections = JSON.parse(JSON.stringify(base.connections));
+
         const mat: MaterialAsset = {
             id,
             name,
             type: 'MATERIAL',
             data: {
-                nodes: [
-                    { id: 'out', type: 'ShaderOutput', position: { x: 800, y: 200 } }
-                ],
-                connections: [],
+                nodes,
+                connections,
                 glsl: ''
             }
         };
         this.registerAsset(mat);
         return mat;
+    }
+
+    duplicateMaterial(sourceId: string): MaterialAsset | null {
+        const source = this.assets.get(sourceId);
+        if (!source || source.type !== 'MATERIAL') return null;
+
+        const newMat = this.createMaterial(`${source.name} (Clone)`);
+        newMat.data = JSON.parse(JSON.stringify(source.data));
+        return newMat;
     }
 
     saveMaterial(id: string, nodes: GraphNode[], connections: GraphConnection[], glsl: string) {
@@ -70,12 +95,6 @@ class AssetManagerService {
             asset.data = { nodes, connections, glsl };
             console.log(`[AssetManager] Saved Material: ${asset.name}`);
         }
-    }
-
-    private createDefaultMaterial() {
-        // Create a basic demo material
-        const mat = this.createMaterial('New Material');
-        // We leave it empty (just output) for now, user can edit it.
     }
 
     private registerDefaultAssets() {
