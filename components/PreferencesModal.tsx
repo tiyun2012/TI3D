@@ -3,6 +3,7 @@ import React, { useContext } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
 import { GizmoArrowShape, GizmoCenterShape, GizmoPlaneShape } from './gizmos/GizmoUtils';
 import { Icon } from './Icon';
+import { Slider } from './ui/Slider';
 
 interface Props {
   onClose: () => void;
@@ -33,7 +34,7 @@ const SelectionCard: React.FC<{
 };
 
 export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
-  const { gizmoConfig, setGizmoConfig } = useContext(EditorContext)!;
+  const { gizmoConfig, setGizmoConfig, uiConfig, setUiConfig } = useContext(EditorContext)!;
 
   const setArrowShape = (shape: GizmoArrowShape) => setGizmoConfig({ ...gizmoConfig, translationShape: shape });
   const setCenterShape = (shape: GizmoCenterShape) => setGizmoConfig({ ...gizmoConfig, centerHandleShape: shape });
@@ -42,6 +43,8 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   const setRingSize = (size: number) => setGizmoConfig({ ...gizmoConfig, rotationRingSize: size });
   
   const updateConfig = (key: keyof typeof gizmoConfig, value: any) => setGizmoConfig({ ...gizmoConfig, [key]: value });
+  
+  const updateUiConfig = (key: keyof typeof uiConfig, value: any) => setUiConfig({ ...uiConfig, [key]: value });
 
   // Minimal SVG Previews for UI
   const PreviewCone = <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L4 22h16L12 2z"/></svg>;
@@ -63,6 +66,57 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
     <>
         <div className="p-6 space-y-6">
             
+            {/* Section: Window Interface (NEW) */}
+            <div className="space-y-3">
+                <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
+                    <Icon name="Layout" size={12} /> Window Interface
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                    <Slider 
+                        label="Corner Radius"
+                        value={uiConfig.windowBorderRadius}
+                        onChange={(v) => updateUiConfig('windowBorderRadius', v)}
+                        min={0} max={20} unit="px"
+                    />
+                    <Slider 
+                        label="Resize Area"
+                        value={uiConfig.resizeHandleThickness}
+                        onChange={(v) => updateUiConfig('resizeHandleThickness', v)}
+                        min={2} max={20} unit="px"
+                    />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                    <Slider 
+                        label="Handle Length"
+                        value={uiConfig.resizeHandleLength}
+                        onChange={(v) => updateUiConfig('resizeHandleLength', v)}
+                        min={0.1} max={1.0} step={0.05}
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-input-bg p-3 rounded border border-white/5 flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Highlight</span>
+                            <input 
+                                type="color" 
+                                className="w-6 h-6 rounded cursor-pointer bg-transparent" 
+                                value={uiConfig.resizeHandleColor} 
+                                onChange={(e) => updateUiConfig('resizeHandleColor', e.target.value)} 
+                                aria-label="Edge Highlight Color"
+                            />
+                        </div>
+                        <div className="bg-input-bg p-3 rounded border border-white/5 flex flex-col justify-center gap-1">
+                             <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Opacity</span>
+                             <input 
+                                type="range" 
+                                min="0" max="1" step="0.1"
+                                className="w-full h-1"
+                                value={uiConfig.resizeHandleOpacity}
+                                onChange={(e) => updateUiConfig('resizeHandleOpacity', parseFloat(e.target.value))}
+                             />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             {/* Section: Gizmo Arrows */}
             <div className="space-y-3">
                 <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
@@ -96,32 +150,18 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4 mt-2">
-                    <div className="bg-input-bg p-3 rounded border border-white/5">
-                        <div className="flex justify-between items-center mb-2">
-                            <span className="text-[10px] font-bold text-text-secondary uppercase">Arrow Size</span>
-                            <span className="text-[10px] font-mono text-white">{gizmoConfig.arrowSize.toFixed(2)}</span>
-                        </div>
-                        <input 
-                            type="range" min="0.1" max="5.0" step="0.1" 
-                            className="w-full cursor-pointer"
-                            value={gizmoConfig.arrowSize} 
-                            onChange={(e) => setArrowSize(parseFloat(e.target.value))} 
-                            aria-label="Arrow Size"
-                        />
-                    </div>
-                    <div className="bg-input-bg p-3 rounded border border-white/5">
-                        <div className="flex justify-between items-center mb-2">
-                             <span className="text-[10px] font-bold text-text-secondary uppercase">Arrow Offset</span>
-                             <span className="text-[10px] font-mono text-white">{gizmoConfig.arrowOffset.toFixed(2)}</span>
-                        </div>
-                        <input 
-                            type="range" min="0.5" max="2.5" step="0.1" 
-                            className="w-full cursor-pointer"
-                            value={gizmoConfig.arrowOffset} 
-                            onChange={(e) => setArrowOffset(parseFloat(e.target.value))} 
-                            aria-label="Arrow Offset"
-                        />
-                    </div>
+                    <Slider 
+                        label="Arrow Size"
+                        value={gizmoConfig.arrowSize}
+                        onChange={setArrowSize}
+                        min={0.1} max={5.0} step={0.1}
+                    />
+                    <Slider 
+                        label="Arrow Offset"
+                        value={gizmoConfig.arrowOffset}
+                        onChange={setArrowOffset}
+                        min={0.5} max={2.5} step={0.1}
+                    />
                 </div>
             </div>
 
@@ -131,32 +171,18 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                     <Icon name="Square" size={12} /> Plane Handles
                 </h3>
                 <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-input-bg p-3 rounded border border-white/5">
-                        <div className="flex justify-between items-center mb-2">
-                            <span className="text-[10px] font-bold text-text-secondary uppercase">Size</span>
-                            <span className="text-[10px] font-mono text-white">{gizmoConfig.planeHandleSize.toFixed(2)}</span>
-                        </div>
-                        <input 
-                            type="range" min="0.5" max="2.0" step="0.1" 
-                            className="w-full cursor-pointer"
-                            value={gizmoConfig.planeHandleSize} 
-                            onChange={(e) => updateConfig('planeHandleSize', parseFloat(e.target.value))} 
-                            aria-label="Plane Size"
-                        />
-                    </div>
-                    <div className="bg-input-bg p-3 rounded border border-white/5">
-                        <div className="flex justify-between items-center mb-2">
-                            <span className="text-[10px] font-bold text-text-secondary uppercase">Offset</span>
-                            <span className="text-[10px] font-mono text-white">{gizmoConfig.planeOffset.toFixed(2)}</span>
-                        </div>
-                        <input 
-                            type="range" min="0.1" max="1.0" step="0.05" 
-                            className="w-full cursor-pointer"
-                            value={gizmoConfig.planeOffset} 
-                            onChange={(e) => updateConfig('planeOffset', parseFloat(e.target.value))} 
-                            aria-label="Plane Offset"
-                        />
-                    </div>
+                    <Slider 
+                        label="Size"
+                        value={gizmoConfig.planeHandleSize}
+                        onChange={(v) => updateConfig('planeHandleSize', v)}
+                        min={0.5} max={2.0} step={0.1}
+                    />
+                    <Slider 
+                        label="Offset"
+                        value={gizmoConfig.planeOffset}
+                        onChange={(v) => updateConfig('planeOffset', v)}
+                        min={0.1} max={1.0} step={0.05}
+                    />
                 </div>
             </div>
 
@@ -167,38 +193,20 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                 </h3>
                 
                 <div className="grid grid-cols-2 gap-4">
-                    {/* Ring Radius */}
-                    <div className="bg-input-bg p-3 rounded border border-white/5">
-                        <div className="flex justify-between items-center mb-2">
-                            <span className="text-[10px] font-bold text-text-secondary uppercase">Ring Size</span>
-                            <span className="text-[10px] font-mono text-white">{gizmoConfig.rotationRingSize.toFixed(2)}</span>
-                        </div>
-                        <input 
-                            type="range" min="0.5" max="3.0" step="0.1" 
-                            className="w-full cursor-pointer"
-                            value={gizmoConfig.rotationRingSize} 
-                            onChange={(e) => setRingSize(parseFloat(e.target.value))} 
-                            aria-label="Rotation Ring Size"
-                        />
-                    </div>
-
-                    {/* Tube Thickness */}
-                    <div className="bg-input-bg p-3 rounded border border-white/5">
-                         <div className="flex justify-between items-center mb-2">
-                            <span className="text-[10px] font-bold text-text-secondary uppercase">Tube Thickness</span>
-                            <span className="text-[10px] font-mono text-white">{gizmoConfig.rotationRingTubeScale.toFixed(2)}</span>
-                        </div>
-                        <input 
-                            type="range" min="0.1" max="2.0" step="0.1" 
-                            className="w-full cursor-pointer"
-                            value={gizmoConfig.rotationRingTubeScale} 
-                            onChange={(e) => updateConfig('rotationRingTubeScale', parseFloat(e.target.value))} 
-                            aria-label="Rotation Tube Thickness"
-                        />
-                    </div>
+                    <Slider 
+                        label="Ring Size"
+                        value={gizmoConfig.rotationRingSize}
+                        onChange={setRingSize}
+                        min={0.5} max={3.0} step={0.1}
+                    />
+                    <Slider 
+                        label="Tube Thickness"
+                        value={gizmoConfig.rotationRingTubeScale}
+                        onChange={(v) => updateConfig('rotationRingTubeScale', v)}
+                        min={0.1} max={2.0} step={0.1}
+                    />
                 </div>
 
-                {/* Screen Ring Scale */}
                 <div className="bg-input-bg p-3 rounded border border-white/5">
                      <div className="flex justify-between items-center mb-2">
                         <span className="text-[10px] font-bold text-text-secondary uppercase">Screen Ring Scale</span>
@@ -299,19 +307,12 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4 mt-2">
-                    <div className="bg-input-bg p-3 rounded border border-white/5">
-                        <div className="flex justify-between items-center mb-2">
-                            <span className="text-[10px] font-bold text-text-secondary uppercase">Size</span>
-                            <span className="text-[10px] font-mono text-white">{gizmoConfig.centerHandleSize.toFixed(2)}</span>
-                        </div>
-                        <input 
-                            type="range" min="0.5" max="3.0" step="0.1" 
-                            className="w-full cursor-pointer"
-                            value={gizmoConfig.centerHandleSize} 
-                            onChange={(e) => updateConfig('centerHandleSize', parseFloat(e.target.value))} 
-                            aria-label="Center Handle Size"
-                        />
-                    </div>
+                    <Slider 
+                        label="Size"
+                        value={gizmoConfig.centerHandleSize}
+                        onChange={(v) => updateConfig('centerHandleSize', v)}
+                        min={0.5} max={3.0} step={0.1}
+                    />
                     
                     <div className="bg-input-bg p-3 rounded border border-white/5">
                          <div className="flex justify-between items-center h-full">

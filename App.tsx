@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import { engineInstance } from './services/engine';
 import { Entity, ToolType, TransformSpace } from './types';
-import { EditorContext } from './contexts/EditorContext';
+import { EditorContext, DEFAULT_UI_CONFIG, UIConfiguration } from './contexts/EditorContext';
 
 // Components
 import { Toolbar } from './components/Toolbar';
@@ -262,6 +262,7 @@ const App: React.FC = () => {
   const [transformSpace, setTransformSpace] = useState<TransformSpace>('Gimbal');
   const [isPlaying, setIsPlaying] = useState(false);
   const [gizmoConfig, setGizmoConfig] = useState<GizmoConfiguration>(DEFAULT_GIZMO_CONFIG);
+  const [uiConfig, setUiConfig] = useState<UIConfiguration>(DEFAULT_UI_CONFIG);
 
   const refreshState = useCallback(() => {
     setEntities(engineInstance.ecs.getAllProxies(engineInstance.sceneGraph));
@@ -305,7 +306,9 @@ const App: React.FC = () => {
       setTransformSpace,
       isPlaying,
       gizmoConfig,
-      setGizmoConfig
+      setGizmoConfig,
+      uiConfig,
+      setUiConfig
     }}>
         <WindowManager>
             <EditorLayout />
