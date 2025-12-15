@@ -51,6 +51,8 @@ const InspectorWrapper = () => {
   return <InspectorPanel object={target} selectionCount={ctx.selectedIds.length} type={ctx.selectionType} />;
 };
 
+const EMPTY_SELECTION: string[] = [];
+
 const SceneWrapper = () => {
   const ctx = useContext(EditorContext);
   if (!ctx) return null;
@@ -58,7 +60,7 @@ const SceneWrapper = () => {
     <SceneView 
       entities={ctx.entities}
       sceneGraph={ctx.sceneGraph}
-      selectedIds={ctx.selectionType === 'ENTITY' ? ctx.selectedIds : []}
+      selectedIds={ctx.selectionType === 'ENTITY' ? ctx.selectedIds : EMPTY_SELECTION}
       onSelect={(ids) => {
           ctx.setSelectedIds(ids);
           ctx.setSelectionType('ENTITY');
