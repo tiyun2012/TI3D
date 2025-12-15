@@ -298,6 +298,35 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                         shapePreview={PreviewQuadCircles}
                     />
                 </div>
+                
+                <div className="grid grid-cols-2 gap-4 mt-2">
+                    <div className="bg-input-bg p-3 rounded border border-white/5">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase">Size</span>
+                            <span className="text-[10px] font-mono text-white">{gizmoConfig.centerHandleSize.toFixed(2)}</span>
+                        </div>
+                        <input 
+                            type="range" min="0.5" max="3.0" step="0.1" 
+                            className="w-full cursor-pointer"
+                            value={gizmoConfig.centerHandleSize} 
+                            onChange={(e) => updateConfig('centerHandleSize', parseFloat(e.target.value))} 
+                            aria-label="Center Handle Size"
+                        />
+                    </div>
+                    
+                    <div className="bg-input-bg p-3 rounded border border-white/5">
+                         <div className="flex justify-between items-center h-full">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase">Color</span>
+                            <input 
+                                type="color" 
+                                className="w-8 h-8 rounded cursor-pointer bg-transparent" 
+                                value={gizmoConfig.centerHandleColor} 
+                                onChange={(e) => updateConfig('centerHandleColor', e.target.value)} 
+                                aria-label="Center Handle Color"
+                            />
+                         </div>
+                     </div>
+                </div>
             </div>
         </div>
         

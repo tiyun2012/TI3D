@@ -270,7 +270,13 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         
         let vertices: Vector3[] = [];
         let indices: number[][] = [];
-        const toWorld = (x:number, y:number, z:number) => ({ x: origin.x + x * size, y: origin.y + y * size, z: origin.z + z * size });
+        
+        // IMPORTANT: Align vertices to the effective basis (Local or World)
+        const toWorld = (u: number, v: number, w: number) => ({
+            x: origin.x + (xAxis.x * u + yAxis.x * v + zAxis.x * w) * size,
+            y: origin.y + (xAxis.y * u + yAxis.y * v + zAxis.y * w) * size,
+            z: origin.z + (xAxis.z * u + yAxis.z * v + zAxis.z * w) * size,
+        });
 
         // CUBE Default
         vertices = [ toWorld(-1,-1,-1), toWorld(1,-1,-1), toWorld(1,1,-1), toWorld(-1,1,-1), toWorld(-1,-1,1), toWorld(1,-1,1), toWorld(1,1,1), toWorld(-1,1,1) ];
