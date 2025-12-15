@@ -95,9 +95,9 @@ export const DraggableWindow = ({
                     <button 
                         onClick={(e) => { e.stopPropagation(); onNest(); }} 
                         className="p-1.5 hover:bg-white/10 rounded text-text-secondary hover:text-accent transition-colors"
-                        title="Nest to Side"
+                        title="Minimize to Bubble"
                     >
-                        <Icon name="ArrowRightToLine" size={14}/>
+                        <Icon name="Minimize2" size={14}/>
                     </button>
                     <button 
                         onClick={(e) => { e.stopPropagation(); onClose(); }} 

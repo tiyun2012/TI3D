@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useContext } from 'react';
+import React, { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import { engineInstance } from './services/engine';
 import { Entity, ToolType, TransformSpace } from './types';
 import { EditorContext } from './contexts/EditorContext';
@@ -110,15 +110,16 @@ const EditorLayout: React.FC = () => {
     const wm = useContext(WindowManagerContext);
     const { setGizmoConfig } = useContext(EditorContext)!;
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
+    const initialized = useRef(false);
 
     // Initial Registration of Windows
     useEffect(() => {
         if (!wm) return;
 
-        // Register all available tool windows
+        // Register all available tool windows with shifted positions to avoid left dock overlap
         wm.registerWindow({
             id: 'hierarchy', title: 'Hierarchy', icon: 'ListTree', content: <HierarchyWrapper />, 
-            width: 280, height: 500, initialPosition: { x: 20, y: 100 }
+            width: 280, height: 500, initialPosition: { x: 80, y: 100 }
         });
         wm.registerWindow({
             id: 'inspector', title: 'Inspector', icon: 'Settings2', content: <InspectorWrapper />, 
@@ -126,11 +127,11 @@ const EditorLayout: React.FC = () => {
         });
         wm.registerWindow({
             id: 'project', title: 'Project Browser', icon: 'FolderOpen', content: <ProjectWrapper />, 
-            width: 600, height: 350, initialPosition: { x: 320, y: window.innerHeight - 370 }
+            width: 600, height: 350, initialPosition: { x: 380, y: window.innerHeight - 370 }
         });
         wm.registerWindow({
             id: 'console', title: 'Console', icon: 'Terminal', content: <ConsoleWrapper />, 
-            width: 500, height: 250, initialPosition: { x: 20, y: window.innerHeight - 270 }
+            width: 500, height: 250, initialPosition: { x: 80, y: window.innerHeight - 270 }
         });
         wm.registerWindow({
             id: 'graph', title: 'Visual Script', icon: 'Workflow', content: <GraphWrapper />, 
@@ -145,10 +146,13 @@ const EditorLayout: React.FC = () => {
             width: 280, initialPosition: { x: window.innerWidth - 300, y: 60 }
         });
 
-        // Open Default Layout
-        wm.openWindow('hierarchy');
-        wm.openWindow('inspector');
-        wm.openWindow('project');
+        // Open Default Layout only once
+        if (!initialized.current) {
+            wm.openWindow('hierarchy');
+            wm.openWindow('inspector');
+            wm.openWindow('project');
+            initialized.current = true;
+        }
         
     }, [wm]);
 
