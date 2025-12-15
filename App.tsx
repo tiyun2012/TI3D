@@ -13,6 +13,7 @@ import { ProjectPanel } from './components/ProjectPanel';
 import { NodeGraph } from './components/NodeGraph';
 import { Icon } from './components/Icon';
 import { PreferencesModal } from './components/PreferencesModal';
+import { ShaderPreview } from './components/ShaderPreview'; // New Import
 import { WindowManager, WindowManagerContext } from './components/WindowManager';
 import { DEFAULT_GIZMO_CONFIG, GizmoConfiguration } from './components/gizmos/GizmoUtils';
 
@@ -137,6 +138,11 @@ const EditorLayout: React.FC = () => {
             id: 'graph', title: 'Visual Script', icon: 'Workflow', content: <GraphWrapper />, 
             width: 800, height: 500, initialPosition: { x: (window.innerWidth - 800)/2, y: (window.innerHeight - 500)/2 }
         });
+        // Shader Preview Registration
+        wm.registerWindow({
+            id: 'shader_preview', title: 'Shader Preview', icon: 'Eye', content: <ShaderPreview />, 
+            width: 300, height: 300, initialPosition: { x: 100, y: window.innerHeight - 400 }
+        });
         wm.registerWindow({
             id: 'preferences', title: 'Preferences', icon: 'Settings', content: <PreferencesModal onClose={() => wm.closeWindow('preferences')} />, 
             width: 500
@@ -211,6 +217,9 @@ const EditorLayout: React.FC = () => {
                                     </div>
                                     <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('graph'); setActiveMenu(null); }}>
                                         <Icon name="Workflow" size={12} /> Node Graph
+                                    </div>
+                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('shader_preview'); setActiveMenu(null); }}>
+                                        <Icon name="Eye" size={12} /> Shader Preview
                                     </div>
                                     <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('console'); setActiveMenu(null); }}>
                                         <Icon name="Terminal" size={12} /> Console

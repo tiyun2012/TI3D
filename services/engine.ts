@@ -1,3 +1,4 @@
+
 // services/engine.ts
 
 import { Entity, ComponentType, GraphNode, GraphConnection, PerformanceMetrics } from '../types';
@@ -9,6 +10,7 @@ import { WebGLRenderer } from './renderers/WebGLRenderer';
 import { SoAEntitySystem } from './ecs/EntitySystem';
 import { PhysicsSystem } from './systems/PhysicsSystem';
 import { HistorySystem } from './systems/HistorySystem';
+import { compileShader } from './ShaderCompiler';
 
 interface ExecutionStep {
     id: string;
@@ -36,6 +38,9 @@ export class Ti3DEngine {
   // Logic Graph State
   private executionList: ExecutionStep[] = [];
   private nodeResults = new Map<string, any>(); 
+  
+  // Shader Graph State
+  currentShaderSource: string = '';
 
   // Performance
   metrics: PerformanceMetrics = { fps: 60, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0 };
@@ -87,6 +92,7 @@ export class Ti3DEngine {
   }
 
   compileGraph(nodes: GraphNode[], connections: GraphConnection[]) {
+      // 1. Compile Logic (CPU)
       this.executionList = [];
       const nodeMap = new Map(nodes.map(n => [n.id, n]));
       const visited = new Set<string>();
@@ -118,6 +124,14 @@ export class Ti3DEngine {
       };
 
       for (const node of nodes) visit(node.id);
+      
+      // 2. Compile Shader (GPU)
+      const shader = compileShader(nodes, connections);
+      if (shader !== this.currentShaderSource) {
+          this.currentShaderSource = shader;
+          // Notify specifically for preview update (could be optimized)
+          this.notifyUI();
+      }
   }
 
   viewProjectionMatrix = Mat4Utils.create();
@@ -261,8 +275,11 @@ export class Ti3DEngine {
               return res;
           });
           try {
-             const result = step.def.execute(inputs, step.data, this);
-             this.nodeResults.set(step.id, result);
+             // Only execute nodes that have an execution function
+             if (step.def.execute) {
+                 const result = step.def.execute(inputs, step.data, this);
+                 this.nodeResults.set(step.id, result);
+             }
           } catch(e) { }
       }
 

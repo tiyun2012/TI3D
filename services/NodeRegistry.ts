@@ -1,9 +1,11 @@
+
+
 // services/NodeRegistry.ts
 
 import { Ti3DEngine } from './engine';
 import { Mat4Utils } from './math';
 
-export type DataType = 'float' | 'vec3' | 'vec4' | 'mat4' | 'stream' | 'texture' | 'any';
+export type DataType = 'float' | 'vec2' | 'vec3' | 'vec4' | 'mat4' | 'stream' | 'texture' | 'any';
 
 export interface PortDef {
   id: string;
@@ -20,17 +22,67 @@ export interface NodeDef {
   inputs: PortDef[];
   outputs: PortDef[];
   execute: (inputs: any[], data: any, engine: Ti3DEngine) => any;
+  // New: GLSL Generation Code
+  // inputs: array of variable names (e.g. "v_node1", "v_node2")
+  // id: unique variable name for this node's output (e.g. "v_node3")
+  glsl?: (inputs: string[], id: string, data: any) => string;
 }
 
 const TYPE_COLORS: Record<DataType, string> = {
-  float: '#9ca3af', vec3: '#f59e0b', vec4: '#ec4899', mat4: '#8b5cf6', 
+  float: '#9ca3af', vec2: '#a3e635', vec3: '#f59e0b', vec4: '#ec4899', mat4: '#8b5cf6', 
   stream: '#10b981', texture: '#ef4444', any: '#ffffff'
 };
 
 export const getTypeColor = (t: DataType) => TYPE_COLORS[t] || '#fff';
 
 export const NodeRegistry: Record<string, NodeDef> = {
-  // --- BASIC MATH NODES (Required for Initial Graph) ---
+  // --- SHADER SPECIFIC NODES ---
+
+  'ShaderOutput': {
+      type: 'ShaderOutput',
+      category: 'Shader',
+      title: 'Frag Color',
+      inputs: [{ id: 'rgb', name: 'RGB', type: 'vec3' }],
+      outputs: [],
+      execute: () => {}, // No CPU execution
+      glsl: (inVars, id) => `fragColor = vec4(${inVars[0] || 'vec3(1.0, 0.0, 1.0)'}, 1.0);`
+  },
+
+  'UV': {
+      type: 'UV',
+      category: 'Shader',
+      title: 'UV Coord',
+      inputs: [],
+      outputs: [{ id: 'uv', name: 'UV', type: 'vec2' }],
+      execute: () => ({ x:0, y:0 }), 
+      glsl: (inVars, id) => `vec2 ${id} = v_uv;`
+  },
+
+  'Fract': {
+      type: 'Fract',
+      category: 'Shader Math',
+      title: 'Fract',
+      inputs: [{ id: 'in', name: 'In', type: 'any' }], // Polymorphic ideally, treating as float/vec3
+      outputs: [{ id: 'out', name: 'Out', type: 'any' }],
+      execute: (i) => i[0] - Math.floor(i[0]),
+      glsl: (inVars, id) => `vec3 ${id} = fract(${inVars[0] || 'vec3(0.0)'});` // Simplified to vec3 for prototype
+  },
+
+  'Mix': {
+      type: 'Mix',
+      category: 'Shader Math',
+      title: 'Mix',
+      inputs: [
+          { id: 'a', name: 'A', type: 'vec3' },
+          { id: 'b', name: 'B', type: 'vec3' },
+          { id: 't', name: 'T', type: 'float' }
+      ],
+      outputs: [{ id: 'out', name: 'Out', type: 'vec3' }],
+      execute: (i) => 0, 
+      glsl: (inVars, id) => `vec3 ${id} = mix(${inVars[0]||'vec3(0.0)'}, ${inVars[1]||'vec3(1.0)'}, ${inVars[2]||'0.5'});`
+  },
+
+  // --- HYBRID NODES (CPU + GLSL) ---
 
   'Time': {
     type: 'Time',
@@ -38,7 +90,8 @@ export const NodeRegistry: Record<string, NodeDef> = {
     title: 'Time',
     inputs: [],
     outputs: [{ id: 'out', name: 'Time', type: 'float' }],
-    execute: (_, __, ___) => performance.now() / 1000
+    execute: (_, __, ___) => performance.now() / 1000,
+    glsl: (inVars, id) => `float ${id} = u_time;`
   },
 
   'Float': {
@@ -47,37 +100,8 @@ export const NodeRegistry: Record<string, NodeDef> = {
     title: 'Float',
     inputs: [],
     outputs: [{ id: 'out', name: 'Value', type: 'float' }],
-    execute: (_, data) => parseFloat(data?.value || '0')
-  },
-
-  'Sine': {
-    type: 'Sine',
-    category: 'Math',
-    title: 'Sine',
-    inputs: [{ id: 'in', name: 'In', type: 'float' }],
-    outputs: [{ id: 'out', name: 'Out', type: 'float' }],
-    execute: (inputs) => Math.sin(inputs[0] || 0)
-  },
-
-  'Add': {
-    type: 'Add',
-    category: 'Math',
-    title: 'Add',
-    inputs: [
-        { id: 'a', name: 'A', type: 'float' },
-        { id: 'b', name: 'B', type: 'float' }
-    ],
-    outputs: [{ id: 'out', name: 'Out', type: 'float' }],
-    execute: (inputs) => (inputs[0] || 0) + (inputs[1] || 0)
-  },
-  
-  'WaveViewer': {
-      type: 'WaveViewer',
-      category: 'Debug',
-      title: 'Wave Viewer',
-      inputs: [{ id: 'in', name: 'In', type: 'float' }],
-      outputs: [],
-      execute: (inputs) => inputs[0] // Pass-through or side-effect visualization
+    execute: (_, data) => parseFloat(data?.value || '0'),
+    glsl: (inVars, id, data) => `float ${id} = ${data?.value || '0.0'};`
   },
 
   'Vec3': {
@@ -90,10 +114,43 @@ export const NodeRegistry: Record<string, NodeDef> = {
         { id: 'z', name: 'Z', type: 'float' }
     ],
     outputs: [{ id: 'out', name: 'Vec3', type: 'vec3' }],
-    execute: (inputs) => ({ x: inputs[0]||0, y: inputs[1]||0, z: inputs[2]||0 })
+    execute: (inputs) => ({ x: inputs[0]||0, y: inputs[1]||0, z: inputs[2]||0 }),
+    glsl: (inVars, id) => `vec3 ${id} = vec3(${inVars[0]||'0.0'}, ${inVars[1]||'0.0'}, ${inVars[2]||'0.0'});`
   },
 
-  // --- ECS / QUERY NODES ---
+  'Sine': {
+    type: 'Sine',
+    category: 'Math',
+    title: 'Sine',
+    inputs: [{ id: 'in', name: 'In', type: 'float' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+    execute: (inputs) => Math.sin(inputs[0] || 0),
+    glsl: (inVars, id) => `float ${id} = sin(${inVars[0] || '0.0'});`
+  },
+
+  'Add': {
+    type: 'Add',
+    category: 'Math',
+    title: 'Add',
+    inputs: [
+        { id: 'a', name: 'A', type: 'float' },
+        { id: 'b', name: 'B', type: 'float' }
+    ],
+    outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+    execute: (inputs) => (inputs[0] || 0) + (inputs[1] || 0),
+    glsl: (inVars, id) => `float ${id} = ${inVars[0] || '0.0'} + ${inVars[1] || '0.0'};`
+  },
+  
+  'WaveViewer': {
+      type: 'WaveViewer',
+      category: 'Debug',
+      title: 'Wave Viewer',
+      inputs: [{ id: 'in', name: 'In', type: 'float' }],
+      outputs: [],
+      execute: (inputs) => inputs[0] 
+  },
+
+  // --- ECS / QUERY NODES (CPU ONLY) ---
   
   'AllEntities': {
     type: 'AllEntities',
