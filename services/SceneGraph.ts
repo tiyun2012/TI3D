@@ -6,24 +6,46 @@ import type { SoAEntitySystem } from './ecs/EntitySystem';
 
 export class SceneNode {
   entityId: string;
+  index: number = -1; // Cached ECS index
   parentId: string | null = null;
   childrenIds: string[] = [];
-  constructor(entityId: string) { this.entityId = entityId; }
+  constructor(entityId: string, index: number) { 
+      this.entityId = entityId; 
+      this.index = index;
+  }
+}
+
+// Reusable stack item interface to avoid allocation
+interface StackItem {
+    id: string;
+    mat: Float32Array | null;
+    pDirty: boolean;
 }
 
 export class SceneGraph {
   private nodes: Map<string, SceneNode> = new Map();
   private rootIds: Set<string> = new Set();
   private ecs: SoAEntitySystem | null = null;
+  
+  // Reusable stack to reduce GC pressure in update loop
+  private updateStack: StackItem[] = [];
 
   registerEntity(entityId: string) {
     if (!this.nodes.has(entityId)) {
-      this.nodes.set(entityId, new SceneNode(entityId));
+      // Resolve index immediately if ECS is available
+      const idx = this.ecs ? (this.ecs.idToIndex.get(entityId) ?? -1) : -1;
+      this.nodes.set(entityId, new SceneNode(entityId, idx));
       this.rootIds.add(entityId);
     }
   }
 
-  setContext(ecs: SoAEntitySystem) { this.ecs = ecs; }
+  setContext(ecs: SoAEntitySystem) { 
+      this.ecs = ecs; 
+      // Refresh indices for existing nodes
+      this.nodes.forEach(node => {
+          node.index = ecs.idToIndex.get(node.entityId) ?? -1;
+      });
+  }
 
   attach(childId: string, parentId: string | null) {
     const childNode = this.nodes.get(childId);
@@ -55,18 +77,32 @@ export class SceneGraph {
 
   setDirty(entityId: string) {
     if (!this.ecs) return;
-    const idx = this.ecs.idToIndex.get(entityId);
-    if (idx !== undefined) this.ecs.store.transformDirty[idx] = 1;
+    
+    // Use cached index if available, fallback to map
+    const node = this.nodes.get(entityId);
+    let idx = node ? node.index : this.ecs.idToIndex.get(entityId);
+    
+    // Safety check if index wasn't cached yet
+    if (idx === undefined || idx === -1) idx = this.ecs.idToIndex.get(entityId);
+    
+    if (idx !== undefined && idx !== -1) {
+        this.ecs.store.transformDirty[idx] = 1;
+    }
 
     // Iterative dirty propagation (Stack)
+    // We can use a local stack here as this isn't called as frequently as update()
     const stack = [entityId];
     while(stack.length > 0) {
         const currId = stack.pop()!;
-        const node = this.nodes.get(currId);
-        if (node) {
-            for (const childId of node.childrenIds) {
-                const cIdx = this.ecs.idToIndex.get(childId);
-                if (cIdx !== undefined) this.ecs.store.transformDirty[cIdx] = 1;
+        const currNode = this.nodes.get(currId);
+        if (currNode) {
+            for (const childId of currNode.childrenIds) {
+                const childNode = this.nodes.get(childId);
+                const cIdx = childNode ? childNode.index : this.ecs.idToIndex.get(childId);
+                
+                if (cIdx !== undefined && cIdx !== -1) {
+                    this.ecs.store.transformDirty[cIdx] = 1;
+                }
                 stack.push(childId);
             }
         }
@@ -79,12 +115,14 @@ export class SceneGraph {
 
   getWorldMatrix(entityId: string): Float32Array | null {
     if (!this.ecs) return null;
-    const idx = this.ecs.idToIndex.get(entityId);
-    if (idx === undefined) return null;
+    
+    const node = this.nodes.get(entityId);
+    const idx = node ? node.index : this.ecs.idToIndex.get(entityId);
+    
+    if (idx === undefined || idx === -1) return null;
     const store = this.ecs.store;
 
     if (store.transformDirty[idx]) {
-        const node = this.nodes.get(entityId);
         const parentMat = (node && node.parentId) ? this.getWorldMatrix(node.parentId) : null;
         store.updateWorldMatrix(idx, parentMat);
     }
@@ -99,32 +137,33 @@ export class SceneGraph {
       return { x: m[12], y: m[13], z: m[14] };
   }
 
-  // OPTIMIZATION: Iterative Update
+  // OPTIMIZATION: Iterative Update with cached indices and reused stack
   update() {
     if (!this.ecs) return;
     const store = this.ecs.store;
-    const idToIndex = this.ecs.idToIndex;
-
-    // Stack holds: [EntityID, ParentMatrix, ParentDirtyFlag]
-    const stack: Array<{id: string, mat: Float32Array | null, pDirty: boolean}> = [];
     
+    // Clear and reuse stack
+    const stack = this.updateStack;
+    stack.length = 0;
+    
+    // Push roots
     this.rootIds.forEach(id => stack.push({ id, mat: null, pDirty: false }));
 
     while(stack.length > 0) {
         const { id, mat, pDirty } = stack.pop()!;
-        const idx = idToIndex.get(id);
         
-        if (idx === undefined) continue;
+        const node = this.nodes.get(id);
+        const idx = node ? node.index : -1;
+        
+        if (idx === -1) continue;
 
         const isDirty = store.transformDirty[idx] === 1 || pDirty;
         if (isDirty) {
             store.updateWorldMatrix(idx, mat);
         }
 
-        const myWorldMatrix = store.worldMatrix.subarray(idx*16, idx*16+16);
-        const node = this.nodes.get(id);
-        
-        if (node) {
+        if (node && node.childrenIds.length > 0) {
+            const myWorldMatrix = store.worldMatrix.subarray(idx*16, idx*16+16);
             for (let i = node.childrenIds.length - 1; i >= 0; i--) {
                 stack.push({
                     id: node.childrenIds[i],

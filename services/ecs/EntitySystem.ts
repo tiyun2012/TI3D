@@ -12,6 +12,14 @@ export class SoAEntitySystem {
     
     // Map string UUID to SoA Index
     idToIndex = new Map<string, number>();
+    
+    // Cache for Entity Proxy Objects to reduce GC
+    private proxyCache: (Entity | null)[] = [];
+
+    constructor() {
+        // Initialize cache
+        this.proxyCache = new Array(this.store.capacity).fill(null);
+    }
 
     createEntity(name: string): string {
         let index: number;
@@ -19,10 +27,13 @@ export class SoAEntitySystem {
             index = this.freeIndices.pop()!;
         } else {
             if (this.count >= this.store.capacity) {
-                this.store.resize(this.store.capacity * 2);
+                this.resize(this.store.capacity * 2);
             }
             index = this.count++;
         }
+        
+        // Clear cache for this index as it's a new entity
+        this.proxyCache[index] = null;
         
         const id = crypto.randomUUID();
         this.store.isActive[index] = 1;
@@ -43,6 +54,13 @@ export class SoAEntitySystem {
         this.idToIndex.set(id, index);
         return id;
     }
+    
+    resize(newCapacity: number) {
+        this.store.resize(newCapacity);
+        const oldCache = this.proxyCache;
+        this.proxyCache = new Array(newCapacity).fill(null);
+        for(let i=0; i<oldCache.length; i++) this.proxyCache[i] = oldCache[i];
+    }
 
     getEntityIndex(id: string): number | undefined {
         return this.idToIndex.get(id);
@@ -52,12 +70,15 @@ export class SoAEntitySystem {
         const index = this.idToIndex.get(id);
         if (index === undefined || this.store.isActive[index] === 0) return null;
         
+        // Return cached proxy if available
+        if (this.proxyCache[index]) return this.proxyCache[index];
+        
         const store = this.store;
         const setDirty = () => {
             sceneGraph.setDirty(id);
         };
         
-        return {
+        const proxy: Entity = {
             id,
             get name() { return store.names[index]; },
             set name(v) { store.names[index] = v; },
@@ -142,6 +163,9 @@ export class SoAEntitySystem {
                 [ComponentType.SCRIPT]: { type: ComponentType.SCRIPT }
             }
         };
+        
+        this.proxyCache[index] = proxy;
+        return proxy;
     }
 
     getAllProxies(sceneGraph: SceneGraph): Entity[] {
@@ -196,11 +220,14 @@ export class SoAEntitySystem {
         try {
             const data = JSON.parse(json);
             if (data.capacity && data.capacity > this.store.capacity) {
-                this.store.resize(data.capacity);
+                this.resize(data.capacity);
             }
             this.count = data.count;
             this.freeIndices = data.freeIndices;
             this.idToIndex = new Map(data.idMap);
+            
+            // Clear proxy cache on full load
+            this.proxyCache.fill(null);
             
             // Helper to fill
             const fill = (arr: any, source: any[]) => {

@@ -76,14 +76,20 @@ void main() {
     outColor = vec4(result, 1.0);
 }`;
 
+interface MeshBatch {
+    vao: WebGLVertexArrayObject;
+    count: number;
+    instanceBuffer: WebGLBuffer;
+    cpuBuffer: Float32Array; // Persistent buffer for this mesh type
+    instanceCount: number; // Number of instances this frame
+}
+
 export class WebGLRenderer {
     gl: WebGL2RenderingContext | null = null;
     program: WebGLProgram | null = null;
     
-    meshes: Map<number, { vao: WebGLVertexArrayObject, count: number, instanceBuffer: WebGLBuffer }> = new Map();
+    meshes: Map<number, MeshBatch> = new Map();
     textureArray: WebGLTexture | null = null;
-    
-    instanceData = new Float32Array(INITIAL_CAPACITY * 21);
     
     drawCalls = 0;
     triangleCount = 0;
@@ -129,19 +135,26 @@ export class WebGLRenderer {
     }
 
     ensureCapacity(count: number) {
-        const required = count * 21;
-        if (this.instanceData.length < required) {
-            const newBuffer = new Float32Array(required * 1.5);
-            newBuffer.set(this.instanceData);
-            this.instanceData = newBuffer;
-            
-            const gl = this.gl;
-            if(!gl) return;
-            this.meshes.forEach(mesh => {
-                gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
-                gl.bufferData(gl.ARRAY_BUFFER, this.instanceData.byteLength, gl.DYNAMIC_DRAW);
-            });
-        }
+        // Stride is 21 floats per instance
+        const stride = 21;
+        const requiredSize = count * stride;
+
+        this.meshes.forEach(mesh => {
+            if (mesh.cpuBuffer.length < requiredSize) {
+                // Grow buffer (1.5x)
+                const newSize = Math.max(requiredSize, mesh.cpuBuffer.length * 1.5);
+                const newBuffer = new Float32Array(newSize);
+                // We don't need to copy old data as we overwrite it every frame
+                mesh.cpuBuffer = newBuffer;
+                
+                // Resize GPU buffer
+                const gl = this.gl;
+                if (gl) {
+                    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, newBuffer.byteLength, gl.DYNAMIC_DRAW);
+                }
+            }
+        });
     }
 
     initTextureArray(gl: WebGL2RenderingContext) {
@@ -196,7 +209,6 @@ export class WebGLRenderer {
         const createBuffer = (type: number, src: any) => {
             const buf = gl.createBuffer();
             gl.bindBuffer(type, buf);
-            // Convert standard arrays to TypedArrays if needed
             const typedData = (type === gl.ELEMENT_ARRAY_BUFFER && !(src instanceof Uint16Array)) ? new Uint16Array(src) 
                             : (type === gl.ARRAY_BUFFER && !(src instanceof Float32Array)) ? new Float32Array(src) 
                             : src;
@@ -218,9 +230,14 @@ export class WebGLRenderer {
 
         createBuffer(gl.ELEMENT_ARRAY_BUFFER, data.indices);
 
+        // Instance Buffer Setup
+        // Initial capacity for CPU buffer
+        const initialCapacity = INITIAL_CAPACITY * 21; 
         const instBuf = gl.createBuffer();
+        const cpuBuffer = new Float32Array(initialCapacity);
+        
         gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
-        gl.bufferData(gl.ARRAY_BUFFER, this.instanceData.byteLength, gl.DYNAMIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, cpuBuffer.byteLength, gl.DYNAMIC_DRAW);
         
         const stride = 21 * 4; 
         for (let i = 0; i < 4; i++) {
@@ -245,7 +262,13 @@ export class WebGLRenderer {
         gl.bindVertexArray(null);
         gl.bindBuffer(gl.ARRAY_BUFFER, null); 
 
-        this.meshes.set(typeId, { vao: vao!, count: data.indices.length, instanceBuffer: instBuf! });
+        this.meshes.set(typeId, { 
+            vao: vao!, 
+            count: data.indices.length, 
+            instanceBuffer: instBuf!,
+            cpuBuffer,
+            instanceCount: 0
+        });
     }
 
     createCubeData() {
@@ -327,37 +350,57 @@ export class WebGLRenderer {
         this.ensureCapacity(store.capacity);
         this.drawCalls = 0; this.triangleCount = 0;
 
-        // Iterate through all known meshes (both Hardcoded and Dynamic)
-        this.meshes.forEach((mesh, typeId) => {
-            let instanceCount = 0, ptr = 0;
-            
-            // Dense Iteration (Fast)
-            for (let index = 0; index < count; index++) {
-                if (!store.isActive[index]) continue;
-                if (store.meshType[index] !== typeId) continue;
-                if (!this.showGrid && store.textureIndex[index] === 1) continue;
-                
-                const start = index * 16;
-                
-                this.instanceData.set(store.worldMatrix.subarray(start, start + 16), ptr); ptr += 16;
-                this.instanceData[ptr++] = store.colorR[index];
-                this.instanceData[ptr++] = store.colorG[index];
-                this.instanceData[ptr++] = store.colorB[index];
-                this.instanceData[ptr++] = selectedIndices.has(index) ? 1.0 : 0.0;
-                this.instanceData[ptr++] = store.textureIndex[index];
-                instanceCount++;
-            }
+        // Reset batch counts
+        this.meshes.forEach(mesh => mesh.instanceCount = 0);
 
-            if (instanceCount > 0) {
+        // Single Pass Optimization: 
+        // Iterate entities once (O(N)) and distribute data to per-mesh CPU buffers
+        for (let index = 0; index < count; index++) {
+            if (!store.isActive[index]) continue;
+            
+            // Check grid visibility
+            if (!this.showGrid && store.textureIndex[index] === 1) continue;
+
+            const type = store.meshType[index];
+            const mesh = this.meshes.get(type);
+            
+            if (mesh) {
+                const ptr = mesh.instanceCount * 21;
+                const start = index * 16;
+                const buf = mesh.cpuBuffer;
+
+                // Unroll loop for speed or use set? Set is safer/cleaner.
+                buf.set(store.worldMatrix.subarray(start, start + 16), ptr);
+                
+                buf[ptr + 16] = store.colorR[index];
+                buf[ptr + 17] = store.colorG[index];
+                buf[ptr + 18] = store.colorB[index];
+                buf[ptr + 19] = selectedIndices.has(index) ? 1.0 : 0.0;
+                buf[ptr + 20] = store.textureIndex[index];
+                
+                mesh.instanceCount++;
+            }
+        }
+
+        // Draw Batches
+        this.meshes.forEach(mesh => {
+            if (mesh.instanceCount > 0) {
                 gl.bindVertexArray(mesh.vao);
                 gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
-                gl.bufferData(gl.ARRAY_BUFFER, this.instanceData.byteLength, gl.DYNAMIC_DRAW);
-                gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.instanceData.subarray(0, instanceCount * 21));
-                gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, instanceCount);
+                
+                // Use bufferSubData to update only the used portion
+                // NOTE: For very large updates, bufferData(..., DYNAMIC_DRAW) (orphaning) might be faster on some drivers
+                // but bufferSubData is generally fine for uniform sized updates.
+                // We'll use bufferSubData for the active region.
+                gl.bufferSubData(gl.ARRAY_BUFFER, 0, mesh.cpuBuffer.subarray(0, mesh.instanceCount * 21));
+                
+                gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, mesh.instanceCount);
+                
                 this.drawCalls++;
-                this.triangleCount += (mesh.count / 3) * instanceCount;
+                this.triangleCount += (mesh.count / 3) * mesh.instanceCount;
             }
         });
+
         gl.bindVertexArray(null);
     }
     

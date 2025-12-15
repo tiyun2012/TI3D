@@ -86,8 +86,8 @@ export const WindowManager: React.FC<{ children: React.ReactNode }> = ({ childre
         bringToFront(id);
     }, [bringToFront]);
 
-    const activeWindows = useMemo(() => Object.values(windows).filter(w => w.isOpen && !w.isNested), [windows]);
-    const nestedWindows = useMemo(() => Object.values(windows).filter(w => w.isOpen && w.isNested), [windows]);
+    const activeWindows = useMemo(() => (Object.values(windows) as WindowItem[]).filter(w => w.isOpen && !w.isNested), [windows]);
+    const nestedWindows = useMemo(() => (Object.values(windows) as WindowItem[]).filter(w => w.isOpen && w.isNested), [windows]);
 
     // OPTIMIZATION: Memoize the context value object.
     // This prevents consumers (like App.tsx) from re-running effects every time a window state changes (like nesting).
