@@ -72,6 +72,9 @@ export const ScaleGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport 
     }, [dragState, transform]);
 
     const startDrag = (e: React.MouseEvent, axis: Axis) => {
+        // Priority Fix: Allow Alt+LMB to pass through for Camera Orbit
+        if (e.altKey) return;
+
         e.stopPropagation(); e.preventDefault();
         setDragState({
             axis,

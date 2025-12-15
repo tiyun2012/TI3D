@@ -253,14 +253,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             while (totalDelta <= -Math.PI) totalDelta += Math.PI * 2;
             while (totalDelta > Math.PI) totalDelta -= Math.PI * 2;
 
-            if (dragState.axis !== 'VIEW') {
-                const viewDir = GizmoMath.normalize(GizmoMath.sub(basis.cameraPosition, origin));
-                const dot = GizmoMath.dot(viewDir, dragState.axisVector);
-                // Standard UI feel: If axis points away, standard rotation looks inverted on screen.
-                // Flip it so mouse motion direction aligns with visual ring rotation direction.
-                if (dot < 0) totalDelta = -totalDelta;
-            }
-
             if (e.shiftKey) {
                 const snap = Math.PI / 12; 
                 totalDelta = Math.round(totalDelta / snap) * snap;
@@ -296,6 +288,9 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
     }, [dragState, basis, origin, invViewProj, viewport, transformSpace, entity]);
     
     const startDrag = (e: React.MouseEvent, axis: Axis) => {
+        // Priority Fix: Allow Alt+LMB to pass through for Camera Orbit
+        if (e.altKey) return;
+
         e.stopPropagation(); e.preventDefault();
         const { axis: axisVec, u, v } = getRingBasis(axis);
         const startAngle = getAngleOnPlane(e.clientX, e.clientY, origin, axisVec, u, v);
@@ -414,8 +409,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
     const renderTorusRing = (axis: Axis, color: string) => {
         const { axis: axisVec, u, v } = getRingBasis(axis);
 
-        // -- CHANGED: Removed visibility fading based on view angle. 
-        // Rotation rings should be visible even when facing the camera.
         let visibility = 1.0;
         
         const isActive = dragState?.axis === axis;
@@ -482,8 +475,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         );
     };
     
-    // Determine Render Order: Parent -> Child (Child on top)
-    // XYZ = Z (Parent) -> Y -> X (Child).
     const renderOrder = useMemo(() => {
         const transform = entity.components[ComponentType.TRANSFORM];
         const order = (transform.rotationOrder || 'XYZ') as RotationOrder;

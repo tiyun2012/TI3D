@@ -286,10 +286,12 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     setCamera(prev => ({ ...prev, radius: Math.max(2, prev.radius + e.deltaY * 0.01) }));
   };
 
+  const cursorClass = dragState ? (dragState.mode === 'PAN' ? 'cursor-move' : 'cursor-grabbing') : 'cursor-default';
+
   return (
     <div 
         ref={containerRef}
-        className="w-full h-full bg-[#151515] relative overflow-hidden select-none group"
+        className={`w-full h-full bg-[#151515] relative overflow-hidden select-none group ${cursorClass}`}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}

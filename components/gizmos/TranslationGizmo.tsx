@@ -117,6 +117,9 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
     }, [dragState, transform, basis, origin]);
 
     const startDrag = (e: React.MouseEvent, axis: Axis) => {
+        // Priority Fix: Allow Alt+LMB to pass through for Camera Orbit
+        if (e.altKey) return;
+
         e.stopPropagation(); e.preventDefault();
         
         let screenAxis = { x: 1, y: 0 };
