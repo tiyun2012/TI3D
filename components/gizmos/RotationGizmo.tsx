@@ -120,8 +120,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         }
 
         // 2. Local Space: Use Object's World Rotation for all rings
-        // (Assuming Local rotation means rotating around the object's current local axes)
-        // For visualizer: all rings share the final object orientation.
         const parentId = engineInstance.sceneGraph.getParentId(entity.id);
         const worldMatrix = engineInstance.sceneGraph.getWorldMatrix(entity.id);
         
@@ -174,6 +172,8 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         Mat4Utils.copy(accum, baseMat);
 
         // Reverse Order for Hierarchy (Outer -> Inner)
+        // E.g. XYZ:  Rotation = Rz * Ry * Rx.
+        // We calculate bases for Z (Parent), then Y (Parent*Z), then X (Parent*Z*Y)
         const reversedAxes = [...axes].reverse();
 
         reversedAxes.forEach((axisChar) => {
@@ -263,21 +263,16 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
                 totalDelta = Math.round(totalDelta / snap) * snap;
             }
 
-            // --- Rotation Application Logic ---
-            // DISABLED FOR DEBUGGING as requested previously ("remove apply on object")
-            /*
+            // --- Apply Rotation ---
             const transform = entity.components[ComponentType.TRANSFORM];
-            if (transformSpace === 'Gimbal') {
-                if (dragState.axis === 'X') transform.rotation.x = dragState.startRotation.x + totalDelta;
-                else if (dragState.axis === 'Y') transform.rotation.y = dragState.startRotation.y + totalDelta;
-                else if (dragState.axis === 'Z') transform.rotation.z = dragState.startRotation.z + totalDelta;
-                engineInstance.notifyUI();
-            } else {
-                // TODO: Implement World/Local Delta Rotation math (Quaternions)
-                // Current implementation is visualization/debug only for those modes
-            }
-            */
-            console.log(`[Gizmo] Mode: ${transformSpace} | Axis: ${dragState.axis} | Delta: ${(totalDelta * (180/Math.PI)).toFixed(1)}°`);
+            
+            // For Gimbal/Euler, we can directly map axis to euler component
+            // For Local/World, this is an approximation but works well for small deltas
+            if (dragState.axis === 'X') transform.rotation.x = dragState.startRotation.x + totalDelta;
+            else if (dragState.axis === 'Y') transform.rotation.y = dragState.startRotation.y + totalDelta;
+            else if (dragState.axis === 'Z') transform.rotation.z = dragState.startRotation.z + totalDelta;
+            
+            engineInstance.notifyUI();
             
             setDragState(prev => prev ? { ...prev, currentAngle: totalDelta } : null);
         };
@@ -347,9 +342,9 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             const shadeOpacity = Math.max(0, 1.0 - intensity);
             const pts = face.indices.map(idx => `${projected[idx].x},${projected[idx].y}`).join(' ');
             return (
-                <g key={i}>
+                <g key={i} className="pointer-events-none">
                     <polygon points={pts} fill={fillStyle} stroke={fillStyle} strokeWidth={0.5} fillOpacity={opacity} strokeLinejoin="round" />
-                    <polygon points={pts} fill="black" fillOpacity={shadeOpacity * 0.4 * opacity} stroke="none" pointerEvents="none"/>
+                    <polygon points={pts} fill="black" fillOpacity={shadeOpacity * 0.4 * opacity} stroke="none" />
                 </g>
             );
         }).filter((f): f is React.ReactElement => f !== null);
@@ -369,6 +364,11 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         
         const isActive = dragState?.axis === axis;
         const isHover = hoverAxis === axis;
+        const isOtherDragging = dragState && dragState.axis !== axis;
+        
+        // Prevent interaction if another axis is being dragged
+        if (isOtherDragging) visibility *= 0.3;
+
         const opacity = visibility * (isActive ? 1.0 : (isHover ? 0.9 : 0.7));
         const finalColor = isActive ? gizmoConfig.axisPressColor : (isHover ? gizmoConfig.axisHoverColor : color);
         
@@ -401,10 +401,10 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         
         return (
             <g
-                onMouseDown={(e) => startDrag(e, axis)}
-                onMouseEnter={() => setHoverAxis(axis)}
+                onMouseDown={(e) => !isOtherDragging && startDrag(e, axis)}
+                onMouseEnter={() => !dragState && setHoverAxis(axis)}
                 onMouseLeave={() => setHoverAxis(null)}
-                className="cursor-pointer"
+                className={isOtherDragging ? "pointer-events-none" : "cursor-pointer"}
             >
                 <defs>
                     <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
@@ -413,20 +413,79 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
                         <stop offset="100%" stopColor={color} stopOpacity={0.4} />
                     </linearGradient>
                 </defs>
-                <polyline points={hitPoints} fill="none" stroke={color} strokeOpacity={0.0001} strokeWidth={20} />
+                <polyline 
+                    points={hitPoints} 
+                    fill="none" 
+                    stroke={color}
+                    strokeOpacity={0.0001} 
+                    strokeWidth={20} 
+                    strokeLinecap="round"
+                />
                 <g>{renderVolumetricMesh(worldVertices, geo.indices, fillStyle, opacity)}</g>
             </g>
         );
     };
     
+    // Determine Render Order: Parent -> Child (Child on top)
+    // XYZ = Z (Parent) -> Y -> X (Child).
+    const renderOrder = useMemo(() => {
+        const transform = entity.components[ComponentType.TRANSFORM];
+        const order = (transform.rotationOrder || 'XYZ') as RotationOrder;
+        const axes = order.split('') as ('X'|'Y'|'Z')[];
+        // Reverse because first axis in Euler string is applied first (so it's the "inner" most local rotation)
+        // Actually, if R = Rz * Ry * Rx. Rx is applied first. It is carried by Ry and Rz.
+        // So Z is the base (Parent). Y is middle. X is tip (Child).
+        // Render order: Z, then Y, then X.
+        // Array reverse gives ['Z', 'Y', 'X'].
+        return [...axes].reverse();
+    }, [entity.components[ComponentType.TRANSFORM].rotationOrder]);
+
+    const getColor = (axis: string) => {
+        if(axis === 'X') return GIZMO_COLORS.X;
+        if(axis === 'Y') return GIZMO_COLORS.Y;
+        return GIZMO_COLORS.Z;
+    };
+
     return (
         <g>
             <circle cx={pCenter.x} cy={pCenter.y} r={scale * gizmoConfig.rotationRingSize * 0.8} fill="black" fillOpacity="0.05" className="pointer-events-none" />
+            
+            {/* Screen Ring (View aligned) - usually rendered behind or overlay depending on pref. Let's put it behind. */}
             {renderTorusRing('VIEW', GIZMO_COLORS.Gray)}
-            {renderTorusRing('X', GIZMO_COLORS.X)}
-            {renderTorusRing('Y', GIZMO_COLORS.Y)}
-            {renderTorusRing('Z', GIZMO_COLORS.Z)}
-            {/* Sector rendering logic same as before (omitted for brevity if needed, but included in full code) */}
+
+            {renderOrder.map(axis => (
+                <React.Fragment key={axis}>
+                    {renderTorusRing(axis as Axis, getColor(axis))}
+                </React.Fragment>
+            ))}
+            
+            {/* Sector rendering logic */}
+            {dragState && dragState.axis !== 'VIEW' && (
+                <g pointerEvents="none" opacity={0.4}>
+                    <path d="" /> {/* Placeholder to maintain structure if needed */}
+                    {/* Simplified Sector for active axis */}
+                    {(() => {
+                        const radius = scale * gizmoConfig.rotationRingSize;
+                        const color = getColor(dragState.axis as string);
+                        const segments = Math.max(8, Math.floor(Math.abs(dragState.currentAngle) * 16 / (2 * Math.PI)));
+                        let pts = `${pCenter.x},${pCenter.y} `;
+                        for (let i = 0; i <= segments; i++) {
+                            const t = i / segments;
+                            const angle = dragState.currentAngle * t;
+                            const theta = dragState.startAngle + angle;
+                            const worldPt = {
+                                x: origin.x + (dragState.u.x * Math.cos(theta) + dragState.v.x * Math.sin(theta)) * radius,
+                                y: origin.y + (dragState.u.y * Math.cos(theta) + dragState.v.y * Math.sin(theta)) * radius,
+                                z: origin.z + (dragState.u.z * Math.cos(theta) + dragState.v.z * Math.sin(theta)) * radius
+                            };
+                            const p = project(worldPt);
+                            pts += `${p.x},${p.y} `;
+                        }
+                        return <polygon points={pts} fill={color} stroke="none" />;
+                    })()}
+                </g>
+            )}
+            
             {dragState && (
                 <g pointerEvents="none">
                     <rect x={pCenter.x - 30} y={pCenter.y - scale * gizmoConfig.rotationRingSize - 35} width={60} height={20} fill="rgba(0,0,0,0.8)" rx={4} />
