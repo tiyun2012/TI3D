@@ -14,6 +14,7 @@ export interface GizmoConfiguration {
     arrowSize: number;
     arrowOffset: number;
     planeHandleSize: number;
+    planeOffset: number; // New Config
     rotationRingSize: number;
     
     rotationRingTubeScale: number;
@@ -27,7 +28,7 @@ export interface GizmoConfiguration {
     axisBaseThickness: number;
     axisHoverThicknessOffset: number;
     axisPressThicknessOffset: number;
-    axisFadeWhenAligned: boolean; // New Config
+    axisFadeWhenAligned: boolean;
 
     centerHandleColor: string;
     centerHandleSize: number;
@@ -40,6 +41,7 @@ export const DEFAULT_GIZMO_CONFIG: GizmoConfiguration = {
     arrowSize: 0.33,
     arrowOffset: 1.0,
     planeHandleSize: 1.0,
+    planeOffset: 0.3,
     rotationRingSize: 1.2,
     
     rotationRingTubeScale: 1.0,

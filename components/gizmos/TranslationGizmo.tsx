@@ -340,7 +340,7 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
 
         if (opacityFactor < 0.1) return null;
 
-        const dist = scale * 0.3;
+        const dist = scale * gizmoConfig.planeOffset; // Use Configured Offset
         const size = scale * 0.2 * gizmoConfig.planeHandleSize;
         const pos = { x: origin.x + (u.x + v.x) * dist, y: origin.y + (u.y + v.y) * dist, z: origin.z + (u.z + v.z) * dist };
         const p1 = pos;

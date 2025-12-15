@@ -1,4 +1,3 @@
-Markdown
 
 # Translation Gizmo Architecture
 
@@ -33,55 +32,69 @@ graph TD
     D -->|Update Position| F[Entity Component Storage]
     F -->|notifyUI| G[Engine Instance]
     G -->|Re-render| A
-Class & Data Structures
-GizmoBasis (from GizmoUtils.ts)
-Derived in the parent Gizmo.tsx and passed down. This isolates the math of "where is the object" from the drawing logic.
+```
 
-origin: Vector3 - The world position of the entity.
+## Interaction Logic
 
-xAxis, yAxis, zAxis: Vector3 - Normalized direction vectors for the local coordinate system.
+The Translation Gizmo employs two distinct strategies for movement to ensure the most intuitive user experience depending on the active handle.
 
-cameraPosition: Vector3 - Used for calculating distance scaling and opacity fading.
+### 1. Axis Dragging (1D Movement)
+**Strategy: Screen-Space Projection**
 
-dragState (Local State)
-Maintains the context of an active drag operation.
+When dragging a single axis (X, Y, or Z), the user expects the object to slide along that specific line.
+1.  **Projection:** We calculate the 2D screen vector of the 3D axis.
+2.  **Dot Product:** We project the mouse delta (dx, dy) onto this normalized 2D screen vector.
+3.  **Result:** This ensures that moving the mouse *visually parallel* to the axis line on screen moves the object, regardless of the actual 3D orientation.
 
-axis: 'X' | 'Y' | 'Z' | 'XY' ... - The constrained axis of movement.
+```typescript
+const proj = dx * screenAxis.x + dy * screenAxis.y;
+const moveAmount = proj * distanceFactor;
+```
 
-startPos: Vector3 - The entity's position when the drag started.
+### 2. Plane Dragging (2D Movement)
+**Strategy: Ray-Plane Intersection**
 
-screenAxis: {x, y} - The 2D projected vector of the 3D axis on screen (used for calculating mouse delta projection).
+When dragging a plane handle (XY, XZ, YZ), the user expects the object to follow the mouse cursor as if sliding on a surface. Screen-space projection is insufficient here because it handles perspective distortion poorly for 2D surfaces.
 
-Interaction Logic
-1. Visibility & Fading
-To prevent visual clutter and "gimbal lock" confusion, axes fade out when they point directly at the camera.
+1.  **Raycasting:** We cast a ray from the camera through the mouse cursor using the Inverse View-Projection Matrix (`invViewProj`).
+2.  **Intersection:** We calculate where this ray intersects the mathematical plane defined by the gizmo's origin and the plane's normal (e.g., Normal=(0,1,0) for the XZ plane).
+3.  **Offset:** To prevent the object center snapping to the mouse immediately, we store a `planeHitOffset` at the start of the drag.
+    
+    `newPosition = hitPoint - planeHitOffset`
 
-Function: GizmoMath.getAxisOpacity(axisVec, cameraPos, origin)
+### 3. View-Dependent Stability
+To prevent visual confusion and interaction issues when the camera angle aligns poorly with gizmo handles, the gizmo adapts its visibility:
 
-Logic: Calculates the Dot Product between the Axis Vector and View Vector. If dot > 0.9 (nearly parallel), opacity is reduced.
+*   **Axis Fading:** An arrow fades out when it points directly at the camera (Dot(ViewDir, Axis) > 0.9). This prevents trying to drag an axis that has no screen length.
+*   **Plane Fading:** A plane handle fades out when viewed "edge-on" (Dot(ViewDir, PlaneNormal) < 0.2). This prevents clicking a plane that effectively has zero surface area on screen.
 
-2. Dragging (Mouse Move)
-The gizmo listens to global window events during a drag.
+## Key Data Structures
 
-Axis Move: Projects the mouse delta (dx, dy) onto the screenAxis vector.
+### DragState
+The `dragState` object in `TranslationGizmo.tsx` captures the necessary context to perform these calculations efficiently without re-querying the DOM or SceneGraph unnecessarily.
 
-Plane Move: Adds the raw mouse delta to the two corresponding axes.
+```typescript
+{
+    axis: Axis;             // The active handle (e.g., 'X', 'XZ')
+    startX: number;         // Mouse X at drag start
+    startY: number;         // Mouse Y at drag start
+    startPos: Vector3;      // Entity position at drag start
+    
+    // For Axis Dragging
+    screenAxis: { x, y };   // The 2D unit vector of the axis on screen
+    axisVector: Vector3;    // The 3D direction of the axis
+    
+    // For Plane Dragging
+    planeNormal: Vector3;   // The normal vector of the active plane
+    planeHitOffset: Vector3;// Vector from intersection point to origin at start
+}
+```
 
-View Move (Center Handle): Moves the object parallel to the camera's view plane using a calculated cameraBasis.
-
-Distance Factor: Movement is scaled by the distance from the camera to keep dragging feeling 1:1 with the mouse cursor regardless of how far away the object is.
-
-TypeScript
-
-const factor = distance * 0.002;
-const moveAmount = projectedDelta * factor;
-Customization (GizmoConfig)
+### Customization (GizmoConfig)
 Developers can customize the gizmo via EditorContext. Key properties used by TranslationGizmo:
 
-translationShape: 'CONE' | 'CUBE' | 'TETRAHEDRON' | 'RHOMBUS' - Changes the 3D mesh generated for arrowheads.
-
-arrowSize: Scales the arrowhead mesh.
-
-arrowOffset: Adjusts how far the arrowhead sits from the origin.
-
-axisHoverColor / axisPressColor: Interaction feedback colors.
+*   `translationShape`: 'CONE' | 'CUBE' | 'TETRAHEDRON' | 'RHOMBUS' - Changes the 3D mesh generated for arrowheads.
+*   `arrowSize`: Scales the arrowhead mesh.
+*   `arrowOffset`: Adjusts how far the arrowhead sits from the origin.
+*   `axisHoverColor` / `axisPressColor`: Interaction feedback colors.
+*   `axisFadeWhenAligned`: Toggle to enable/disable the view-dependent fading logic.

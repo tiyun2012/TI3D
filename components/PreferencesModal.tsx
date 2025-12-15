@@ -126,6 +126,41 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                 </div>
             </div>
 
+            {/* Section: Plane Handles */}
+            <div className="space-y-3">
+                <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
+                    <Icon name="Square" size={12} /> Plane Handles
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-input-bg p-3 rounded border border-white/5">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase">Size</span>
+                            <span className="text-[10px] font-mono text-white">{gizmoConfig.planeHandleSize.toFixed(2)}</span>
+                        </div>
+                        <input 
+                            type="range" min="0.5" max="2.0" step="0.1" 
+                            className="w-full cursor-pointer"
+                            value={gizmoConfig.planeHandleSize} 
+                            onChange={(e) => updateConfig('planeHandleSize', parseFloat(e.target.value))} 
+                            aria-label="Plane Size"
+                        />
+                    </div>
+                    <div className="bg-input-bg p-3 rounded border border-white/5">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase">Offset</span>
+                            <span className="text-[10px] font-mono text-white">{gizmoConfig.planeOffset.toFixed(2)}</span>
+                        </div>
+                        <input 
+                            type="range" min="0.1" max="1.0" step="0.05" 
+                            className="w-full cursor-pointer"
+                            value={gizmoConfig.planeOffset} 
+                            onChange={(e) => updateConfig('planeOffset', parseFloat(e.target.value))} 
+                            aria-label="Plane Offset"
+                        />
+                    </div>
+                </div>
+            </div>
+
             {/* Section: Rotation Ring Settings */}
             <div className="space-y-3">
                 <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
