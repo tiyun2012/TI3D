@@ -1,28 +1,31 @@
 
-import { StaticMeshAsset, MaterialAsset, GraphNode, GraphConnection } from '../types';
+import { StaticMeshAsset, MaterialAsset, PhysicsMaterialAsset, GraphNode, GraphConnection, Asset } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 
 class AssetManagerService {
-    assets = new Map<string, StaticMeshAsset | MaterialAsset>();
+    assets = new Map<string, Asset>();
     
     // Maps internal integer ID (for ECS/Renderer) to Asset UUID
     meshIntToUuid = new Map<number, string>();
     meshUuidToInt = new Map<string, number>();
     
-    // Material Int Mapping
     matIntToUuid = new Map<number, string>();
     matUuidToInt = new Map<string, number>();
+    
+    physMatIntToUuid = new Map<number, string>();
+    physMatUuidToInt = new Map<string, number>();
 
     private nextMeshIntId = 100; 
-    private nextMatIntId = 1; // 0 is usually default/error
+    private nextMatIntId = 1; 
+    private nextPhysMatIntId = 1;
 
     constructor() {
         this.registerDefaultAssets();
-        // Register default material as ID 1 (Standard)
         this.createMaterial('Standard', MATERIAL_TEMPLATES[1]);
+        this.createDefaultPhysicsMaterials();
     }
 
-    registerAsset(asset: StaticMeshAsset | MaterialAsset): number {
+    registerAsset(asset: Asset): number {
         this.assets.set(asset.id, asset);
         
         if (asset.type === 'MESH') {
@@ -37,6 +40,12 @@ class AssetManagerService {
             this.matIntToUuid.set(intId, asset.id);
             this.matUuidToInt.set(asset.id, intId);
             return intId;
+        } else if (asset.type === 'PHYSICS_MATERIAL') {
+            if (this.physMatUuidToInt.has(asset.id)) return this.physMatUuidToInt.get(asset.id)!;
+            const intId = this.nextPhysMatIntId++;
+            this.physMatIntToUuid.set(intId, asset.id);
+            this.physMatUuidToInt.set(asset.id, intId);
+            return intId;
         }
         return 0;
     }
@@ -47,12 +56,15 @@ class AssetManagerService {
 
     getMeshID(uuid: string): number { return this.meshUuidToInt.get(uuid) || 0; }
     getMaterialID(uuid: string): number { return this.matUuidToInt.get(uuid) || 0; }
+    getPhysicsMaterialID(uuid: string): number { return this.physMatUuidToInt.get(uuid) || 0; }
+    
+    getPhysicsMaterialUUID(intId: number): string | undefined { return this.physMatIntToUuid.get(intId); }
 
     getAllAssets() {
         return Array.from(this.assets.values());
     }
     
-    getAssetsByType(type: 'MESH' | 'MATERIAL') {
+    getAssetsByType(type: Asset['type']) {
         return Array.from(this.assets.values()).filter(a => a.type === type);
     }
 
@@ -62,7 +74,6 @@ class AssetManagerService {
         const id = crypto.randomUUID();
         const base = template || MATERIAL_TEMPLATES[0];
         
-        // Deep copy nodes/connections to avoid reference issues
         const nodes = JSON.parse(JSON.stringify(base.nodes));
         const connections = JSON.parse(JSON.stringify(base.connections));
 
@@ -70,23 +81,37 @@ class AssetManagerService {
             id,
             name,
             type: 'MATERIAL',
-            data: {
-                nodes,
-                connections,
-                glsl: ''
-            }
+            data: { nodes, connections, glsl: '' }
         };
         this.registerAsset(mat);
         return mat;
     }
 
-    duplicateMaterial(sourceId: string): MaterialAsset | null {
-        const source = this.assets.get(sourceId);
-        if (!source || source.type !== 'MATERIAL') return null;
+    createPhysicsMaterial(name: string, data?: PhysicsMaterialAsset['data']): PhysicsMaterialAsset {
+        const id = crypto.randomUUID();
+        const asset: PhysicsMaterialAsset = {
+            id,
+            name,
+            type: 'PHYSICS_MATERIAL',
+            data: data || { staticFriction: 0.6, dynamicFriction: 0.6, bounciness: 0.0, density: 1.0 }
+        };
+        this.registerAsset(asset);
+        return asset;
+    }
 
-        const newMat = this.createMaterial(`${source.name} (Clone)`);
-        newMat.data = JSON.parse(JSON.stringify(source.data));
-        return newMat;
+    duplicateMaterial(sourceId: string): Asset | null {
+        const source = this.assets.get(sourceId);
+        if (!source) return null;
+
+        if (source.type === 'MATERIAL') {
+            const newMat = this.createMaterial(`${source.name} (Clone)`);
+            newMat.data = JSON.parse(JSON.stringify(source.data));
+            return newMat;
+        } else if (source.type === 'PHYSICS_MATERIAL') {
+            const newMat = this.createPhysicsMaterial(`${source.name} (Clone)`, JSON.parse(JSON.stringify(source.data)));
+            return newMat;
+        }
+        return null;
     }
 
     saveMaterial(id: string, nodes: GraphNode[], connections: GraphConnection[], glsl: string) {
@@ -96,85 +121,62 @@ class AssetManagerService {
             console.log(`[AssetManager] Saved Material: ${asset.name}`);
         }
     }
+    
+    updatePhysicsMaterial(id: string, data: Partial<PhysicsMaterialAsset['data']>) {
+        const asset = this.assets.get(id);
+        if (asset && asset.type === 'PHYSICS_MATERIAL') {
+            asset.data = { ...asset.data, ...data };
+        }
+    }
+
+    private createDefaultPhysicsMaterials() {
+        this.createPhysicsMaterial("Concrete", { staticFriction: 0.8, dynamicFriction: 0.6, bounciness: 0.1, density: 2400 });
+        this.createPhysicsMaterial("Ice", { staticFriction: 0.1, dynamicFriction: 0.05, bounciness: 0.05, density: 900 });
+        this.createPhysicsMaterial("Rubber", { staticFriction: 0.9, dynamicFriction: 0.8, bounciness: 0.8, density: 1100 });
+        this.createPhysicsMaterial("Bouncy Ball", { staticFriction: 0.5, dynamicFriction: 0.5, bounciness: 0.95, density: 100 });
+    }
 
     private registerDefaultAssets() {
-        // 1. Cylinder
+        // Primitives registration (omitted for brevity, same as before)
         this.registerAsset(this.createPrimitive('Cylinder', (segs) => {
             const v=[], n=[], u=[], idx=[];
-            const segments = 24;
-            const radius = 0.5;
-            const height = 1.0;
-            const halfH = height/2;
-
-            // Side
+            const segments = 24; const radius = 0.5; const height = 1.0; const halfH = height/2;
             for(let i=0; i<=segments; i++) {
-                const theta = (i/segments) * Math.PI * 2;
-                const x = Math.cos(theta) * radius;
-                const z = Math.sin(theta) * radius;
-                v.push(x, halfH, z); n.push(x, 0, z); u.push(i/segments, 0);
-                v.push(x, -halfH, z); n.push(x, 0, z); u.push(i/segments, 1);
+                const theta = (i/segments) * Math.PI * 2; const x = Math.cos(theta) * radius; const z = Math.sin(theta) * radius;
+                v.push(x, halfH, z); n.push(x, 0, z); u.push(i/segments, 0); v.push(x, -halfH, z); n.push(x, 0, z); u.push(i/segments, 1);
             }
-            
-            for(let i=0; i<segments; i++) {
-                const base = i*2;
-                idx.push(base, base+1, base+2);
-                idx.push(base+1, base+3, base+2);
-            }
+            for(let i=0; i<segments; i++) { const base = i*2; idx.push(base, base+1, base+2, base+1, base+3, base+2); }
             return { v, n, u, idx };
         }));
-
-        // 2. Cone
         this.registerAsset(this.createPrimitive('Cone', () => {
             const v=[], n=[], u=[], idx=[];
-            const segments = 24;
-            const radius = 0.5;
-            const height = 1.0;
-            const halfH = height/2;
+            const segments = 24; const radius = 0.5; const height = 1.0; const halfH = height/2;
             v.push(0, halfH, 0); n.push(0, 1, 0); u.push(0.5, 0); 
             for(let i=0; i<=segments; i++) {
-                const theta = (i/segments) * Math.PI * 2;
-                const x = Math.cos(theta) * radius;
-                const z = Math.sin(theta) * radius;
+                const theta = (i/segments) * Math.PI * 2; const x = Math.cos(theta) * radius; const z = Math.sin(theta) * radius;
                 v.push(x, -halfH, z); n.push(x, 0.5, z); u.push(i/segments, 1);
             }
             for(let i=1; i<=segments; i++) idx.push(0, i, i+1);
             return { v, n, u, idx };
         }));
-
-        // 3. Sphere
         this.registerAsset(this.createPrimitive('Sphere', () => {
-            const radius = 0.5;
-            const latBands = 24;
-            const longBands = 24;
-            const v=[], n=[], u=[], idx=[];
+            const radius = 0.5; const latBands = 24; const longBands = 24; const v=[], n=[], u=[], idx=[];
             for (let lat = 0; lat <= latBands; lat++) {
-                const theta = lat * Math.PI / latBands;
-                const sinTheta = Math.sin(theta);
-                const cosTheta = Math.cos(theta);
+                const theta = lat * Math.PI / latBands; const sinTheta = Math.sin(theta); const cosTheta = Math.cos(theta);
                 for (let lon = 0; lon <= longBands; lon++) {
-                    const phi = lon * 2 * Math.PI / longBands;
-                    const sinPhi = Math.sin(phi);
-                    const cosPhi = Math.cos(phi);
-                    const x = cosPhi * sinTheta;
-                    const y = cosTheta;
-                    const z = sinPhi * sinTheta;
-                    n.push(x, y, z);
-                    u.push(1 - (lon / longBands), 1 - (lat / latBands));
-                    v.push(x * radius, y * radius, z * radius);
+                    const phi = lon * 2 * Math.PI / longBands; const sinPhi = Math.sin(phi); const cosPhi = Math.cos(phi);
+                    const x = cosPhi * sinTheta; const y = cosTheta; const z = sinPhi * sinTheta;
+                    n.push(x, y, z); u.push(1 - (lon / longBands), 1 - (lat / latBands)); v.push(x * radius, y * radius, z * radius);
                 }
             }
             for (let lat = 0; lat < latBands; lat++) {
                 for (let lon = 0; lon < longBands; lon++) {
-                    const first = (lat * (longBands + 1)) + lon;
-                    const second = first + longBands + 1;
-                    idx.push(first, second, first + 1);
-                    idx.push(second, second + 1, first + 1);
+                    const first = (lat * (longBands + 1)) + lon; const second = first + longBands + 1;
+                    idx.push(first, second, first + 1, second, second + 1, first + 1);
                 }
             }
             return { v, n, u, idx };
         }));
-
-        // 4. Cube
         this.registerAsset(this.createPrimitive('Cube', () => {
             const v = [ -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,0.5,0.5, -0.5,0.5,0.5, 0.5,-0.5,-0.5, -0.5,-0.5,-0.5, -0.5,0.5,-0.5, 0.5,0.5,-0.5, -0.5,0.5,0.5, 0.5,0.5,0.5, 0.5,0.5,-0.5, -0.5,0.5,-0.5, -0.5,-0.5,-0.5, 0.5,-0.5,-0.5, 0.5,-0.5,0.5, -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,-0.5,-0.5, 0.5,0.5,-0.5, 0.5,0.5,0.5, -0.5,-0.5,-0.5, -0.5,-0.5,0.5, -0.5,0.5,0.5, -0.5,0.5,-0.5 ];
             const n = [ 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0 ];

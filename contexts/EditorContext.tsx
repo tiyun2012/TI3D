@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Entity, ToolType, TransformSpace } from '../types';
+import { Entity, ToolType, TransformSpace, SelectionType } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
 import { GizmoConfiguration } from '../components/gizmos/GizmoUtils';
 
@@ -23,8 +23,12 @@ export const DEFAULT_UI_CONFIG: UIConfiguration = {
 export interface EditorContextType {
   entities: Entity[];
   sceneGraph: SceneGraph;
+  
   selectedIds: string[];
   setSelectedIds: (ids: string[]) => void;
+  selectionType: SelectionType;
+  setSelectionType: (type: SelectionType) => void;
+
   tool: ToolType;
   setTool: (tool: ToolType) => void;
   transformSpace: TransformSpace;

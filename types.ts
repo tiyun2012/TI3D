@@ -48,6 +48,7 @@ export interface GraphConnection {
 // Editor Types
 export type EditorMode = 'SCENE' | 'GAME' | 'SCRIPT';
 export type ToolType = 'SELECT' | 'MOVE' | 'ROTATE' | 'SCALE';
+export type SelectionType = 'ENTITY' | 'ASSET';
 
 export interface PerformanceMetrics {
   fps: number;
@@ -58,7 +59,7 @@ export interface PerformanceMetrics {
 }
 
 // Asset Types
-export type AssetType = 'MESH' | 'MATERIAL' | 'TEXTURE' | 'SCRIPT';
+export type AssetType = 'MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'TEXTURE' | 'SCRIPT';
 
 export interface StaticMeshAsset {
     id: string;
@@ -83,3 +84,17 @@ export interface MaterialAsset {
         glsl: string; // Compiled Source
     };
 }
+
+export interface PhysicsMaterialAsset {
+    id: string;
+    name: string;
+    type: 'PHYSICS_MATERIAL';
+    data: {
+        staticFriction: number;
+        dynamicFriction: number;
+        bounciness: number; // Restitution (0-1)
+        density: number;
+    };
+}
+
+export type Asset = StaticMeshAsset | MaterialAsset | PhysicsMaterialAsset;

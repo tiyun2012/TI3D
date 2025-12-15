@@ -40,6 +40,7 @@ export class ComponentStorage {
     // --- Physics ---
     mass = new Float32Array(this.capacity);
     useGravity = new Uint8Array(this.capacity);
+    physicsMaterialIndex = new Int32Array(this.capacity); // ID from AssetManager
 
     // --- Metadata ---
     isActive = new Uint8Array(this.capacity);
@@ -181,6 +182,7 @@ export class ComponentStorage {
         
         this.mass = resizeFloat(this.mass);
         this.useGravity = resizeUint8(this.useGravity);
+        this.physicsMaterialIndex = resizeInt32(this.physicsMaterialIndex);
         
         this.isActive = resizeUint8(this.isActive);
         this.generation = resizeUint32(this.generation);
@@ -211,6 +213,7 @@ export class ComponentStorage {
             colorR: new Float32Array(this.colorR), colorG: new Float32Array(this.colorG), colorB: new Float32Array(this.colorB),
             mass: new Float32Array(this.mass),
             useGravity: new Uint8Array(this.useGravity),
+            physicsMaterialIndex: new Int32Array(this.physicsMaterialIndex),
             isActive: new Uint8Array(this.isActive),
             generation: new Uint32Array(this.generation),
             names: [...this.names],
@@ -235,6 +238,8 @@ export class ComponentStorage {
         
         this.mass.set(snap.mass);
         this.useGravity.set(snap.useGravity);
+        if(snap.physicsMaterialIndex) this.physicsMaterialIndex.set(snap.physicsMaterialIndex);
+        
         this.isActive.set(snap.isActive);
         this.generation.set(snap.generation);
         

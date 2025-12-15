@@ -38,6 +38,7 @@ export class SoAEntitySystem {
         this.store.meshType[index] = 0;
         this.store.textureIndex[index] = 0;
         this.store.colorR[index] = 1; this.store.colorG[index] = 1; this.store.colorB[index] = 1;
+        this.store.physicsMaterialIndex[index] = 0;
         
         this.idToIndex.set(id, index);
         return id;
@@ -132,7 +133,9 @@ export class SoAEntitySystem {
                     get mass() { return store.mass[index]; },
                     set mass(v: number) { store.mass[index] = v; },
                     get useGravity() { return !!store.useGravity[index]; },
-                    set useGravity(v: boolean) { store.useGravity[index] = v ? 1 : 0; }
+                    set useGravity(v: boolean) { store.useGravity[index] = v ? 1 : 0; },
+                    get physicsMaterialId() { return store.physicsMaterialIndex[index]; },
+                    set physicsMaterialId(v: number) { store.physicsMaterialIndex[index] = v; }
                 } as any,
 
                 [ComponentType.LIGHT]: { type: ComponentType.LIGHT, intensity: 1, color: '#ffffff' },
@@ -174,9 +177,13 @@ export class SoAEntitySystem {
                 rotationOrder: Array.from(this.store.rotationOrder.subarray(0, this.count + 1)),
                 meshType: Array.from(this.store.meshType.subarray(0, this.count + 1)),
                 textureIndex: Array.from(this.store.textureIndex.subarray(0, this.count + 1)),
+                materialIndex: Array.from(this.store.materialIndex.subarray(0, this.count + 1)),
                 colorR: Array.from(this.store.colorR.subarray(0, this.count + 1)),
                 colorG: Array.from(this.store.colorG.subarray(0, this.count + 1)),
                 colorB: Array.from(this.store.colorB.subarray(0, this.count + 1)),
+                mass: Array.from(this.store.mass.subarray(0, this.count + 1)),
+                useGravity: Array.from(this.store.useGravity.subarray(0, this.count + 1)),
+                physicsMaterialIndex: Array.from(this.store.physicsMaterialIndex.subarray(0, this.count + 1)),
                 isActive: Array.from(this.store.isActive.subarray(0, this.count + 1)),
                 names: this.store.names.slice(0, this.count + 1),
                 ids: this.store.ids.slice(0, this.count + 1)
@@ -197,6 +204,7 @@ export class SoAEntitySystem {
             
             // Helper to fill
             const fill = (arr: any, source: any[]) => {
+                if(!source) return;
                 for(let i=0; i<source.length; i++) arr[i] = source[i];
             };
 
@@ -209,19 +217,22 @@ export class SoAEntitySystem {
             fill(this.store.scaleX, data.store.scaleX);
             fill(this.store.scaleY, data.store.scaleY);
             fill(this.store.scaleZ, data.store.scaleZ);
-            if(data.store.rotationOrder) fill(this.store.rotationOrder, data.store.rotationOrder);
+            fill(this.store.rotationOrder, data.store.rotationOrder);
             
             fill(this.store.meshType, data.store.meshType);
             fill(this.store.textureIndex, data.store.textureIndex);
+            fill(this.store.materialIndex, data.store.materialIndex);
+            
             fill(this.store.colorR, data.store.colorR);
             fill(this.store.colorG, data.store.colorG);
             fill(this.store.colorB, data.store.colorB);
+            
+            fill(this.store.mass, data.store.mass);
+            fill(this.store.useGravity, data.store.useGravity);
+            fill(this.store.physicsMaterialIndex, data.store.physicsMaterialIndex);
+            
             fill(this.store.isActive, data.store.isActive);
-            
-            // this.store.names = new Array(this.store.capacity);
             fill(this.store.names, data.store.names);
-            
-            // this.store.ids = new Array(this.store.capacity);
             fill(this.store.ids, data.store.ids);
 
             this.idToIndex.forEach((idx, id) => {

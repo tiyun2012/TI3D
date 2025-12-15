@@ -1,14 +1,16 @@
 
 import React, { useState, useRef, useEffect, useContext } from 'react';
-import { Entity, Component, ComponentType, Vector3, RotationOrder, TransformSpace } from '../types';
+import { Entity, Component, ComponentType, Vector3, RotationOrder, TransformSpace, Asset, PhysicsMaterialAsset } from '../types';
 import { engineInstance } from '../services/engine';
+import { assetManager } from '../services/AssetManager';
 import { Icon } from './Icon';
 import { ROTATION_ORDERS } from '../services/constants';
 import { EditorContext } from '../contexts/EditorContext';
 
 interface InspectorPanelProps {
-  entity: Entity | null;
+  object: Entity | Asset | null; // Can inspect Entity or Asset
   selectionCount?: number;
+  type?: 'ENTITY' | 'ASSET';
 }
 
 // --- Reusable UI Controls ---
@@ -142,6 +144,7 @@ const ComponentCard: React.FC<{
 }> = ({ component, title, icon, onUpdate, onStartUpdate, onCommit }) => {
   const [open, setOpen] = useState(true);
   const editorCtx = useContext(EditorContext);
+  const physicsMaterials = assetManager.getAssetsByType('PHYSICS_MATERIAL');
 
   const handleAtomicChange = (field: string, value: any) => {
       if(onStartUpdate) onStartUpdate();
@@ -314,10 +317,6 @@ const ComponentCard: React.FC<{
                <DraggableNumber label="" value={component.mass} onChange={(v) => onUpdate('mass', v)} onStart={onStartUpdate} onCommit={onCommit} step={0.1} />
             </div>
             <div className="flex items-center gap-2">
-               <span className="w-24 text-text-secondary">Drag</span>
-               <DraggableNumber label="" value={0.5} onChange={()=>{}} step={0.05} />
-            </div>
-            <div className="flex items-center gap-2">
                <span className="w-24 text-text-secondary">Use Gravity</span>
                <input 
                   type="checkbox" 
@@ -326,9 +325,21 @@ const ComponentCard: React.FC<{
                   aria-label="Use Gravity"
                 />
             </div>
-            <div className="flex items-center gap-2">
-               <span className="w-24 text-text-secondary">Is Kinematic</span>
-               <input type="checkbox" aria-label="Is Kinematic" />
+            
+            {/* Physics Material Selection */}
+            <div className="flex items-center gap-2 mt-2">
+               <span className="w-24 text-text-secondary">Material</span>
+               <select 
+                  className="flex-1 bg-input-bg rounded p-1 outline-none border border-transparent focus:border-accent text-white text-xs"
+                  value={component.physicsMaterialId || 0}
+                  onChange={(e) => handleAtomicChange('physicsMaterialId', parseInt(e.target.value))}
+                  aria-label="Physics Material"
+               >
+                   <option value={0}>None</option>
+                   {physicsMaterials.map(mat => (
+                       <option key={mat.id} value={assetManager.getPhysicsMaterialID(mat.id)}>{mat.name}</option>
+                   ))}
+               </select>
             </div>
           </>
         )}
@@ -337,39 +348,50 @@ const ComponentCard: React.FC<{
   );
 };
 
-export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectionCount = 0 }) => {
+export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectionCount = 0, type = 'ENTITY' }) => {
   const [name, setName] = useState('');
+  const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
-    if (entity) setName(entity.name);
-  }, [entity]);
+    if (object) setName(object.name);
+  }, [object]);
 
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setName(e.target.value);
   };
 
   const handleNameCommit = () => {
-      if (entity && entity.name !== name) {
-          engineInstance.pushUndoState();
-          entity.name = name;
+      if (object && object.name !== name) {
+          if(type === 'ENTITY') engineInstance.pushUndoState();
+          object.name = name;
           engineInstance.notifyUI();
       }
   };
 
   const startUpdate = () => {
-      engineInstance.pushUndoState();
+      if(type === 'ENTITY') engineInstance.pushUndoState();
   };
 
-  const updateComponent = (type: ComponentType, field: string, value: any) => {
-      if (!entity) return;
-      const comp = entity.components[type];
+  const updateComponent = (compType: ComponentType, field: string, value: any) => {
+      if (type !== 'ENTITY' || !object) return;
+      const entity = object as Entity;
+      const comp = entity.components[compType];
       if (comp) {
           (comp as any)[field] = value;
           engineInstance.notifyUI();
       }
   };
+  
+  const updateAssetData = (field: string, value: any) => {
+      if (type !== 'ASSET' || !object) return;
+      const asset = object as PhysicsMaterialAsset; // Safe cast contextually
+      if (asset.type === 'PHYSICS_MATERIAL') {
+          assetManager.updatePhysicsMaterial(asset.id, { [field]: value });
+          setRefresh(r => r + 1); // Local refresh
+      }
+  };
 
-  if (!entity) {
+  if (!object) {
     return (
         <div className="h-full bg-panel flex flex-col items-center justify-center text-text-secondary select-none">
             <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-4">
@@ -382,6 +404,78 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectio
     );
   }
 
+  // --- ASSET INSPECTOR ---
+  if (type === 'ASSET') {
+      const asset = object as Asset;
+      return (
+        <div className="h-full bg-panel flex flex-col font-sans border-l border-black/20">
+            <div className="p-4 border-b border-black/20 bg-panel-header flex items-center gap-3">
+                 <div className="w-8 h-8 bg-green-600 rounded flex items-center justify-center text-white shadow-sm shrink-0">
+                     <Icon name={asset.type === 'PHYSICS_MATERIAL' ? 'Activity' : 'File'} size={16} />
+                 </div>
+                 <div className="flex-1 min-w-0">
+                     <input 
+                         type="text" 
+                         value={name}
+                         onChange={handleNameChange}
+                         onBlur={handleNameCommit}
+                         className="w-full bg-transparent text-sm font-bold text-white outline-none border-b border-transparent focus:border-accent transition-colors truncate"
+                     />
+                     <div className="text-[10px] text-text-secondary font-mono mt-0.5 truncate select-all opacity-50">
+                         {asset.type}
+                     </div>
+                 </div>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
+                {asset.type === 'PHYSICS_MATERIAL' && (
+                    <div className="space-y-4">
+                        <div className="text-xs font-bold text-text-secondary uppercase border-b border-white/5 pb-1">Properties</div>
+                        <DraggableNumber 
+                            label="Static Friction" 
+                            value={(asset as PhysicsMaterialAsset).data.staticFriction} 
+                            onChange={(v) => updateAssetData('staticFriction', v)} 
+                            step={0.05}
+                        />
+                        <DraggableNumber 
+                            label="Dynamic Friction" 
+                            value={(asset as PhysicsMaterialAsset).data.dynamicFriction} 
+                            onChange={(v) => updateAssetData('dynamicFriction', v)} 
+                            step={0.05}
+                        />
+                        <DraggableNumber 
+                            label="Bounciness" 
+                            value={(asset as PhysicsMaterialAsset).data.bounciness} 
+                            onChange={(v) => updateAssetData('bounciness', v)} 
+                            step={0.05}
+                        />
+                        <DraggableNumber 
+                            label="Density" 
+                            value={(asset as PhysicsMaterialAsset).data.density} 
+                            onChange={(v) => updateAssetData('density', v)} 
+                            step={10}
+                        />
+                    </div>
+                )}
+                
+                {asset.type === 'MATERIAL' && (
+                    <div className="text-center text-text-secondary text-xs mt-10">
+                        Use the Node Graph editor to modify Shader Materials.
+                        <button 
+                            className="block mx-auto mt-4 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded"
+                            onClick={() => { /* Handled via double click in project panel */ }}
+                        >
+                            Open Node Graph
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
+      );
+  }
+
+  // --- ENTITY INSPECTOR ---
+  const entity = object as Entity;
   return (
     <div className="h-full bg-panel flex flex-col font-sans border-l border-black/20">
       {/* Header */}

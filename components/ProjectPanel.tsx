@@ -9,10 +9,10 @@ import { engineInstance } from '../services/engine';
 
 export const ProjectPanel: React.FC = () => {
     const [tab, setTab] = useState<'PROJECT' | 'CONSOLE'>('PROJECT');
-    const [filter, setFilter] = useState<'ALL' | 'MESH' | 'MATERIAL'>('ALL');
+    const [filter, setFilter] = useState<'ALL' | 'MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL'>('ALL');
     const [search, setSearch] = useState('');
     const [scale, setScale] = useState(40);
-    const { setEditingMaterialId } = useContext(EditorContext)!;
+    const { setEditingMaterialId, setSelectedIds, setSelectionType } = useContext(EditorContext)!;
     const wm = useContext(WindowManagerContext);
     
     // UI State
@@ -39,6 +39,11 @@ export const ProjectPanel: React.FC = () => {
         e.dataTransfer.effectAllowed = 'copy';
     };
 
+    const handleClick = (assetId: string) => {
+        setSelectedIds([assetId]);
+        setSelectionType('ASSET');
+    };
+
     const handleDoubleClick = (assetId: string) => {
         const asset = assetManager.getAsset(assetId);
         if (asset && asset.type === 'MATERIAL') {
@@ -51,6 +56,8 @@ export const ProjectPanel: React.FC = () => {
         e.preventDefault();
         e.stopPropagation();
         setContextMenu({ x: e.clientX, y: e.clientY, assetId, visible: true });
+        // Also select it
+        handleClick(assetId);
     };
 
     // Actions
@@ -60,19 +67,18 @@ export const ProjectPanel: React.FC = () => {
         setRefresh(r => r + 1);
     };
 
+    const createPhysicsMaterial = () => {
+        assetManager.createPhysicsMaterial(`New Physics Mat ${Math.floor(Math.random() * 1000)}`);
+        setRefresh(r => r + 1);
+    };
+
     const duplicateAsset = (id: string) => {
-        const asset = assetManager.getAsset(id);
-        if (asset && asset.type === 'MATERIAL') {
-            assetManager.duplicateMaterial(id);
-            setRefresh(r => r + 1);
-        }
+        assetManager.duplicateMaterial(id);
+        setRefresh(r => r + 1);
     };
 
     const applyMaterial = (assetId: string) => {
-        const asset = assetManager.getAsset(assetId);
-        if (asset && asset.type === 'MATERIAL') {
-            engineInstance.applyMaterialToSelected(assetId);
-        }
+        engineInstance.applyMaterialToSelected(assetId);
     };
 
     return (
@@ -119,6 +125,14 @@ export const ProjectPanel: React.FC = () => {
                                             {tpl.name}
                                         </div>
                                     ))}
+                                    <div className="border-t border-white/10 my-1"></div>
+                                    <div className="px-3 py-1 text-[9px] text-text-secondary uppercase font-bold tracking-wider opacity-50">Physics</div>
+                                    <div 
+                                        className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer"
+                                        onClick={() => createPhysicsMaterial()}
+                                    >
+                                        Physics Material
+                                    </div>
                                 </div>
                             )}
                         </div>
@@ -146,12 +160,14 @@ export const ProjectPanel: React.FC = () => {
 
             {/* Breadcrumbs / Filters (Project Mode) */}
             {tab === 'PROJECT' && (
-                <div className="bg-panel flex items-center gap-2 px-3 py-1.5 text-xs border-b border-black/10">
-                    <button onClick={() => setFilter('ALL')} className={`hover:text-white ${filter === 'ALL' ? 'text-white font-bold' : 'text-text-secondary'}`}>All</button>
+                <div className="bg-panel flex items-center gap-2 px-3 py-1.5 text-xs border-b border-black/10 overflow-x-auto">
+                    <button onClick={() => setFilter('ALL')} className={`hover:text-white whitespace-nowrap ${filter === 'ALL' ? 'text-white font-bold' : 'text-text-secondary'}`}>All</button>
                     <span className="text-white/10">|</span>
-                    <button onClick={() => setFilter('MESH')} className={`hover:text-white ${filter === 'MESH' ? 'text-white font-bold' : 'text-text-secondary'}`}>Meshes</button>
+                    <button onClick={() => setFilter('MESH')} className={`hover:text-white whitespace-nowrap ${filter === 'MESH' ? 'text-white font-bold' : 'text-text-secondary'}`}>Meshes</button>
                     <span className="text-white/10">|</span>
-                    <button onClick={() => setFilter('MATERIAL')} className={`hover:text-white ${filter === 'MATERIAL' ? 'text-white font-bold' : 'text-text-secondary'}`}>Materials</button>
+                    <button onClick={() => setFilter('MATERIAL')} className={`hover:text-white whitespace-nowrap ${filter === 'MATERIAL' ? 'text-white font-bold' : 'text-text-secondary'}`}>Materials</button>
+                    <span className="text-white/10">|</span>
+                    <button onClick={() => setFilter('PHYSICS_MATERIAL')} className={`hover:text-white whitespace-nowrap ${filter === 'PHYSICS_MATERIAL' ? 'text-white font-bold' : 'text-text-secondary'}`}>Physics</button>
                 </div>
             )}
 
@@ -161,12 +177,14 @@ export const ProjectPanel: React.FC = () => {
                     <div className="grid grid-cols-[repeat(auto-fill,minmax(80px,1fr))] gap-2 pb-20">
                         {filteredAssets.map((asset) => {
                             const isMat = asset.type === 'MATERIAL';
+                            const isPhys = asset.type === 'PHYSICS_MATERIAL';
                             return (
                                 <div 
                                     key={asset.id} 
                                     className="flex flex-col items-center group cursor-pointer p-2 rounded-md hover:bg-white/10 transition-colors border border-transparent hover:border-white/5 active:bg-white/20 relative"
-                                    draggable={asset.type === 'MESH'} // Only drag meshes for now
+                                    draggable={asset.type === 'MESH'} 
                                     onDragStart={(e) => asset.type === 'MESH' && handleDragStart(e, asset.id)}
+                                    onClick={() => handleClick(asset.id)}
                                     onDoubleClick={() => handleDoubleClick(asset.id)}
                                     onContextMenu={(e) => handleContextMenu(e, asset.id)}
                                 >
@@ -175,16 +193,16 @@ export const ProjectPanel: React.FC = () => {
                                         style={{ width: scale, height: scale }}
                                     >
                                         <Icon 
-                                            name={isMat ? 'Palette' : 'Box'} 
+                                            name={isMat ? 'Palette' : (isPhys ? 'Activity' : 'Box')} 
                                             size={scale * 0.6} 
-                                            className={`${isMat ? 'text-pink-500' : 'text-accent'} drop-shadow-md transition-transform group-hover:scale-110`} 
+                                            className={`${isMat ? 'text-pink-500' : (isPhys ? 'text-green-500' : 'text-accent')} drop-shadow-md transition-transform group-hover:scale-110`} 
                                         />
                                     </div>
                                     <span className="text-[10px] text-text-secondary text-center w-full break-words leading-tight group-hover:text-white select-none">
                                         {asset.name}
                                     </span>
                                     <div className="text-[8px] text-text-secondary opacity-0 group-hover:opacity-50 mt-1 uppercase tracking-wider">
-                                        {asset.type}
+                                        {asset.type.replace('_', ' ')}
                                     </div>
                                 </div>
                             );
@@ -208,14 +226,16 @@ export const ProjectPanel: React.FC = () => {
                 <div 
                     className="fixed bg-[#252525] border border-white/10 shadow-2xl rounded py-1 z-[9999] min-w-[160px] text-xs"
                     style={{ left: contextMenu.x, top: contextMenu.y }}
-                    onClick={(e) => e.stopPropagation()} // Prevent closing immediately
+                    onClick={(e) => e.stopPropagation()} 
                 >
-                    {assetManager.getAsset(contextMenu.assetId)?.type === 'MATERIAL' && (
+                    {(assetManager.getAsset(contextMenu.assetId)?.type === 'MATERIAL' || assetManager.getAsset(contextMenu.assetId)?.type === 'PHYSICS_MATERIAL') && (
                         <>
-                            <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" 
-                                onClick={() => { applyMaterial(contextMenu.assetId); setContextMenu(null); }}>
-                                <Icon name="Stamp" size={12} /> Apply to Selected
-                            </div>
+                            {assetManager.getAsset(contextMenu.assetId)?.type === 'MATERIAL' && (
+                                <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" 
+                                    onClick={() => { applyMaterial(contextMenu.assetId); setContextMenu(null); }}>
+                                    <Icon name="Stamp" size={12} /> Apply to Selected
+                                </div>
+                            )}
                             <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" 
                                 onClick={() => { duplicateAsset(contextMenu.assetId); setContextMenu(null); }}>
                                 <Icon name="Copy" size={12} /> Duplicate

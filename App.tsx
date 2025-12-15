@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import { engineInstance } from './services/engine';
-import { Entity, ToolType, TransformSpace } from './types';
+import { Entity, ToolType, TransformSpace, SelectionType } from './types';
 import { EditorContext, DEFAULT_UI_CONFIG, UIConfiguration } from './contexts/EditorContext';
+import { assetManager } from './services/AssetManager';
 
 // Components
 import { Toolbar } from './components/Toolbar';
@@ -26,7 +27,10 @@ const HierarchyWrapper = () => {
       entities={ctx.entities} 
       sceneGraph={ctx.sceneGraph}
       selectedIds={ctx.selectedIds}
-      onSelect={ctx.setSelectedIds}
+      onSelect={(ids) => {
+          ctx.setSelectedIds(ids);
+          ctx.setSelectionType('ENTITY');
+      }}
     />
   );
 };
@@ -34,8 +38,17 @@ const HierarchyWrapper = () => {
 const InspectorWrapper = () => {
   const ctx = useContext(EditorContext);
   if (!ctx) return null;
-  const entity = ctx.selectedIds.length > 0 ? ctx.entities.find(e => e.id === ctx.selectedIds[0]) || null : null;
-  return <InspectorPanel entity={entity} selectionCount={ctx.selectedIds.length} />;
+  
+  let target: any = null;
+  if (ctx.selectedIds.length > 0) {
+      if (ctx.selectionType === 'ENTITY') {
+          target = ctx.entities.find(e => e.id === ctx.selectedIds[0]) || null;
+      } else if (ctx.selectionType === 'ASSET') {
+          target = assetManager.getAsset(ctx.selectedIds[0]) || null;
+      }
+  }
+
+  return <InspectorPanel object={target} selectionCount={ctx.selectedIds.length} type={ctx.selectionType} />;
 };
 
 const SceneWrapper = () => {
@@ -45,8 +58,11 @@ const SceneWrapper = () => {
     <SceneView 
       entities={ctx.entities}
       sceneGraph={ctx.sceneGraph}
-      selectedIds={ctx.selectedIds}
-      onSelect={ctx.setSelectedIds}
+      selectedIds={ctx.selectionType === 'ENTITY' ? ctx.selectedIds : []}
+      onSelect={(ids) => {
+          ctx.setSelectedIds(ids);
+          ctx.setSelectionType('ENTITY');
+      }}
       tool={ctx.tool}
     />
   );
@@ -261,6 +277,7 @@ const EditorLayout: React.FC = () => {
 const App: React.FC = () => {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectionType, setSelectionType] = useState<SelectionType>('ENTITY');
   const [tool, setTool] = useState<ToolType>('SELECT');
   const [transformSpace, setTransformSpace] = useState<TransformSpace>('Gimbal');
   const [isPlaying, setIsPlaying] = useState(false);
@@ -304,6 +321,8 @@ const App: React.FC = () => {
       sceneGraph: engineInstance.sceneGraph,
       selectedIds,
       setSelectedIds,
+      selectionType,
+      setSelectionType,
       tool,
       setTool,
       transformSpace,
