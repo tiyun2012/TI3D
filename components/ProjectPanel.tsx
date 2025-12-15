@@ -54,13 +54,15 @@ export const ProjectPanel: React.FC = () => {
                         <input 
                             type="range" min="30" max="60" 
                             value={scale} onChange={(e) => setScale(Number(e.target.value))}
-                            className="w-16 opacity-50 hover:opacity-100" 
+                            className="w-16 opacity-50 hover:opacity-100"
+                            aria-label="Asset Scale"
                         />
                         <div className="relative">
                             <Icon name="Search" size={12} className="absolute left-2 top-1.5 text-text-secondary" />
                             <input 
                                 type="text" 
                                 placeholder="Search assets..." 
+                                aria-label="Search Assets"
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 className="bg-input-bg text-xs py-1 pl-7 pr-2 rounded-full outline-none border border-transparent focus:border-accent text-white w-40" 

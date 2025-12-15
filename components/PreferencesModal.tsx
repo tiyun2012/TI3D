@@ -1,4 +1,3 @@
-
 import React, { useContext } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
 import { GizmoArrowShape, GizmoCenterShape, GizmoPlaneShape } from './gizmos/GizmoUtils';
@@ -11,7 +10,7 @@ interface Props {
 
 const SelectionCard: React.FC<{ 
     label: string; 
-    selected: boolean; 
+    selected: boolean;
     onClick: () => void; 
     iconName?: any;
     shapePreview?: React.ReactNode;
@@ -38,13 +37,10 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
 
   const setArrowShape = (shape: GizmoArrowShape) => setGizmoConfig({ ...gizmoConfig, translationShape: shape });
   const setCenterShape = (shape: GizmoCenterShape) => setGizmoConfig({ ...gizmoConfig, centerHandleShape: shape });
-  const setPlaneShape = (shape: GizmoPlaneShape) => setGizmoConfig({ ...gizmoConfig, planeHandleShape: shape });
-  
   const setArrowSize = (size: number) => setGizmoConfig({ ...gizmoConfig, arrowSize: size });
   const setArrowOffset = (offset: number) => setGizmoConfig({ ...gizmoConfig, arrowOffset: offset });
-  const setPlaneSize = (size: number) => setGizmoConfig({ ...gizmoConfig, planeHandleSize: size });
   const setRingSize = (size: number) => setGizmoConfig({ ...gizmoConfig, rotationRingSize: size });
-
+  
   const updateConfig = (key: keyof typeof gizmoConfig, value: any) => setGizmoConfig({ ...gizmoConfig, [key]: value });
 
   // Minimal SVG Previews for UI
@@ -52,8 +48,6 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   const PreviewCube = <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16"/></svg>;
   const PreviewRhombus = <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 12l10 10 10-10L12 2z"/></svg>;
   const PreviewTetra = <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L3 18l9 4 9-4L12 2z"/></svg>;
-  const PreviewCircle = <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>;
-  const PreviewSquare = <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16"/></svg>;
   const PreviewX = <Icon name="X" size={20} />;
   const PreviewQuadCircles = (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
@@ -112,6 +106,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                             className="w-full cursor-pointer"
                             value={gizmoConfig.arrowSize} 
                             onChange={(e) => setArrowSize(parseFloat(e.target.value))} 
+                            aria-label="Arrow Size"
                         />
                     </div>
                     <div className="bg-input-bg p-3 rounded border border-white/5">
@@ -124,6 +119,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                             className="w-full cursor-pointer"
                             value={gizmoConfig.arrowOffset} 
                             onChange={(e) => setArrowOffset(parseFloat(e.target.value))} 
+                            aria-label="Arrow Offset"
                         />
                     </div>
                 </div>
@@ -147,6 +143,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                             className="w-full cursor-pointer"
                             value={gizmoConfig.rotationRingSize} 
                             onChange={(e) => setRingSize(parseFloat(e.target.value))} 
+                            aria-label="Rotation Ring Size"
                         />
                     </div>
 
@@ -161,6 +158,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                             className="w-full cursor-pointer"
                             value={gizmoConfig.rotationRingTubeScale} 
                             onChange={(e) => updateConfig('rotationRingTubeScale', parseFloat(e.target.value))} 
+                            aria-label="Rotation Tube Thickness"
                         />
                     </div>
                 </div>
@@ -176,11 +174,12 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                         className="w-full cursor-pointer"
                         value={gizmoConfig.rotationScreenRingScale ?? 1.25} 
                         onChange={(e) => updateConfig('rotationScreenRingScale', parseFloat(e.target.value))} 
+                        aria-label="Screen Ring Scale"
                     />
                 </div>
 
                 {/* Toggles */}
-                 <div className="flex items-center gap-4 text-xs pt-1 px-1">
+                <div className="flex items-center gap-4 text-xs pt-1 px-1">
                     <label className="flex items-center gap-2 cursor-pointer select-none text-text-secondary hover:text-white transition-colors">
                         <input type="checkbox" checked={gizmoConfig.rotationShowScreenRing} onChange={(e) => updateConfig('rotationShowScreenRing', e.target.checked)} />
                         <span>Outer Ring</span>
@@ -206,13 +205,25 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                      <div className="bg-input-bg p-3 rounded border border-white/5 space-y-3">
                          <div className="flex justify-between items-center">
                             <span className="text-[10px] font-bold text-text-secondary uppercase">Hover Color</span>
-                            <input type="color" className="w-6 h-6 rounded cursor-pointer bg-transparent" value={gizmoConfig.axisHoverColor} onChange={(e) => updateConfig('axisHoverColor', e.target.value)} />
+                            <input 
+                                type="color" 
+                                className="w-6 h-6 rounded cursor-pointer bg-transparent" 
+                                value={gizmoConfig.axisHoverColor} 
+                                onChange={(e) => updateConfig('axisHoverColor', e.target.value)} 
+                                aria-label="Axis Hover Color"
+                            />
                          </div>
                      </div>
                      <div className="bg-input-bg p-3 rounded border border-white/5 space-y-3">
                          <div className="flex justify-between items-center">
-                            <span className="text-[10px] font-bold text-text-secondary uppercase">Press Color</span>
-                            <input type="color" className="w-6 h-6 rounded cursor-pointer bg-transparent" value={gizmoConfig.axisPressColor} onChange={(e) => updateConfig('axisPressColor', e.target.value)} />
+                             <span className="text-[10px] font-bold text-text-secondary uppercase">Press Color</span>
+                            <input 
+                                type="color" 
+                                className="w-6 h-6 rounded cursor-pointer bg-transparent" 
+                                value={gizmoConfig.axisPressColor} 
+                                onChange={(e) => updateConfig('axisPressColor', e.target.value)} 
+                                aria-label="Axis Press Color"
+                            />
                          </div>
                      </div>
                 </div>

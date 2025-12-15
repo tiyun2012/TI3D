@@ -11,9 +11,9 @@ interface DraggableWindowProps {
     className?: string;
 }
 
-export const DraggableWindow: React.FC<DraggableWindowProps> = ({ 
+export const DraggableWindow = ({ 
     title, onClose, children, width = 500, height = "auto", icon, className = "" 
-}) => {
+}: DraggableWindowProps) => {
     // Initial Center Position
     const [position, setPosition] = useState({
         x: Math.max(0, window.innerWidth / 2 - width / 2),

@@ -340,20 +340,28 @@ export const Mat4Utils = {
   },
 
   getRotation: (mat: Mat4, out: Vec3): Vec3 => {
-    const sy = Math.sqrt(mat[0]*mat[0] + mat[4]*mat[4]);
-    if (sy > 1e-6) {
-      out.x = Math.atan2(mat[9], mat[10]);
-      out.y = Math.atan2(-mat[8], sy);
-      out.z = Math.atan2(mat[4], mat[0]);
+    // Extract Euler angles (XYZ order) from rotation matrix
+    const m00 = mat[0], m10 = mat[4], m20 = mat[8];
+    const m21 = mat[9], m22 = mat[10];
+    
+    // Check Y component for Gimbal Lock
+    const cy = Math.sqrt(m00 * m00 + m10 * m10);
+    
+    if (cy > 1e-6) {
+        // Normal case
+        out.x = Math.atan2(m21, m22);
+        out.y = Math.atan2(-m20, cy);
+        out.z = Math.atan2(m10, m00);
     } else {
-      out.x = Math.atan2(-mat[6], mat[5]);
-      out.y = Math.atan2(-mat[8], sy);
-      out.z = 0;
+        // Gimbal lock case (Y is +/- 90 degrees)
+        const m11 = mat[5], m12 = mat[6];
+        out.x = Math.atan2(-m12, m11);
+        out.y = Math.atan2(-m20, cy);
+        out.z = 0;
     }
     return out;
   },
 
-  // --- ADDED: Missing function ---
   transformPoint: (v: Vec3, m: Mat4, width: number, height: number) => {
     const x = v.x, y = v.y, z = v.z;
     

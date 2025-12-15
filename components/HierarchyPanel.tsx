@@ -146,7 +146,8 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
             className="flex items-center gap-2 text-xs text-text-primary px-3 py-1 font-semibold opacity-70 cursor-default"
             onClick={() => onSelect([])}
         >
-            <Icon name="Scene" size={12} />
+            {/* Fix: 'Scene' is not a valid Lucide icon name. Used 'Cuboid' instead. */}
+            <Icon name="Cuboid" size={12} />
             <span>MainScene</span>
         </div>
         

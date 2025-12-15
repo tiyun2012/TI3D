@@ -1,3 +1,4 @@
+
 // services/SceneGraph.ts
 
 import { Mat4Utils } from './math';
@@ -74,6 +75,7 @@ export class SceneGraph {
 
   getRootIds() { return Array.from(this.rootIds); }
   getChildren(entityId: string) { return this.nodes.get(entityId)?.childrenIds || []; }
+  getParentId(entityId: string) { return this.nodes.get(entityId)?.parentId || null; }
 
   getWorldMatrix(entityId: string): Float32Array | null {
     if (!this.ecs) return null;

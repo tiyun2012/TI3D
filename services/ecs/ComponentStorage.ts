@@ -1,3 +1,4 @@
+
 // services/ecs/ComponentStorage.ts
 
 import { INITIAL_CAPACITY } from '../constants';
@@ -18,6 +19,9 @@ export class ComponentStorage {
     scaleX = new Float32Array(this.capacity);
     scaleY = new Float32Array(this.capacity);
     scaleZ = new Float32Array(this.capacity);
+    
+    // 0=XYZ, 1=XZY, 2=YXZ, 3=YZX, 4=ZXY, 5=ZYX
+    rotationOrder = new Uint8Array(this.capacity);
 
     // --- World Transform Cache (Contiguous for GPU) ---
     // 16 floats per entity. Computed by SceneGraph when dirty.
@@ -110,6 +114,7 @@ export class ComponentStorage {
         this.posX = resizeFloat(this.posX); this.posY = resizeFloat(this.posY); this.posZ = resizeFloat(this.posZ);
         this.rotX = resizeFloat(this.rotX); this.rotY = resizeFloat(this.rotY); this.rotZ = resizeFloat(this.rotZ);
         this.scaleX = resizeFloat(this.scaleX); this.scaleY = resizeFloat(this.scaleY); this.scaleZ = resizeFloat(this.scaleZ);
+        this.rotationOrder = resizeUint8(this.rotationOrder);
         
         // Resize World Matrix Cache (stride 16)
         const newWM = new Float32Array(newCapacity * 16);
@@ -147,6 +152,7 @@ export class ComponentStorage {
             posX: new Float32Array(this.posX), posY: new Float32Array(this.posY), posZ: new Float32Array(this.posZ),
             rotX: new Float32Array(this.rotX), rotY: new Float32Array(this.rotY), rotZ: new Float32Array(this.rotZ),
             scaleX: new Float32Array(this.scaleX), scaleY: new Float32Array(this.scaleY), scaleZ: new Float32Array(this.scaleZ),
+            rotationOrder: new Uint8Array(this.rotationOrder),
             // World Matrix is cache, no need to save, will recompute on load
             // Dirty flags can be reset to 1 on load
             meshType: new Int32Array(this.meshType),
@@ -168,6 +174,8 @@ export class ComponentStorage {
         this.rotX.set(snap.rotX); this.rotY.set(snap.rotY); this.rotZ.set(snap.rotZ);
         this.scaleX.set(snap.scaleX); this.scaleY.set(snap.scaleY); this.scaleZ.set(snap.scaleZ);
         
+        if (snap.rotationOrder) this.rotationOrder.set(snap.rotationOrder);
+
         this.meshType.set(snap.meshType);
         this.textureIndex.set(snap.textureIndex);
         this.colorR.set(snap.colorR); this.colorG.set(snap.colorG); this.colorB.set(snap.colorB);

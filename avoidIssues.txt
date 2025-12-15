@@ -15,7 +15,7 @@
   - **Reason:** DOM element sizes must exactly match the `GraphMath` constants used to draw SVG wires.
   - **Solution:** Use explicit pixel values in `style={{ height: HEADER_HEIGHT, ... }}`.
 - **PERFORMANCE:** Avoid `array.find()` in render loops or drag handlers. Use `Map<string, Node>` for O(1) lookups.
-- **ACCESSIBILITY:** All inputs and interactive elements must have `aria-label` or `title`. Missing these causes Severity 8 build failures.
+- **ACCESSIBILITY:** All inputs (`<input>`) and interactive elements must have `aria-label` or `title`. Missing these causes Severity 8 build failures.
 - **DEBOUNCING:** Debounce the `compileGraph` call. Do not run heavy graph logic on every `mousemove` event.
 
 ---
@@ -32,7 +32,7 @@
 ### 4. SCENE VIEW & CAMERA (`components/SceneView.tsx`)
 - **3D PANNING:** Do not use 2D screen X/Y offsets for camera panning.
   - **Solution:** Calculate the camera's local "Right" and "Up" vectors and apply movement along those vectors to ensure panning follows the camera's orientation.
-- **LINTER COMPLIANCE:** Ensure all toolbar buttons (Icons) have `title` attributes.
+- **LINTER COMPLIANCE:** Ensure all toolbar buttons (Icons) have `title` and `aria-label` attributes.
 
 ---
 
@@ -41,12 +41,19 @@
 
 ---
 
-### 6. COMMENT 
-- **PRESERVATION:** Keep all comments during refactoring. 
+### 6. COMMENT & LOST FEATURES
+- **PRESERVATION:** Keep all comments during refactoring to aid understanding. Ensure no features are lost when optimizing code.
 
 ---
 
-### 7. CSS & COMPATIBILITY
-- **VENDOR PREFIXES:** Always include standard vendor prefixes for newer CSS features to ensure cross-browser support (e.g., `-webkit-backdrop-filter` alongside `backdrop-filter`).
-### 8. LOST
--** Ensure no features are lost.
+### 7. UI & COMPONENTS
+- **ACCESSIBILITY (BLOCKING):** Every interactive element (`button`, `input`, `select`, `range`) MUST have a `title` and `aria-label`. The linter treats missing labels as Severity 8 (Build Fail).
+- **INLINE STYLES (WARNINGS):** Ignore "no-inline-styles" warnings (Severity 4) for dynamic components like `DraggableWindow`, `NodeGraph`, and `Gizmo`. These require runtime calculation of coordinates and cannot be moved to static CSS.
+- **ICONS:** Verify icon names against the `lucide-react` library. Do not use non-existent names (e.g., use `Cuboid` instead of `Scene`).
+
+---
+
+### 8. BUILD & CONFIGURATION
+- **STRICT MODE:** `tsconfig.json` must have `"strict": true` and `"forceConsistentCasingInFileNames": true` to pass validation.
+- **TYPE DEFINITIONS:** Ensure `@types/react` and `@types/react-dom` are installed. Do NOT restrict `"types": ["node"]` in `tsconfig.json` as it breaks React type resolution.
+- **CSS COMPATIBILITY:** Always include vendor prefixes for newer CSS features (e.g., `-webkit-backdrop-filter` alongside `backdrop-filter`) to support Safari/iOS.

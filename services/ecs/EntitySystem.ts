@@ -1,8 +1,8 @@
 
 import { ComponentStorage } from './ComponentStorage';
-import { MESH_NAMES, MESH_TYPES } from '../constants';
+import { MESH_NAMES, MESH_TYPES, ROTATION_ORDER_MAP, ROTATION_ORDER_ZY_MAP } from '../constants';
 import { SceneGraph } from '../SceneGraph';
-import { ComponentType, Entity } from '../../types';
+import { ComponentType, Entity, RotationOrder } from '../../types';
 import type { HistorySystem } from '../systems/HistorySystem';
 
 export class SoAEntitySystem {
@@ -34,6 +34,7 @@ export class SoAEntitySystem {
         this.store.posX[index] = 0; this.store.posY[index] = 0; this.store.posZ[index] = 0;
         this.store.rotX[index] = 0; this.store.rotY[index] = 0; this.store.rotZ[index] = 0;
         this.store.scaleX[index] = 1; this.store.scaleY[index] = 1; this.store.scaleZ[index] = 1;
+        this.store.rotationOrder[index] = 0; // Default XYZ
         this.store.meshType[index] = 0;
         this.store.textureIndex[index] = 0;
         this.store.colorR[index] = 1; this.store.colorG[index] = 1; this.store.colorB[index] = 1;
@@ -84,6 +85,13 @@ export class SoAEntitySystem {
                     },
                     set rotation(v: any) {
                         store.rotX[index] = v.x; store.rotY[index] = v.y; store.rotZ[index] = v.z;
+                        setDirty();
+                    },
+                    get rotationOrder() {
+                        return (ROTATION_ORDER_ZY_MAP[store.rotationOrder[index]] || 'XYZ') as RotationOrder;
+                    },
+                    set rotationOrder(v: RotationOrder) {
+                        store.rotationOrder[index] = ROTATION_ORDER_MAP[v] || 0;
                         setDirty();
                     },
                     get scale() {
@@ -163,6 +171,7 @@ export class SoAEntitySystem {
                 scaleX: Array.from(this.store.scaleX.subarray(0, this.count + 1)),
                 scaleY: Array.from(this.store.scaleY.subarray(0, this.count + 1)),
                 scaleZ: Array.from(this.store.scaleZ.subarray(0, this.count + 1)),
+                rotationOrder: Array.from(this.store.rotationOrder.subarray(0, this.count + 1)),
                 meshType: Array.from(this.store.meshType.subarray(0, this.count + 1)),
                 textureIndex: Array.from(this.store.textureIndex.subarray(0, this.count + 1)),
                 colorR: Array.from(this.store.colorR.subarray(0, this.count + 1)),
@@ -200,6 +209,8 @@ export class SoAEntitySystem {
             fill(this.store.scaleX, data.store.scaleX);
             fill(this.store.scaleY, data.store.scaleY);
             fill(this.store.scaleZ, data.store.scaleZ);
+            if(data.store.rotationOrder) fill(this.store.rotationOrder, data.store.rotationOrder);
+            
             fill(this.store.meshType, data.store.meshType);
             fill(this.store.textureIndex, data.store.textureIndex);
             fill(this.store.colorR, data.store.colorR);

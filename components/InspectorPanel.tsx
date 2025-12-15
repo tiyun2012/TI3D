@@ -1,8 +1,10 @@
 
-import React, { useState, useRef, useEffect } from 'react';
-import { Entity, Component, ComponentType, Vector3 } from '../types';
+import React, { useState, useRef, useEffect, useContext } from 'react';
+import { Entity, Component, ComponentType, Vector3, RotationOrder, TransformSpace } from '../types';
 import { engineInstance } from '../services/engine';
 import { Icon } from './Icon';
+import { ROTATION_ORDERS } from '../services/constants';
+import { EditorContext } from '../contexts/EditorContext';
 
 interface InspectorPanelProps {
   entity: Entity | null;
@@ -13,7 +15,7 @@ interface InspectorPanelProps {
 
 const DraggableNumber: React.FC<{ 
   label: string; 
-  value: number; 
+  value: number;
   onChange: (val: number) => void; 
   onCommit?: () => void;
   color?: string;
@@ -63,6 +65,7 @@ const DraggableNumber: React.FC<{
       </div>
       <input 
         type="number" 
+        aria-label={label || "Numeric Input"}
         className="flex-1 bg-transparent text-xs p-1 outline-none text-white min-w-0" 
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
@@ -93,6 +96,7 @@ const ComponentCard: React.FC<{
   onCommit: () => void;
 }> = ({ component, title, icon, onUpdate, onCommit }) => {
   const [open, setOpen] = useState(true);
+  const editorCtx = useContext(EditorContext);
 
   return (
     <div className="bg-panel-header border-b border-black/20">
@@ -104,11 +108,12 @@ const ComponentCard: React.FC<{
         <div className="mr-2 text-text-secondary group-hover:text-white transition-colors">
             <Icon name={open ? 'ChevronDown' : 'ChevronRight'} size={12} />
         </div>
+        
         <Icon name={icon as any} size={14} className="mr-2 text-accent" />
         <span className="font-semibold text-xs text-gray-200 flex-1">{title}</span>
         <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-            <button className="p-1 hover:text-white text-text-secondary"><Icon name="Settings2" size={12} /></button>
-            <button className="p-1 hover:text-white text-text-secondary"><Icon name="Trash2" size={12} /></button>
+            <button className="p-1 hover:text-white text-text-secondary" title="Settings" aria-label="Settings"><Icon name="Settings2" size={12} /></button>
+            <button className="p-1 hover:text-white text-text-secondary" title="Remove Component" aria-label="Remove Component"><Icon name="Trash2" size={12} /></button>
         </div>
       </div>
 
@@ -117,7 +122,42 @@ const ComponentCard: React.FC<{
         {component.type === ComponentType.TRANSFORM && (
           <>
             <Vector3Input label="Position" value={component.position} onChange={(v) => onUpdate('position', v)} onCommit={onCommit} />
-            <Vector3Input label="Rotation" value={component.rotation} onChange={(v) => onUpdate('rotation', v)} onCommit={onCommit} />
+            <div className="flex flex-col gap-1 mb-3">
+                 <div className="flex justify-between items-center">
+                    <div className="text-[10px] uppercase text-text-secondary font-semibold tracking-wider ml-1">Rotation</div>
+                    <div className="flex gap-2">
+                        {/* Space Selector */}
+                        <div className="flex items-center gap-1">
+                            <span className="text-[9px] text-text-secondary">Space</span>
+                            <select 
+                                className="bg-input-bg text-white text-[10px] rounded border border-transparent focus:border-accent outline-none px-1"
+                                value={editorCtx?.transformSpace || 'Gimbal'}
+                                onChange={(e) => editorCtx?.setTransformSpace(e.target.value as TransformSpace)}
+                            >
+                                <option value="Gimbal">Gimbal</option>
+                                <option value="Local">Local</option>
+                                <option value="World">World</option>
+                            </select>
+                        </div>
+                        {/* Order Selector */}
+                        <div className="flex items-center gap-1">
+                            <span className="text-[9px] text-text-secondary">Order</span>
+                            <select 
+                                className="bg-input-bg text-white text-[10px] rounded border border-transparent focus:border-accent outline-none px-1"
+                                value={component.rotationOrder}
+                                onChange={(e) => { onUpdate('rotationOrder', e.target.value); onCommit(); }}
+                            >
+                                {ROTATION_ORDERS.map(o => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                        </div>
+                    </div>
+                 </div>
+                <div className="grid grid-cols-3 gap-1">
+                  <DraggableNumber label="X" value={component.rotation.x} onChange={(v) => onUpdate('rotation', {...component.rotation, x: v})} onCommit={onCommit} color="text-red-500 hover:bg-red-500/20" />
+                  <DraggableNumber label="Y" value={component.rotation.y} onChange={(v) => onUpdate('rotation', {...component.rotation, y: v})} onCommit={onCommit} color="text-green-500 hover:bg-green-500/20" />
+                  <DraggableNumber label="Z" value={component.rotation.z} onChange={(v) => onUpdate('rotation', {...component.rotation, z: v})} onCommit={onCommit} color="text-blue-500 hover:bg-blue-500/20" />
+                </div>
+            </div>
             <Vector3Input label="Scale" value={component.scale} onChange={(v) => onUpdate('scale', v)} onCommit={onCommit} />
           </>
         )}
@@ -132,6 +172,7 @@ const ComponentCard: React.FC<{
                       className="flex-1 bg-transparent outline-none text-white"
                       value={component.meshType}
                       onChange={(e) => { onUpdate('meshType', e.target.value); onCommit(); }}
+                      aria-label="Mesh Type"
                    >
                       <option value="Cube">Cube</option>
                       <option value="Sphere">Sphere</option>
@@ -163,22 +204,24 @@ const ComponentCard: React.FC<{
                         value={component.color} 
                         onChange={(e) => { onUpdate('color', e.target.value); onCommit(); }}
                         className="w-8 h-6 rounded cursor-pointer bg-transparent"
+                        aria-label="Color Picker"
                     />
                     <input 
                         type="text" 
                         value={component.color} 
                         onChange={(e) => { onUpdate('color', e.target.value); onCommit(); }}
                         className="flex-1 bg-input-bg rounded px-2 text-text-secondary outline-none focus:text-white" 
+                        aria-label="Color Hex"
                     />
                 </div>
              </div>
              <div className="flex items-center gap-2">
                  <span className="w-24 text-text-secondary">Cast Shadows</span>
-                 <input type="checkbox" defaultChecked />
+                 <input type="checkbox" defaultChecked aria-label="Cast Shadows" />
              </div>
              <div className="flex items-center gap-2">
                  <span className="w-24 text-text-secondary">Receive Shadows</span>
-                 <input type="checkbox" defaultChecked />
+                 <input type="checkbox" defaultChecked aria-label="Receive Shadows" />
              </div>
           </>
         )}
@@ -187,7 +230,10 @@ const ComponentCard: React.FC<{
            <>
             <div className="flex items-center gap-2">
                <span className="w-24 text-text-secondary">Type</span>
-               <select className="flex-1 bg-input-bg rounded p-1 outline-none border border-transparent focus:border-accent text-white">
+               <select 
+                  className="flex-1 bg-input-bg rounded p-1 outline-none border border-transparent focus:border-accent text-white"
+                  aria-label="Light Type"
+                >
                    <option>Directional</option>
                    <option>Point</option>
                    <option>Spot</option>
@@ -200,6 +246,7 @@ const ComponentCard: React.FC<{
                   value={component.color} 
                   onChange={(e) => { onUpdate('color', e.target.value); onCommit(); }}
                   className="w-full h-6 rounded bg-transparent cursor-pointer" 
+                  aria-label="Light Color"
                />
             </div>
             <div className="flex items-center gap-2">
@@ -210,6 +257,7 @@ const ComponentCard: React.FC<{
                     value={component.intensity} 
                     onChange={(e) => { onUpdate('intensity', parseFloat(e.target.value)); onCommit(); }}
                     className="flex-1" 
+                    aria-label="Light Intensity"
                   />
                   <span className="w-8 text-right font-mono">{component.intensity}</span>
                </div>
@@ -233,13 +281,14 @@ const ComponentCard: React.FC<{
                   type="checkbox" 
                   checked={component.useGravity} 
                   onChange={(e) => { onUpdate('useGravity', e.target.checked); onCommit(); }}
+                  aria-label="Use Gravity"
                 />
             </div>
             <div className="flex items-center gap-2">
                <span className="w-24 text-text-secondary">Is Kinematic</span>
-               <input type="checkbox" />
+               <input type="checkbox" aria-label="Is Kinematic" />
             </div>
-           </>
+          </>
         )}
       </div>}
     </div>
@@ -295,6 +344,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectio
             onChange={(e) => { handleEntityChange('isActive', e.target.checked); handleCommit(); }}
             className="w-4 h-4 rounded-sm" 
             title="Active" 
+            aria-label="Entity Active"
           />
           <div className="flex-1 bg-input-bg border border-transparent focus-within:border-accent rounded px-2 py-1.5 flex items-center">
              <Icon name="Box" size={14} className="text-blue-400 mr-2" />
@@ -303,6 +353,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectio
                 value={entity.name} 
                 onChange={(e) => handleEntityChange('name', e.target.value)}
                 onBlur={handleCommit}
+                aria-label="Entity Name"
              />
           </div>
         </div>
@@ -310,7 +361,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectio
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div className="flex items-center gap-2">
               <span className="text-text-secondary w-10">Tag</span>
-              <select className="flex-1 bg-input-bg rounded px-1 py-0.5 outline-none text-white">
+              <select 
+                className="flex-1 bg-input-bg rounded px-1 py-0.5 outline-none text-white"
+                aria-label="Entity Tag"
+              >
                   <option>Untagged</option>
                   <option>Player</option>
                   <option>Enemy</option>
@@ -318,7 +372,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ entity, selectio
           </div>
           <div className="flex items-center gap-2">
               <span className="text-text-secondary w-10">Layer</span>
-              <select className="flex-1 bg-input-bg rounded px-1 py-0.5 outline-none text-white">
+              <select 
+                className="flex-1 bg-input-bg rounded px-1 py-0.5 outline-none text-white"
+                aria-label="Entity Layer"
+              >
                   <option>Default</option>
                   <option>UI</option>
                   <option>Water</option>

@@ -24,6 +24,10 @@
       ]
     },
     "allowImportingTsExtensions": true,
-    "noEmit": true
+    "noEmit": true,
+
+    /* Linter Compliance Fixes */
+    "strict": true,
+    "forceConsistentCasingInFileNames": true
   }
 }

@@ -1,9 +1,8 @@
 
-
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import DockLayout, { LayoutData, TabData, BoxData, PanelData } from 'rc-dock';
 import { engineInstance } from './services/engine';
-import { Entity, ToolType } from './types';
+import { Entity, ToolType, TransformSpace } from './types';
 import { EditorContext } from './contexts/EditorContext';
 
 // Components
@@ -120,6 +119,7 @@ const App: React.FC = () => {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [tool, setTool] = useState<ToolType>('SELECT');
+  const [transformSpace, setTransformSpace] = useState<TransformSpace>('Gimbal'); // Default to Gimbal
   const [isPlaying, setIsPlaying] = useState(false);
   
   // Config State
@@ -267,6 +267,8 @@ const App: React.FC = () => {
       setSelectedIds,
       tool,
       setTool,
+      transformSpace,
+      setTransformSpace,
       isPlaying,
       gizmoConfig,
       setGizmoConfig

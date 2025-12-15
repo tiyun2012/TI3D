@@ -6,6 +6,9 @@ export interface Vector3 {
   z: number;
 }
 
+export type RotationOrder = 'XYZ' | 'XZY' | 'YXZ' | 'YZX' | 'ZXY' | 'ZYX';
+export type TransformSpace = 'World' | 'Local' | 'Gimbal';
+
 export enum ComponentType {
   TRANSFORM = 'Transform',
   MESH = 'Mesh',
