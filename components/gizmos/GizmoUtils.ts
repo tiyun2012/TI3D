@@ -172,6 +172,16 @@ export const GizmoMath = {
         if (dot > 0.99) return 0.2; 
         else if (dot > 0.90) return 1.0 - ((dot - 0.90) / 0.1);
         return 1.0;
+    },
+
+    getPlaneOpacity: (normal: Vector3, cameraPos: Vector3, origin: Vector3): number => {
+        const viewDir = GizmoMath.normalize(GizmoMath.sub(cameraPos, origin));
+        const dot = Math.abs(GizmoMath.dot(normal, viewDir));
+        // Plane is visible when normal is PARALLEL to view (Dot ~ 1)
+        // Plane is invisible when normal is PERPENDICULAR to view (Dot ~ 0) aka Edge-on
+        if (dot < 0.1) return 0.1; // Edge on, fade out
+        if (dot < 0.2) return (dot - 0.1) / 0.1; 
+        return 1.0;
     }
 };
 

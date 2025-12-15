@@ -68,7 +68,13 @@ export const Gizmo: React.FC<GizmoProps> = ({
       <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-10">
         <g className="pointer-events-auto">
             {tool === 'MOVE' && (
-                <TranslationGizmo entity={entity} basis={basis} vpMatrix={vpMatrix} viewport={viewport} />
+                <TranslationGizmo 
+                    entity={entity} 
+                    basis={basis} 
+                    vpMatrix={vpMatrix} 
+                    viewport={viewport} 
+                    containerRef={containerRef} 
+                />
             )}
             {tool === 'ROTATE' && (
                 <RotationGizmo entity={entity} basis={basis} vpMatrix={vpMatrix} viewport={viewport} containerRef={containerRef} />

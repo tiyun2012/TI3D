@@ -4,15 +4,17 @@ import { Entity, ComponentType, Vector3 } from '../../types';
 import { engineInstance } from '../../services/engine';
 import { GizmoBasis, GizmoMath, GIZMO_COLORS, Axis, ColorUtils } from './GizmoUtils';
 import { EditorContext } from '../../contexts/EditorContext';
+import { Mat4Utils } from '../../services/math';
 
 interface Props {
     entity: Entity;
     basis: GizmoBasis;
     vpMatrix: Float32Array;
     viewport: { width: number; height: number };
+    containerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport }) => {
+export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport, containerRef }) => {
     const { gizmoConfig, transformSpace } = useContext(EditorContext)!;
     const [hoverAxis, setHoverAxis] = useState<Axis | null>(null);
     const [dragState, setDragState] = useState<{
@@ -22,9 +24,17 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         startPos: Vector3;
         screenAxis: { x: number, y: number };
         cameraBasis?: { right: Vector3, up: Vector3 };
-        // For projection dragging in non-view modes
         axisVector?: Vector3;
+        // Plane specific
+        planeNormal?: Vector3;
+        planeHitOffset?: Vector3;
     } | null>(null);
+
+    // --- Invert Matrix for Raycasting ---
+    const invViewProj = useMemo(() => {
+        const m = new Float32Array(16);
+        return Mat4Utils.invert(vpMatrix, m) || m;
+    }, [vpMatrix]);
 
     // --- Compute Effective Basis based on Transform Space ---
     const effectiveBasis = useMemo(() => {
@@ -57,10 +67,35 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         const handleMove = (e: MouseEvent) => {
             if (!dragState) return;
 
+            // Handle Plane Dragging (XY, XZ, YZ)
+            if (['XY', 'XZ', 'YZ'].includes(dragState.axis) && dragState.planeNormal && dragState.planeHitOffset && containerRef?.current) {
+                const rect = containerRef.current.getBoundingClientRect();
+                const ray = GizmoMath.screenToRay(
+                    e.clientX - rect.left, 
+                    e.clientY - rect.top, 
+                    viewport.width, viewport.height, 
+                    invViewProj, basis.cameraPosition
+                );
+                
+                // Intersect with plane at original origin
+                const hit = GizmoMath.rayPlaneIntersection(ray.origin, ray.direction, origin, dragState.planeNormal);
+                
+                if (hit) {
+                    // New position is hit point minus the initial offset
+                    const newPos = GizmoMath.sub(hit, dragState.planeHitOffset);
+                    transform.position.x = newPos.x;
+                    transform.position.y = newPos.y;
+                    transform.position.z = newPos.z;
+                    engineInstance.notifyUI();
+                }
+                return;
+            }
+
+            // Handle View/Screen Dragging
             const dx = e.clientX - dragState.startX;
             const dy = e.clientY - dragState.startY;
             
-            // Distance Factor
+            // Distance Factor for Screen Space moves
             const dist = Math.sqrt(
                 Math.pow(basis.cameraPosition.x - origin.x, 2) + 
                 Math.pow(basis.cameraPosition.y - origin.y, 2) + 
@@ -74,16 +109,6 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
                 transform.position.x = dragState.startPos.x + (right.x * dx - up.x * dy) * factor;
                 transform.position.y = dragState.startPos.y + (right.y * dx - up.y * dy) * factor;
                 transform.position.z = dragState.startPos.z + (right.z * dx - up.z * dy) * factor;
-            } else if (dragState.axis === 'XZ') {
-                // Plane move logic needs update for arbitrary orientation, but simplified here for demo
-                transform.position.x = dragState.startPos.x + dx * factor;
-                transform.position.z = dragState.startPos.z + dy * factor;
-            } else if (dragState.axis === 'XY') {
-                transform.position.x = dragState.startPos.x + dx * factor;
-                transform.position.y = dragState.startPos.y - dy * factor;
-            } else if (dragState.axis === 'YZ') {
-                transform.position.z = dragState.startPos.z + dx * factor;
-                transform.position.y = dragState.startPos.y - dy * factor;
             } else {
                 // Single Axis Projection
                 const proj = dx * dragState.screenAxis.x + dy * dragState.screenAxis.y;
@@ -114,7 +139,7 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
             window.removeEventListener('mousemove', handleMove);
             window.removeEventListener('mouseup', handleUp);
         };
-    }, [dragState, transform, basis, origin]);
+    }, [dragState, transform, basis, origin, invViewProj, viewport, containerRef]);
 
     const startDrag = (e: React.MouseEvent, axis: Axis) => {
         // Priority Fix: Allow Alt+LMB to pass through for Camera Orbit
@@ -124,6 +149,8 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         
         let screenAxis = { x: 1, y: 0 };
         let axisVector: Vector3 | undefined;
+        let planeNormal: Vector3 | undefined;
+        let planeHitOffset: Vector3 | undefined;
 
         if (axis === 'X' || axis === 'Y' || axis === 'Z') {
             const target = axis === 'X' ? pX : axis === 'Y' ? pY : pZ;
@@ -133,6 +160,26 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
             if (len > 0.001) screenAxis = { x: dx/len, y: dy/len };
             
             axisVector = axis === 'X' ? xAxis : (axis === 'Y' ? yAxis : zAxis);
+        } else if (['XY', 'XZ', 'YZ'].includes(axis) && containerRef?.current) {
+            // Setup Plane Dragging
+            planeNormal = axis === 'XY' ? zAxis : (axis === 'XZ' ? yAxis : xAxis);
+            
+            const rect = containerRef.current.getBoundingClientRect();
+            const ray = GizmoMath.screenToRay(
+                e.clientX - rect.left, 
+                e.clientY - rect.top, 
+                viewport.width, viewport.height, 
+                invViewProj, basis.cameraPosition
+            );
+            
+            const hit = GizmoMath.rayPlaneIntersection(ray.origin, ray.direction, origin, planeNormal);
+            if (hit) {
+                // Calculate offset from current entity position to hit point
+                // This ensures we drag relative to where we clicked
+                planeHitOffset = GizmoMath.sub(hit, transform.position);
+            } else {
+                return; // Missed plane (shouldn't happen if clicked on visual)
+            }
         }
 
         // Calculate Camera Basis for Free Move
@@ -154,7 +201,9 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
             startPos: { ...transform.position },
             screenAxis,
             cameraBasis,
-            axisVector
+            axisVector,
+            planeNormal,
+            planeHitOffset
         });
     };
 
@@ -283,7 +332,14 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         );
     };
 
-    const renderPlane = (axis: Axis, col: string, u: Vector3, v: Vector3) => {
+    const renderPlane = (axis: Axis, col: string, u: Vector3, v: Vector3, normal: Vector3) => {
+        // Calculate opacity based on viewing angle
+        const opacityFactor = gizmoConfig.axisFadeWhenAligned 
+            ? GizmoMath.getPlaneOpacity(normal, basis.cameraPosition, origin)
+            : 1.0;
+
+        if (opacityFactor < 0.1) return null;
+
         const dist = scale * 0.3;
         const size = scale * 0.2 * gizmoConfig.planeHandleSize;
         const pos = { x: origin.x + (u.x + v.x) * dist, y: origin.y + (u.y + v.y) * dist, z: origin.z + (u.z + v.z) * dist };
@@ -296,15 +352,24 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         const isHover = hoverAxis === axis;
 
         return (
-            <polygon points={`${pp1.x},${pp1.y} ${pp2.x},${pp2.y} ${pp3.x},${pp3.y} ${pp4.x},${pp4.y}`} fill={col} fillOpacity={isActive || isHover ? 0.8 : 0.3} stroke={isActive || isHover ? "white" : "none"} onMouseDown={(e) => startDrag(e, axis)} onMouseEnter={() => setHoverAxis(axis)} onMouseLeave={() => setHoverAxis(null)} className="cursor-pointer" />
+            <polygon 
+                points={`${pp1.x},${pp1.y} ${pp2.x},${pp2.y} ${pp3.x},${pp3.y} ${pp4.x},${pp4.y}`} 
+                fill={col} 
+                fillOpacity={(isActive || isHover ? 0.8 : 0.3) * opacityFactor} 
+                stroke={isActive || isHover ? "white" : "none"} 
+                onMouseDown={(e) => startDrag(e, axis)} 
+                onMouseEnter={() => setHoverAxis(axis)} 
+                onMouseLeave={() => setHoverAxis(null)} 
+                className="cursor-pointer" 
+            />
         );
     };
 
     return (
         <g>
-            {renderPlane('XY', GIZMO_COLORS.Z, xAxis, yAxis)}
-            {renderPlane('XZ', GIZMO_COLORS.Y, xAxis, zAxis)}
-            {renderPlane('YZ', GIZMO_COLORS.X, yAxis, zAxis)}
+            {renderPlane('XY', GIZMO_COLORS.Z, xAxis, yAxis, zAxis)}
+            {renderPlane('XZ', GIZMO_COLORS.Y, xAxis, zAxis, yAxis)}
+            {renderPlane('YZ', GIZMO_COLORS.X, yAxis, zAxis, xAxis)}
             {renderArrow('Z', pZ, GIZMO_COLORS.Z, zAxis, xAxis, yAxis)}
             {renderArrow('Y', pY, GIZMO_COLORS.Y, yAxis, zAxis, xAxis)}
             {renderArrow('X', pX, GIZMO_COLORS.X, xAxis, yAxis, zAxis)}
