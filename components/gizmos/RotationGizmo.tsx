@@ -21,7 +21,7 @@ const getCachedTorus = (radius: number, tubeRadius: number) => {
     const key = `${radius.toFixed(3)}-${tubeRadius.toFixed(3)}`;
     if (TORUS_CACHE.has(key)) return TORUS_CACHE.get(key)!;
     
-    const segments = 48;
+    const segments = 64; // Smoother
     const tubeSegments = 8;
     const vertices: Vector3[] = [];
     const indices: number[][] = [];
@@ -350,7 +350,8 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         if (!gizmoConfig.rotationShowDecorations) return null;
 
         const tickCount = 12;
-        const tickSize = scale * 0.05;
+        // Increased size for visibility
+        const tickSize = scale * 0.08; 
         const ticks = [];
 
         for (let i = 0; i < tickCount; i++) {
@@ -384,13 +385,22 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             const pNormal = GizmoMath.normalize({ x: px-origin.x, y: py-origin.y, z: pz-origin.z });
             const viewDir = GizmoMath.normalize(GizmoMath.sub(basis.cameraPosition, {x:px,y:py,z:pz}));
             
-            if (GizmoMath.dot(pNormal, viewDir) < -0.1) continue;
+            // Slightly relaxed culling to ensure side ticks are visible
+            if (GizmoMath.dot(pNormal, viewDir) < -0.2) continue;
 
             const projected = worldVerts.map(project);
             const pts = projected.map(p => `${p.x},${p.y}`).join(' ');
 
             ticks.push(
-                <polygon key={i} points={pts} fill={color} fillOpacity={opacity * 0.8} stroke="none" className="pointer-events-none" />
+                <polygon 
+                    key={i} 
+                    points={pts} 
+                    fill={color} 
+                    fillOpacity={1.0} // Solid opacity for decorations
+                    stroke="black" // Stroke for contrast
+                    strokeWidth={0.5}
+                    className="pointer-events-none" 
+                />
             );
         }
         return <g>{ticks}</g>;
@@ -399,14 +409,9 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
     const renderTorusRing = (axis: Axis, color: string) => {
         const { axis: axisVec, u, v } = getRingBasis(axis);
 
+        // -- CHANGED: Removed visibility fading based on view angle. 
+        // Rotation rings should be visible even when facing the camera.
         let visibility = 1.0;
-        if (axis !== 'VIEW') {
-            const viewDir = GizmoMath.normalize(GizmoMath.sub(basis.cameraPosition, origin));
-            const dot = Math.abs(GizmoMath.dot(axisVec, viewDir));
-            if (dot > 0.99) visibility = 0;
-            else if (dot > 0.85) visibility = 1.0 - ((dot - 0.85) / 0.14);
-        }
-        if (visibility < 0.05) return null;
         
         const isActive = dragState?.axis === axis;
         const isHover = hoverAxis === axis;

@@ -1,3 +1,4 @@
+
 import { Vector3 } from '../../types';
 import { Mat4Utils, Vec3Utils, Mat4 } from '../../services/math';
 
@@ -166,8 +167,10 @@ export const GizmoMath = {
     getAxisOpacity: (axisVec: Vector3, cameraPos: Vector3, origin: Vector3): number => {
         const viewDir = GizmoMath.normalize(GizmoMath.sub(cameraPos, origin));
         const dot = Math.abs(GizmoMath.dot(axisVec, viewDir));
-        if (dot > 0.99) return 0.0;
-        else if (dot > 0.85) return 1.0 - ((dot - 0.85) / 0.14);
+        // Relaxed threshold: Only fade slightly when perfectly aligned, do not disappear completely (0.0)
+        // 0.99 dot product ~ 8 degrees off axis
+        if (dot > 0.99) return 0.2; 
+        else if (dot > 0.90) return 1.0 - ((dot - 0.90) / 0.1);
         return 1.0;
     }
 };
