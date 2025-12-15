@@ -409,15 +409,20 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
                 setSelectedNodeIds(new Set());
             }
 
-            const startX = e.clientX - rect.left;
-            const startY = e.clientY - rect.top;
+            // Fix: Use offset from client + accounting for border (clientLeft/Top)
+            // This ensures 0,0 aligns with the inner content box where absolute children live
+            const borderLeft = containerRef.current?.clientLeft || 0;
+            const borderTop = containerRef.current?.clientTop || 0;
+            const startX = e.clientX - rect.left - borderLeft;
+            const startY = e.clientY - rect.top - borderTop;
+            
             setSelectionBox({ startX, startY, currentX: startX, currentY: startY });
 
             let frameId = 0;
 
             const onMove = (ev: MouseEvent) => {
-                const currentX = ev.clientX - rect.left;
-                const currentY = ev.clientY - rect.top;
+                const currentX = ev.clientX - rect.left - borderLeft;
+                const currentY = ev.clientY - rect.top - borderTop;
                 
                 setSelectionBox(prev => prev ? { ...prev, currentX, currentY } : null);
 
