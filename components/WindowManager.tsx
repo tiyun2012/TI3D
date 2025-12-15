@@ -117,9 +117,8 @@ export const WindowManager: React.FC<{ children: React.ReactNode }> = ({ childre
                         onNest={() => nestWindow(win.id)}
                         className="pointer-events-auto" // Re-enable pointer events for the window itself
                         onMouseDown={() => bringToFront(win.id)}
-                    >
-                        {win.content}
-                    </DraggableWindow>
+                        children={win.content}
+                    />
                 </div>
             ))}
 

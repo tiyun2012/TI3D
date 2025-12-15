@@ -22,12 +22,14 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         startX: number;
         startY: number;
         startPos: Vector3;
-        screenAxis: { x: number, y: number };
         cameraBasis?: { right: Vector3, up: Vector3 };
         axisVector?: Vector3;
         // Plane specific
         planeNormal?: Vector3;
         planeHitOffset?: Vector3;
+        // New Axis Drag specific
+        dragPlaneOrigin?: Vector3;
+        startPlaneHit?: Vector3;
     } | null>(null);
 
     // --- Invert Matrix for Raycasting ---
@@ -65,18 +67,41 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
 
     useEffect(() => {
         const handleMove = (e: MouseEvent) => {
-            if (!dragState) return;
+            if (!dragState || !containerRef?.current) return;
 
-            // Handle Plane Dragging (XY, XZ, YZ)
-            if (['XY', 'XZ', 'YZ'].includes(dragState.axis) && dragState.planeNormal && dragState.planeHitOffset && containerRef?.current) {
-                const rect = containerRef.current.getBoundingClientRect();
-                const ray = GizmoMath.screenToRay(
-                    e.clientX - rect.left, 
-                    e.clientY - rect.top, 
-                    viewport.width, viewport.height, 
-                    invViewProj, basis.cameraPosition
-                );
+            const rect = containerRef.current.getBoundingClientRect();
+            const ray = GizmoMath.screenToRay(
+                e.clientX - rect.left, 
+                e.clientY - rect.top, 
+                viewport.width, viewport.height, 
+                invViewProj, basis.cameraPosition
+            );
+
+            // 1. Handle Axis Dragging (X, Y, Z) using Ray-Plane Intersection
+            if ((dragState.axis === 'X' || dragState.axis === 'Y' || dragState.axis === 'Z') && 
+                dragState.planeNormal && dragState.startPlaneHit && dragState.axisVector && dragState.dragPlaneOrigin) {
                 
+                // Raycast against the invisible plane chosen at drag start
+                const hit = GizmoMath.rayPlaneIntersection(ray.origin, ray.direction, dragState.dragPlaneOrigin, dragState.planeNormal);
+                
+                if (hit) {
+                    // Calculate World Delta
+                    const delta = GizmoMath.sub(hit, dragState.startPlaneHit);
+                    // Project Delta onto the Axis Vector
+                    const proj = GizmoMath.dot(delta, dragState.axisVector);
+                    const move = GizmoMath.scale(dragState.axisVector, proj);
+                    
+                    const newPos = GizmoMath.add(dragState.startPos, move);
+                    transform.position.x = newPos.x;
+                    transform.position.y = newPos.y;
+                    transform.position.z = newPos.z;
+                    engineInstance.notifyUI();
+                }
+                return;
+            }
+
+            // 2. Handle Plane Dragging (XY, XZ, YZ)
+            if (['XY', 'XZ', 'YZ'].includes(dragState.axis) && dragState.planeNormal && dragState.planeHitOffset) {
                 // Intersect with plane at original origin
                 const hit = GizmoMath.rayPlaneIntersection(ray.origin, ray.direction, origin, dragState.planeNormal);
                 
@@ -91,7 +116,7 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
                 return;
             }
 
-            // Handle View/Screen Dragging
+            // 3. Handle View/Screen Dragging
             const dx = e.clientX - dragState.startX;
             const dy = e.clientY - dragState.startY;
             
@@ -109,19 +134,8 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
                 transform.position.x = dragState.startPos.x + (right.x * dx - up.x * dy) * factor;
                 transform.position.y = dragState.startPos.y + (right.y * dx - up.y * dy) * factor;
                 transform.position.z = dragState.startPos.z + (right.z * dx - up.z * dy) * factor;
-            } else {
-                // Single Axis Projection
-                const proj = dx * dragState.screenAxis.x + dy * dragState.screenAxis.y;
-                const moveAmount = proj * factor;
-                
-                if (dragState.axisVector) {
-                    transform.position.x = dragState.startPos.x + dragState.axisVector.x * moveAmount;
-                    transform.position.y = dragState.startPos.y + dragState.axisVector.y * moveAmount;
-                    transform.position.z = dragState.startPos.z + dragState.axisVector.z * moveAmount;
-                }
+                engineInstance.notifyUI();
             }
-            
-            engineInstance.notifyUI();
         };
 
         const handleUp = () => {
@@ -147,23 +161,13 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
 
         e.stopPropagation(); e.preventDefault();
         
-        let screenAxis = { x: 1, y: 0 };
         let axisVector: Vector3 | undefined;
         let planeNormal: Vector3 | undefined;
         let planeHitOffset: Vector3 | undefined;
+        let startPlaneHit: Vector3 | undefined;
+        let dragPlaneOrigin: Vector3 | undefined;
 
-        if (axis === 'X' || axis === 'Y' || axis === 'Z') {
-            const target = axis === 'X' ? pX : axis === 'Y' ? pY : pZ;
-            const dx = target.x - pCenter.x;
-            const dy = target.y - pCenter.y;
-            const len = Math.sqrt(dx*dx + dy*dy);
-            if (len > 0.001) screenAxis = { x: dx/len, y: dy/len };
-            
-            axisVector = axis === 'X' ? xAxis : (axis === 'Y' ? yAxis : zAxis);
-        } else if (['XY', 'XZ', 'YZ'].includes(axis) && containerRef?.current) {
-            // Setup Plane Dragging
-            planeNormal = axis === 'XY' ? zAxis : (axis === 'XZ' ? yAxis : xAxis);
-            
+        if (containerRef?.current) {
             const rect = containerRef.current.getBoundingClientRect();
             const ray = GizmoMath.screenToRay(
                 e.clientX - rect.left, 
@@ -171,14 +175,39 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
                 viewport.width, viewport.height, 
                 invViewProj, basis.cameraPosition
             );
-            
-            const hit = GizmoMath.rayPlaneIntersection(ray.origin, ray.direction, origin, planeNormal);
-            if (hit) {
-                // Calculate offset from current entity position to hit point
-                // This ensures we drag relative to where we clicked
-                planeHitOffset = GizmoMath.sub(hit, transform.position);
-            } else {
-                return; // Missed plane (shouldn't happen if clicked on visual)
+
+            // Setup for Axis Dragging (Raycast against best aligned plane)
+            if (axis === 'X' || axis === 'Y' || axis === 'Z') {
+                axisVector = axis === 'X' ? xAxis : (axis === 'Y' ? yAxis : zAxis);
+                
+                // Find best plane for intersection
+                const viewDir = GizmoMath.normalize(GizmoMath.sub(basis.cameraPosition, origin));
+                
+                // Candidate Normals (The other two axes)
+                const n1 = axis === 'X' ? yAxis : (axis === 'Y' ? zAxis : xAxis);
+                const n2 = axis === 'X' ? zAxis : (axis === 'Y' ? xAxis : yAxis);
+                
+                // Choose the normal that is most aligned with ViewDir (Plane most perpendicular to View)
+                const dot1 = Math.abs(GizmoMath.dot(viewDir, n1));
+                const dot2 = Math.abs(GizmoMath.dot(viewDir, n2));
+                
+                planeNormal = dot1 > dot2 ? n1 : n2;
+                dragPlaneOrigin = origin; // Fix plane at start origin
+                
+                startPlaneHit = GizmoMath.rayPlaneIntersection(ray.origin, ray.direction, dragPlaneOrigin, planeNormal) || undefined;
+            } 
+            // Setup for Plane Dragging
+            else if (['XY', 'XZ', 'YZ'].includes(axis)) {
+                planeNormal = axis === 'XY' ? zAxis : (axis === 'XZ' ? yAxis : xAxis);
+                
+                const hit = GizmoMath.rayPlaneIntersection(ray.origin, ray.direction, origin, planeNormal);
+                if (hit) {
+                    // Calculate offset from current entity position to hit point
+                    // This ensures we drag relative to where we clicked
+                    planeHitOffset = GizmoMath.sub(hit, transform.position);
+                } else {
+                    return; // Missed plane
+                }
             }
         }
 
@@ -199,11 +228,12 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
             startX: e.clientX,
             startY: e.clientY,
             startPos: { ...transform.position },
-            screenAxis,
             cameraBasis,
             axisVector,
             planeNormal,
-            planeHitOffset
+            planeHitOffset,
+            startPlaneHit,
+            dragPlaneOrigin
         });
     };
 

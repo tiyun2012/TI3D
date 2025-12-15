@@ -337,7 +337,10 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             let intensity = Math.max(0, GizmoMath.dot(face.normal, lightDir));
             intensity = 0.3 + intensity * 0.7;
             const shadeOpacity = Math.max(0, 1.0 - intensity);
-            const pts = face.indices.map(idx => `${projected[idx].x},${projected[idx].y}`).join(' ');
+            const pts = face.indices.map(idx => {
+                const p = projected[idx] as { x: number, y: number };
+                return `${p.x},${p.y}`;
+            }).join(' ');
             return (
                 <g key={i} className="pointer-events-none">
                     <polygon points={pts} fill={fillStyle} stroke={fillStyle} strokeWidth={0.5} fillOpacity={opacity} strokeLinejoin="round" />
