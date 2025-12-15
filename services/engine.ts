@@ -1,4 +1,3 @@
-
 // services/engine.ts
 
 import { Entity, ComponentType, GraphNode, GraphConnection, PerformanceMetrics } from '../types';
@@ -86,6 +85,13 @@ export class Ti3DEngine {
   resize(width: number, height: number) { this.renderer.resize(width, height); }
 
   setSelected(ids: string[]) {
+      // Optimization: Avoid update if selection hasn't changed
+      if (ids.length === this.selectedIds.size) {
+          let same = true;
+          for (const id of ids) if (!this.selectedIds.has(id)) { same = false; break; }
+          if (same) return;
+      }
+
       this.selectedIds = new Set(ids);
       // OPTIMIZATION: Pre-calculate indices for the render loop
       this.selectedIndices.clear();
@@ -359,7 +365,10 @@ export class Ti3DEngine {
   pause() { this.isPlaying = false; this.notifyUI(); }
   stop() { this.isPlaying = false; this.notifyUI(); }
   
-  subscribe(cb: () => void) { this.listeners.push(cb); return () => this.listeners = this.listeners.filter(c => c !== cb); }
+  subscribe(cb: () => void) { 
+      this.listeners.push(cb); 
+      return () => { this.listeners = this.listeners.filter(c => c !== cb); };
+  }
   
   notifyUI() { 
       this.syncTransforms();

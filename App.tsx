@@ -293,8 +293,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const syncPlayState = () => setIsPlaying(engineInstance.isPlaying);
-    engineInstance.subscribe(syncPlayState);
-    return () => {}; 
+    const unsubscribe = engineInstance.subscribe(syncPlayState);
+    return () => { unsubscribe(); };
   }, []);
 
   useEffect(() => {

@@ -666,7 +666,12 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
         };
         const newNodeId = crypto.randomUUID();
         
-        const newNode: GraphNode = { id: newNodeId, type, position: pos, data: {} };
+        // Ensure default data is present for nodes that require it for layout
+        let initialData = {};
+        if (type === 'Float') initialData = { value: '0' };
+        if (type === 'Vec3') initialData = { x: '0', y: '0', z: '0' };
+
+        const newNode: GraphNode = { id: newNodeId, type, position: pos, data: initialData };
         
         setNodes(p => [...p, newNode]);
         setSelectedNodeIds(new Set([newNodeId]));
