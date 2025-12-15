@@ -3,7 +3,6 @@ import React, { useContext } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
 import { GizmoArrowShape, GizmoCenterShape, GizmoPlaneShape } from './gizmos/GizmoUtils';
 import { Icon } from './Icon';
-import { DraggableWindow } from './DraggableWindow';
 
 interface Props {
   onClose: () => void;
@@ -61,7 +60,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   );
 
   return (
-    <DraggableWindow title="Preferences" onClose={onClose} width={500} icon="Settings2">
+    <>
         <div className="p-6 space-y-6">
             
             {/* Section: Gizmo Arrows */}
@@ -333,6 +332,6 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
         <div className="bg-panel-header px-4 py-3 border-t border-white/10 flex justify-end shrink-0">
             <button onClick={onClose} className="bg-white/10 hover:bg-white/20 text-white text-xs px-6 py-2 rounded font-medium transition-colors">Close</button>
         </div>
-    </DraggableWindow>
+    </>
   );
 };

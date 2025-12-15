@@ -1,6 +1,5 @@
 
 import React, { useState, useEffect, useCallback, useContext } from 'react';
-import DockLayout, { LayoutData, TabData, BoxData, PanelData } from 'rc-dock';
 import { engineInstance } from './services/engine';
 import { Entity, ToolType, TransformSpace } from './types';
 import { EditorContext } from './contexts/EditorContext';
@@ -14,6 +13,7 @@ import { ProjectPanel } from './components/ProjectPanel';
 import { NodeGraph } from './components/NodeGraph';
 import { Icon } from './components/Icon';
 import { PreferencesModal } from './components/PreferencesModal';
+import { WindowManager, WindowManagerContext } from './components/WindowManager';
 import { DEFAULT_GIZMO_CONFIG, GizmoConfiguration } from './components/gizmos/GizmoUtils';
 
 // --- Widget Wrappers ---
@@ -64,124 +64,209 @@ const GameWrapper = () => (
 const GraphWrapper = () => <NodeGraph />;
 
 const ConsoleWrapper = () => (
-    <div className="h-full bg-panel border-t border-black/20 flex flex-col font-mono text-xs">
-        <div className="bg-panel-header px-2 py-1 text-text-secondary border-b border-black/20 flex items-center gap-2">
-            <Icon name="Terminal" size={12} />
-            Output
-        </div>
+    <div className="h-full flex flex-col font-mono text-xs bg-black/40">
         <div className="p-2 text-gray-400 space-y-1">
             <div className="text-emerald-500">[System] Ti3D Engine initialized v1.0.0</div>
             <div>[System] WebGL2 Texture Array created (4 layers).</div>
             <div>[System] Undo/Redo System Ready.</div>
+            <div className="text-yellow-500">[Warn] No Skybox material found, using default clear color.</div>
         </div>
     </div>
 );
 
-// --- Default Layout ---
+const StatsContent = () => {
+    const [metrics, setMetrics] = useState(engineInstance.metrics);
+    useEffect(() => {
+        const i = setInterval(() => setMetrics({ ...engineInstance.metrics }), 500);
+        return () => clearInterval(i);
+    }, []);
 
-const DEFAULT_LAYOUT: LayoutData = {
-  dockbox: {
-    mode: 'horizontal',
-    children: [
-      {
-        mode: 'vertical',
-        size: 280,
-        children: [
-          { tabs: [{ id: 'hierarchy', title: 'Hierarchy', content: <HierarchyWrapper /> }], size: 400 },
-          { tabs: [{ id: 'project', title: 'Project', content: <ProjectWrapper /> }] }
-        ]
-      },
-      {
-        mode: 'vertical',
-        children: [
-          {
-            tabs: [
-              { id: 'scene', title: 'Scene', content: <SceneWrapper /> },
-              { id: 'game', title: 'Game', content: <GameWrapper /> },
-              { id: 'graph', title: 'Visual Script', content: <GraphWrapper /> }
-            ]
-          },
-          {
-            tabs: [{ id: 'console', title: 'Console', content: <ConsoleWrapper /> }],
-            size: 160
-          }
-        ]
-      },
-      {
-        size: 320,
-        tabs: [{ id: 'inspector', title: 'Inspector', content: <InspectorWrapper /> }]
-      }
-    ]
-  }
+    return (
+        <div className="p-4 space-y-3 bg-transparent">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="p-2 bg-black/30 rounded border border-white/5">
+                    <div className="text-text-secondary">FPS</div>
+                    <div className="text-lg font-mono text-emerald-400">{metrics.fps.toFixed(0)}</div>
+                </div>
+                <div className="p-2 bg-black/30 rounded border border-white/5">
+                    <div className="text-text-secondary">Frame Time</div>
+                    <div className="text-lg font-mono text-blue-400">{metrics.frameTime.toFixed(2)}ms</div>
+                </div>
+                <div className="p-2 bg-black/30 rounded border border-white/5">
+                    <div className="text-text-secondary">Draw Calls</div>
+                    <div className="text-lg font-mono text-orange-400">{metrics.drawCalls}</div>
+                </div>
+                <div className="p-2 bg-black/30 rounded border border-white/5">
+                    <div className="text-text-secondary">Entities</div>
+                    <div className="text-lg font-mono text-white">{metrics.entityCount}</div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- Main App Content (Inner) ---
+const EditorLayout: React.FC = () => {
+    const wm = useContext(WindowManagerContext);
+    const { setGizmoConfig } = useContext(EditorContext)!;
+    const [activeMenu, setActiveMenu] = useState<string | null>(null);
+
+    // Initial Registration of Windows
+    useEffect(() => {
+        if (!wm) return;
+
+        // Register all available tool windows
+        wm.registerWindow({
+            id: 'hierarchy', title: 'Hierarchy', icon: 'ListTree', content: <HierarchyWrapper />, 
+            width: 280, height: 500, initialPosition: { x: 20, y: 100 }
+        });
+        wm.registerWindow({
+            id: 'inspector', title: 'Inspector', icon: 'Settings2', content: <InspectorWrapper />, 
+            width: 320, height: 600, initialPosition: { x: window.innerWidth - 340, y: 100 }
+        });
+        wm.registerWindow({
+            id: 'project', title: 'Project Browser', icon: 'FolderOpen', content: <ProjectWrapper />, 
+            width: 600, height: 350, initialPosition: { x: 320, y: window.innerHeight - 370 }
+        });
+        wm.registerWindow({
+            id: 'console', title: 'Console', icon: 'Terminal', content: <ConsoleWrapper />, 
+            width: 500, height: 250, initialPosition: { x: 20, y: window.innerHeight - 270 }
+        });
+        wm.registerWindow({
+            id: 'graph', title: 'Visual Script', icon: 'Workflow', content: <GraphWrapper />, 
+            width: 800, height: 500, initialPosition: { x: (window.innerWidth - 800)/2, y: (window.innerHeight - 500)/2 }
+        });
+        wm.registerWindow({
+            id: 'preferences', title: 'Preferences', icon: 'Settings', content: <PreferencesModal onClose={() => wm.closeWindow('preferences')} />, 
+            width: 500
+        });
+        wm.registerWindow({
+            id: 'stats', title: 'Performance', icon: 'Activity', content: <StatsContent />, 
+            width: 280, initialPosition: { x: window.innerWidth - 300, y: 60 }
+        });
+
+        // Open Default Layout
+        wm.openWindow('hierarchy');
+        wm.openWindow('inspector');
+        wm.openWindow('project');
+        
+    }, [wm]);
+
+    const toggleMenu = (e: React.MouseEvent, menu: string) => {
+        e.stopPropagation();
+        setActiveMenu(activeMenu === menu ? null : menu);
+    };
+
+    const handleLoad = () => {
+        const json = localStorage.getItem('ti3d_scene');
+        if (json) {
+            engineInstance.loadScene(json);
+            alert("Scene Loaded!");
+        } else {
+            alert("No saved scene found.");
+        }
+    };
+
+    return (
+        <div className="flex flex-col h-screen bg-[#101010] text-text-primary overflow-hidden font-sans relative" onClick={() => setActiveMenu(null)}>
+            
+            {/* Top Bar (Header + Toolbar) */}
+            <div className="flex flex-col z-50 pointer-events-auto shadow-xl">
+                {/* Menu Bar */}
+                <div className="h-8 bg-panel-header flex items-center px-3 text-[11px] select-none border-b border-white/5 gap-4">
+                    <div className="font-bold text-white tracking-wide flex items-center gap-2 pr-4 border-r border-white/5">
+                        <div className="w-4 h-4 bg-accent rounded-sm shadow-[0_0_8px_rgba(79,128,248,0.6)]"></div>
+                        Ti3D <span className="font-light text-white/40">PRO</span>
+                    </div>
+                    <div className="flex gap-2 text-text-primary relative">
+                        <span className="hover:bg-white/10 px-2 py-1 rounded cursor-pointer transition-colors" onClick={(e) => toggleMenu(e, 'File')}>File</span>
+                        {activeMenu === 'File' && (
+                            <div className="absolute top-7 left-0 bg-[#252525] border border-white/10 shadow-2xl rounded-md py-1 min-w-[160px] text-text-primary z-[100]">
+                                <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex justify-between" onClick={() => {
+                                    const json = engineInstance.saveScene();
+                                    localStorage.setItem('ti3d_scene', json);
+                                }}><span>Save Scene</span><span className="text-white/30 text-[9px]">Ctrl+S</span></div>
+                                <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={handleLoad}>Load Scene</div>
+                            </div>
+                        )}
+                        
+                        <span className="hover:bg-white/10 px-2 py-1 rounded cursor-pointer transition-colors" onClick={(e) => toggleMenu(e, 'Edit')}>Edit</span>
+                        
+                        <div className="relative">
+                            <span className={`hover:bg-white/10 px-2 py-1 rounded cursor-pointer transition-colors ${activeMenu === 'Window' ? 'bg-white/10' : ''}`} onClick={(e) => toggleMenu(e, 'Window')}>Window</span>
+                            {activeMenu === 'Window' && (
+                                <div className="absolute top-7 left-0 bg-[#252525] border border-white/10 shadow-2xl rounded-md py-1 min-w-[180px] text-text-primary z-[100]">
+                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('hierarchy'); setActiveMenu(null); }}>
+                                        <Icon name="ListTree" size={12} /> Hierarchy
+                                    </div>
+                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('inspector'); setActiveMenu(null); }}>
+                                        <Icon name="Settings2" size={12} /> Inspector
+                                    </div>
+                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('project'); setActiveMenu(null); }}>
+                                        <Icon name="FolderOpen" size={12} /> Project
+                                    </div>
+                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('graph'); setActiveMenu(null); }}>
+                                        <Icon name="Workflow" size={12} /> Node Graph
+                                    </div>
+                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('console'); setActiveMenu(null); }}>
+                                        <Icon name="Terminal" size={12} /> Console
+                                    </div>
+                                    <div className="border-t border-white/5 my-1"></div>
+                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { wm?.toggleWindow('preferences'); setActiveMenu(null); }}>Preferences...</div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Toolbar */}
+                <Toolbar 
+                    isPlaying={useContext(EditorContext)!.isPlaying}
+                    onPlay={() => { engineInstance.start(); }}
+                    onPause={() => { engineInstance.pause(); }}
+                    onStop={() => { engineInstance.stop(); }}
+                    currentTool={useContext(EditorContext)!.tool}
+                    setTool={useContext(EditorContext)!.setTool}
+                    transformSpace={useContext(EditorContext)!.transformSpace}
+                    setTransformSpace={useContext(EditorContext)!.setTransformSpace}
+                />
+            </div>
+
+            {/* FULL SCREEN VIEWPORT BACKGROUND */}
+            <div className="absolute inset-0 top-[64px] bottom-[24px] z-0">
+                <SceneWrapper />
+            </div>
+
+            {/* Status Bar */}
+            <div className="absolute bottom-0 w-full h-6 bg-panel-header/90 backdrop-blur flex items-center px-4 justify-between text-[10px] text-text-secondary shrink-0 select-none z-50 border-t border-white/5">
+                <div className="flex items-center gap-4">
+                    {useContext(EditorContext)!.isPlaying ? <span className="text-emerald-500 animate-pulse font-bold">● PLAYING</span> : <span>Ready</span>}
+                </div>
+                <div className="flex items-center gap-4 font-mono opacity-60">
+                    <span>{engineInstance.metrics.entityCount} Objects</span>
+                    <span>{engineInstance.metrics.fps.toFixed(0)} FPS</span>
+                </div>
+            </div>
+        </div>
+    );
 };
 
 const App: React.FC = () => {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [tool, setTool] = useState<ToolType>('SELECT');
-  const [transformSpace, setTransformSpace] = useState<TransformSpace>('Gimbal'); // Default to Gimbal
+  const [transformSpace, setTransformSpace] = useState<TransformSpace>('Gimbal');
   const [isPlaying, setIsPlaying] = useState(false);
-  
-  // Config State
   const [gizmoConfig, setGizmoConfig] = useState<GizmoConfiguration>(DEFAULT_GIZMO_CONFIG);
-  const [showPreferences, setShowPreferences] = useState(false);
-  
-  // Menu State
-  const [activeMenu, setActiveMenu] = useState<string | null>(null);
 
-  // Engine Sync
   const refreshState = useCallback(() => {
     setEntities(engineInstance.ecs.getAllProxies(engineInstance.sceneGraph));
   }, []);
 
-  // Keyboard Shortcuts
   useEffect(() => {
-      const handleKeyDown = (e: KeyboardEvent) => {
-          // Play/Pause
-          if (e.code === 'Space' && (document.activeElement === document.body || document.activeElement?.tagName === 'BUTTON')) {
-              e.preventDefault();
-              if (engineInstance.isPlaying) {
-                  engineInstance.pause();
-                  setIsPlaying(false);
-              } else {
-                  engineInstance.start();
-                  setIsPlaying(true);
-              }
-          }
-          // Grid Toggle
-          else if (e.code === 'KeyG' && !e.ctrlKey && !e.shiftKey) {
-               engineInstance.toggleGrid();
-          }
-          // Undo/Redo
-          else if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-              if (e.shiftKey) {
-                  engineInstance.redo();
-              } else {
-                  engineInstance.undo();
-              }
-              e.preventDefault();
-          }
-          else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
-              engineInstance.redo();
-              e.preventDefault();
-          }
-          // Save
-          else if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-              e.preventDefault();
-              const json = engineInstance.saveScene();
-              localStorage.setItem('ti3d_scene', json);
-              console.log("Scene Saved to LocalStorage");
-              alert("Scene Saved!");
-          }
-      };
-
-      window.addEventListener('keydown', handleKeyDown);
-      // Close menu on click outside
-      window.addEventListener('click', () => setActiveMenu(null));
-      return () => {
-          window.removeEventListener('keydown', handleKeyDown);
-          window.removeEventListener('click', () => setActiveMenu(null));
-      };
+    const syncPlayState = () => setIsPlaying(engineInstance.isPlaying);
+    engineInstance.subscribe(syncPlayState);
+    return () => {}; 
   }, []);
 
   useEffect(() => {
@@ -204,61 +289,6 @@ const App: React.FC = () => {
     };
   }, [refreshState]);
 
-  const handlePlay = () => { engineInstance.start(); setIsPlaying(true); };
-  const handlePause = () => { engineInstance.pause(); setIsPlaying(false); };
-  const handleStop = () => { engineInstance.stop(); setIsPlaying(false); };
-
-  const handleLoad = () => {
-      const json = localStorage.getItem('ti3d_scene');
-      if (json) {
-          engineInstance.loadScene(json);
-          alert("Scene Loaded!");
-      } else {
-          alert("No saved scene found.");
-      }
-  };
-
-  const getTab = useCallback((data: TabData): TabData => {
-    let content;
-    let icon = 'Box';
-    switch (data.id) {
-        case 'hierarchy': content = <HierarchyWrapper />; icon = 'ListTree'; break;
-        case 'project': content = <ProjectWrapper />; icon = 'FolderOpen'; break;
-        case 'scene': content = <SceneWrapper />; icon = 'Cuboid'; break;
-        case 'game': content = <GameWrapper />; icon = 'Gamepad2'; break;
-        case 'graph': content = <GraphWrapper />; icon = 'Workflow'; break;
-        case 'inspector': content = <InspectorWrapper />; icon = 'Settings2'; break;
-        case 'console': content = <ConsoleWrapper />; icon = 'Terminal'; break;
-        default: content = <div>Missing Panel</div>;
-    }
-    
-    const title = (
-        <div className="flex items-center gap-2">
-            <Icon 
-                name={icon as any} 
-                size={14} 
-                className={data.id === 'scene' ? 'text-accent' : 'text-text-secondary'}
-            />
-            <span>{data.title as string}</span>
-        </div>
-    );
-
-    return {
-      id: data.id,
-      title: title, 
-      content: content,
-      closable: true,
-      minWidth: 150,
-      minHeight: 100,
-      group: data.group, 
-    };
-  }, []);
-
-  const toggleMenu = (e: React.MouseEvent, menu: string) => {
-      e.stopPropagation();
-      setActiveMenu(activeMenu === menu ? null : menu);
-  };
-
   return (
     <EditorContext.Provider value={{
       entities,
@@ -273,90 +303,9 @@ const App: React.FC = () => {
       gizmoConfig,
       setGizmoConfig
     }}>
-      <div className="flex flex-col h-screen bg-panel text-text-primary overflow-hidden font-sans relative">
-        {/* Main Menu Bar */}
-        <div className="h-9 bg-panel-header flex items-center px-4 text-xs select-none border-b border-black/50 gap-6 shrink-0 shadow-sm z-50">
-          <div className="font-bold text-white tracking-wider flex items-center gap-2">
-            <div className="w-4 h-4 bg-accent rounded-sm shadow-[0_0_10px_rgba(0,122,204,0.5)]"></div>
-            Ti3D ENGINE
-          </div>
-          <div className="flex gap-4 text-text-secondary font-medium relative">
-              <span className="hover:text-white cursor-pointer transition-colors" onClick={(e) => toggleMenu(e, 'File')}>File</span>
-              {activeMenu === 'File' && (
-                  <div className="absolute top-6 left-0 bg-panel border border-black/50 shadow-xl rounded py-1 min-w-[120px] text-text-primary">
-                      <div className="px-4 py-1 hover:bg-accent hover:text-white cursor-pointer" onClick={() => {
-                          const json = engineInstance.saveScene();
-                          localStorage.setItem('ti3d_scene', json);
-                          alert("Saved to LocalStorage");
-                      }}>Save Scene</div>
-                      <div className="px-4 py-1 hover:bg-accent hover:text-white cursor-pointer" onClick={handleLoad}>Load Scene</div>
-                  </div>
-              )}
-              
-              <span className="hover:text-white cursor-pointer transition-colors" onClick={(e) => toggleMenu(e, 'Edit')}>Edit</span>
-              {activeMenu === 'Edit' && (
-                  <div className="absolute top-6 left-10 bg-panel border border-black/50 shadow-xl rounded py-1 min-w-[120px] text-text-primary">
-                      <div className="px-4 py-1 hover:bg-accent hover:text-white cursor-pointer" onClick={() => engineInstance.undo()}>Undo</div>
-                      <div className="px-4 py-1 hover:bg-accent hover:text-white cursor-pointer" onClick={() => engineInstance.redo()}>Redo</div>
-                  </div>
-              )}
-
-              <span className="hover:text-white cursor-pointer transition-colors">Assets</span>
-              <span className="hover:text-white cursor-pointer transition-colors">GameObject</span>
-
-              {/* Window Menu - Containing Reference (Preferences) */}
-              <div className="relative">
-                <span className={`hover:text-white cursor-pointer transition-colors ${activeMenu === 'Window' ? 'text-white' : ''}`} onClick={(e) => toggleMenu(e, 'Window')}>Window</span>
-                {activeMenu === 'Window' && (
-                    <div className="absolute top-6 left-0 bg-panel border border-black/50 shadow-xl rounded py-1 min-w-[120px] text-text-primary">
-                        <div className="px-4 py-1 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { setShowPreferences(true); setActiveMenu(null); }}>Reference</div>
-                        <div className="border-t border-white/10 my-1"></div>
-                        <div className="px-4 py-1 hover:bg-accent hover:text-white cursor-pointer">Layouts</div>
-                    </div>
-                )}
-              </div>
-
-              <span className="hover:text-white cursor-pointer transition-colors">Help</span>
-          </div>
-        </div>
-
-        {/* Toolbar */}
-        <Toolbar 
-          isPlaying={isPlaying} 
-          onPlay={handlePlay} 
-          onPause={handlePause} 
-          onStop={handleStop}
-          currentTool={tool}
-          setTool={setTool}
-          transformSpace={transformSpace}
-          setTransformSpace={setTransformSpace}
-        />
-
-        {/* Docking Area */}
-        <div className="flex-1 relative">
-            <DockLayout 
-              defaultLayout={DEFAULT_LAYOUT}
-              loadTab={getTab}
-              style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}
-              dropMode="edge"
-            />
-        </div>
-
-        {/* Status Bar */}
-        <div className="h-6 bg-accent/90 flex items-center px-4 justify-between text-[10px] text-white shrink-0 select-none z-40 shadow-[0_-1px_0_rgba(255,255,255,0.1)]">
-          <div className="flex items-center gap-4">
-              <span className="font-bold flex items-center gap-1"><Icon name="CheckCircle2" size={10} /> Ready</span>
-          </div>
-          <div className="flex items-center gap-4 font-mono opacity-80">
-              <span>MEM: {engineInstance.metrics.entityCount} Entities</span>
-              <span>GPU: {engineInstance.metrics.frameTime.toFixed(2)}ms</span>
-              <span>FPS: {engineInstance.metrics.fps.toFixed(0)}</span>
-          </div>
-        </div>
-
-        {/* Preferences Modal */}
-        {showPreferences && <PreferencesModal onClose={() => setShowPreferences(false)} />}
-      </div>
+        <WindowManager>
+            <EditorLayout />
+        </WindowManager>
     </EditorContext.Provider>
   );
 };
