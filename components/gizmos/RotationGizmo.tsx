@@ -308,19 +308,27 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
     
     const renderVolumetricMesh = (vertices: Vector3[], indices: number[][], fillStyle: string, opacity: number = 1.0) => {
          // Explicitly type projected to prevent unknown property access error
-         const projected: { x: number; y: number; z: number; w: number; }[] = vertices.map(v => {
+         const projected = vertices.map(v => {
             const p = project(v);
             return { x: p.x, y: p.y, z: p.z, w: p.w };
         });
         
         const faces = indices.map(idx => {
             let avgZ = 0;
-            idx.forEach(i => { avgZ += projected[i].z; });
+            idx.forEach(i => { 
+                const p = projected[i];
+                if(p) avgZ += p.z; 
+            });
             avgZ /= idx.length;
             
             const p0 = vertices[idx[0]];
             const p1 = vertices[idx[1]];
             const p2 = vertices[idx[2]];
+            
+            if (!p0 || !p1 || !p2) {
+                return { indices: idx, depth: avgZ, normal: {x:0,y:0,z:1}, visible: false };
+            }
+            
             const v1 = GizmoMath.sub(p1, p0);
             const v2 = GizmoMath.sub(p2, p0);
             const normal = GizmoMath.normalize(GizmoMath.cross(v1, v2));
@@ -338,8 +346,8 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             intensity = 0.3 + intensity * 0.7;
             const shadeOpacity = Math.max(0, 1.0 - intensity);
             const pts = face.indices.map(idx => {
-                const p = projected[idx] as { x: number, y: number };
-                return `${p.x},${p.y}`;
+                const p = projected[idx];
+                return p ? `${p.x},${p.y}` : "0,0";
             }).join(' ');
             return (
                 <g key={i} className="pointer-events-none">

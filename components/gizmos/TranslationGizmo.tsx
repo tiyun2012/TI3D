@@ -4,7 +4,7 @@ import { Entity, ComponentType, Vector3 } from '../../types';
 import { engineInstance } from '../../services/engine';
 import { GizmoBasis, GizmoMath, GIZMO_COLORS, Axis, ColorUtils } from './GizmoUtils';
 import { EditorContext } from '../../contexts/EditorContext';
-import { Mat4Utils } from '../../services/math';
+import { Mat4Utils, Vec3Utils } from '../../services/math';
 
 interface Props {
     entity: Entity;
@@ -21,12 +21,18 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         axis: Axis;
         startX: number;
         startY: number;
-        startPos: Vector3;
+        
+        // World Space Drag Anchors
+        startWorldPos: Vector3;
+        dragOffset: Vector3; // For Plane: hit - origin
+        
+        // Matrix to convert World result back to Local for ECS
+        invParentMatrix: Float32Array;
+
         cameraBasis?: { right: Vector3, up: Vector3 };
         axisVector?: Vector3;
         // Plane specific
         planeNormal?: Vector3;
-        planeHitOffset?: Vector3;
         // New Axis Drag specific
         dragPlaneOrigin?: Vector3;
         startPlaneHit?: Vector3;
@@ -77,6 +83,8 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
                 invViewProj, basis.cameraPosition
             );
 
+            let targetWorldPos: Vector3 | null = null;
+
             // 1. Handle Axis Dragging (X, Y, Z) using Ray-Plane Intersection
             if ((dragState.axis === 'X' || dragState.axis === 'Y' || dragState.axis === 'Z') && 
                 dragState.planeNormal && dragState.startPlaneHit && dragState.axisVector && dragState.dragPlaneOrigin) {
@@ -85,55 +93,58 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
                 const hit = GizmoMath.rayPlaneIntersection(ray.origin, ray.direction, dragState.dragPlaneOrigin, dragState.planeNormal);
                 
                 if (hit) {
-                    // Calculate World Delta
+                    // Calculate World Delta from the initial click point on the plane
                     const delta = GizmoMath.sub(hit, dragState.startPlaneHit);
-                    // Project Delta onto the Axis Vector
+                    // Project Delta onto the Axis Vector (constrain movement)
                     const proj = GizmoMath.dot(delta, dragState.axisVector);
                     const move = GizmoMath.scale(dragState.axisVector, proj);
                     
-                    const newPos = GizmoMath.add(dragState.startPos, move);
-                    transform.position.x = newPos.x;
-                    transform.position.y = newPos.y;
-                    transform.position.z = newPos.z;
-                    engineInstance.notifyUI();
+                    // Apply to original World Position
+                    targetWorldPos = GizmoMath.add(dragState.startWorldPos, move);
                 }
-                return;
             }
 
             // 2. Handle Plane Dragging (XY, XZ, YZ)
-            if (['XY', 'XZ', 'YZ'].includes(dragState.axis) && dragState.planeNormal && dragState.planeHitOffset) {
+            else if (['XY', 'XZ', 'YZ'].includes(dragState.axis) && dragState.planeNormal) {
                 // Intersect with plane at original origin
                 const hit = GizmoMath.rayPlaneIntersection(ray.origin, ray.direction, origin, dragState.planeNormal);
                 
                 if (hit) {
-                    // New position is hit point minus the initial offset
-                    const newPos = GizmoMath.sub(hit, dragState.planeHitOffset);
-                    transform.position.x = newPos.x;
-                    transform.position.y = newPos.y;
-                    transform.position.z = newPos.z;
-                    engineInstance.notifyUI();
+                    // Restore position relative to the click offset
+                    targetWorldPos = GizmoMath.sub(hit, dragState.dragOffset);
                 }
-                return;
             }
 
             // 3. Handle View/Screen Dragging
-            const dx = e.clientX - dragState.startX;
-            const dy = e.clientY - dragState.startY;
-            
-            // Distance Factor for Screen Space moves
-            const dist = Math.sqrt(
-                Math.pow(basis.cameraPosition.x - origin.x, 2) + 
-                Math.pow(basis.cameraPosition.y - origin.y, 2) + 
-                Math.pow(basis.cameraPosition.z - origin.z, 2)
-            );
-            const factor = dist * 0.002;
+            else if (dragState.axis === 'VIEW' && dragState.cameraBasis) {
+                const dx = e.clientX - dragState.startX;
+                const dy = e.clientY - dragState.startY;
+                
+                // Distance Factor for Screen Space moves
+                const dist = Math.sqrt(
+                    Math.pow(basis.cameraPosition.x - origin.x, 2) + 
+                    Math.pow(basis.cameraPosition.y - origin.y, 2) + 
+                    Math.pow(basis.cameraPosition.z - origin.z, 2)
+                );
+                const factor = dist * 0.002;
 
-            if (dragState.axis === 'VIEW' && dragState.cameraBasis) {
-                // Free Move: Move parallel to view plane
                 const { right, up } = dragState.cameraBasis;
-                transform.position.x = dragState.startPos.x + (right.x * dx - up.x * dy) * factor;
-                transform.position.y = dragState.startPos.y + (right.y * dx - up.y * dy) * factor;
-                transform.position.z = dragState.startPos.z + (right.z * dx - up.z * dy) * factor;
+                const moveX = GizmoMath.scale(right, dx * factor);
+                const moveY = GizmoMath.scale(up, -dy * factor); // Screen Y is down, World Y is up
+                const move = GizmoMath.add(moveX, moveY);
+                
+                targetWorldPos = GizmoMath.add(dragState.startWorldPos, move);
+            }
+
+            // Apply Result
+            if (targetWorldPos) {
+                // Convert World Position back to Local Space for the Entity Component
+                const targetLocal = Vec3Utils.create();
+                Vec3Utils.transformMat4(targetWorldPos, dragState.invParentMatrix, targetLocal);
+
+                transform.position.x = targetLocal.x;
+                transform.position.y = targetLocal.y;
+                transform.position.z = targetLocal.z;
                 engineInstance.notifyUI();
             }
         };
@@ -163,10 +174,21 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         
         let axisVector: Vector3 | undefined;
         let planeNormal: Vector3 | undefined;
-        let planeHitOffset: Vector3 | undefined;
         let startPlaneHit: Vector3 | undefined;
         let dragPlaneOrigin: Vector3 | undefined;
+        let dragOffset = { x: 0, y: 0, z: 0 };
 
+        // 1. Calculate Inverse Parent Matrix to convert World -> Local later
+        const parentId = engineInstance.sceneGraph.getParentId(entity.id);
+        const parentMat = Mat4Utils.create();
+        if (parentId) {
+            const pm = engineInstance.sceneGraph.getWorldMatrix(parentId);
+            if (pm) Mat4Utils.copy(parentMat, pm);
+        }
+        const invParentMatrix = Mat4Utils.create();
+        Mat4Utils.invert(parentMat, invParentMatrix);
+
+        // 2. Setup Intersection Params
         if (containerRef?.current) {
             const rect = containerRef.current.getBoundingClientRect();
             const ray = GizmoMath.screenToRay(
@@ -202,9 +224,8 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
                 
                 const hit = GizmoMath.rayPlaneIntersection(ray.origin, ray.direction, origin, planeNormal);
                 if (hit) {
-                    // Calculate offset from current entity position to hit point
-                    // This ensures we drag relative to where we clicked
-                    planeHitOffset = GizmoMath.sub(hit, transform.position);
+                    // Calculate offset from World Origin to Hit Point
+                    dragOffset = GizmoMath.sub(hit, origin);
                 } else {
                     return; // Missed plane
                 }
@@ -217,7 +238,7 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
             const viewDir = GizmoMath.normalize(GizmoMath.sub(origin, basis.cameraPosition));
             const worldUp = { x: 0, y: 1, z: 0 };
             let right = GizmoMath.cross(viewDir, worldUp);
-            if (GizmoMath.dot(right, right) < 0.001) right = { x: 1, y: 0, z: 0 }; // Gimbal lock fallback
+            if (GizmoMath.dot(right, right) < 0.001) right = { x: 1, y: 0, z: 0 }; 
             right = GizmoMath.normalize(right);
             const up = GizmoMath.normalize(GizmoMath.cross(right, viewDir));
             cameraBasis = { right, up };
@@ -227,11 +248,12 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
             axis,
             startX: e.clientX,
             startY: e.clientY,
-            startPos: { ...transform.position },
+            startWorldPos: { ...origin }, // Snapshot START World Position
+            dragOffset,
+            invParentMatrix,
             cameraBasis,
             axisVector,
             planeNormal,
-            planeHitOffset,
             startPlaneHit,
             dragPlaneOrigin
         });
