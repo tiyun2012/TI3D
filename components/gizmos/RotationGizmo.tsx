@@ -172,8 +172,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         Mat4Utils.copy(accum, baseMat);
 
         // Reverse Order for Hierarchy (Outer -> Inner)
-        // E.g. XYZ:  Rotation = Rz * Ry * Rx.
-        // We calculate bases for Z (Parent), then Y (Parent*Z), then X (Parent*Z*Y)
         const reversedAxes = [...axes].reverse();
 
         reversedAxes.forEach((axisChar) => {
@@ -266,8 +264,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             // --- Apply Rotation ---
             const transform = entity.components[ComponentType.TRANSFORM];
             
-            // For Gimbal/Euler, we can directly map axis to euler component
-            // For Local/World, this is an approximation but works well for small deltas
             if (dragState.axis === 'X') transform.rotation.x = dragState.startRotation.x + totalDelta;
             else if (dragState.axis === 'Y') transform.rotation.y = dragState.startRotation.y + totalDelta;
             else if (dragState.axis === 'Z') transform.rotation.z = dragState.startRotation.z + totalDelta;
@@ -350,6 +346,56 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         }).filter((f): f is React.ReactElement => f !== null);
     };
 
+    const renderDecorations = (radius: number, u: Vector3, v: Vector3, color: string, opacity: number) => {
+        if (!gizmoConfig.rotationShowDecorations) return null;
+
+        const tickCount = 12;
+        const tickSize = scale * 0.05;
+        const ticks = [];
+
+        for (let i = 0; i < tickCount; i++) {
+            const theta = (i / tickCount) * Math.PI * 2;
+            const cos = Math.cos(theta);
+            const sin = Math.sin(theta);
+
+            // Position on ring
+            const px = origin.x + (u.x * cos + v.x * sin) * radius;
+            const py = origin.y + (u.y * cos + v.y * sin) * radius;
+            const pz = origin.z + (u.z * cos + v.z * sin) * radius;
+
+            // Rhombus shape oriented along tangent
+            const localVerts = [
+                { u: 0, v: tickSize },      
+                { u: tickSize*0.6, v: 0 },  
+                { u: 0, v: -tickSize },     
+                { u: -tickSize*0.6, v: 0 }  
+            ];
+
+            const worldVerts = localVerts.map(lv => {
+                const rU = lv.u * cos - lv.v * sin; 
+                const rV = lv.u * sin + lv.v * cos; 
+                return {
+                    x: px + u.x * rU + v.x * rV,
+                    y: py + u.y * rU + v.y * rV,
+                    z: pz + u.z * rU + v.z * rV
+                };
+            });
+
+            const pNormal = GizmoMath.normalize({ x: px-origin.x, y: py-origin.y, z: pz-origin.z });
+            const viewDir = GizmoMath.normalize(GizmoMath.sub(basis.cameraPosition, {x:px,y:py,z:pz}));
+            
+            if (GizmoMath.dot(pNormal, viewDir) < -0.1) continue;
+
+            const projected = worldVerts.map(project);
+            const pts = projected.map(p => `${p.x},${p.y}`).join(' ');
+
+            ticks.push(
+                <polygon key={i} points={pts} fill={color} fillOpacity={opacity * 0.8} stroke="none" className="pointer-events-none" />
+            );
+        }
+        return <g>{ticks}</g>;
+    };
+
     const renderTorusRing = (axis: Axis, color: string) => {
         const { axis: axisVec, u, v } = getRingBasis(axis);
 
@@ -366,7 +412,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         const isHover = hoverAxis === axis;
         const isOtherDragging = dragState && dragState.axis !== axis;
         
-        // Prevent interaction if another axis is being dragged
         if (isOtherDragging) visibility *= 0.3;
 
         const opacity = visibility * (isActive ? 1.0 : (isHover ? 0.9 : 0.7));
@@ -422,6 +467,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
                     strokeLinecap="round"
                 />
                 <g>{renderVolumetricMesh(worldVertices, geo.indices, fillStyle, opacity)}</g>
+                {renderDecorations(radius, u, v, finalColor, opacity)}
             </g>
         );
     };
@@ -432,11 +478,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         const transform = entity.components[ComponentType.TRANSFORM];
         const order = (transform.rotationOrder || 'XYZ') as RotationOrder;
         const axes = order.split('') as ('X'|'Y'|'Z')[];
-        // Reverse because first axis in Euler string is applied first (so it's the "inner" most local rotation)
-        // Actually, if R = Rz * Ry * Rx. Rx is applied first. It is carried by Ry and Rz.
-        // So Z is the base (Parent). Y is middle. X is tip (Child).
-        // Render order: Z, then Y, then X.
-        // Array reverse gives ['Z', 'Y', 'X'].
         return [...axes].reverse();
     }, [entity.components[ComponentType.TRANSFORM].rotationOrder]);
 
@@ -450,7 +491,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         <g>
             <circle cx={pCenter.x} cy={pCenter.y} r={scale * gizmoConfig.rotationRingSize * 0.8} fill="black" fillOpacity="0.05" className="pointer-events-none" />
             
-            {/* Screen Ring (View aligned) - usually rendered behind or overlay depending on pref. Let's put it behind. */}
             {renderTorusRing('VIEW', GIZMO_COLORS.Gray)}
 
             {renderOrder.map(axis => (
@@ -459,11 +499,8 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
                 </React.Fragment>
             ))}
             
-            {/* Sector rendering logic */}
             {dragState && dragState.axis !== 'VIEW' && (
                 <g pointerEvents="none" opacity={0.4}>
-                    <path d="" /> {/* Placeholder to maintain structure if needed */}
-                    {/* Simplified Sector for active axis */}
                     {(() => {
                         const radius = scale * gizmoConfig.rotationRingSize;
                         const color = getColor(dragState.axis as string);
