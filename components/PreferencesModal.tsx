@@ -1,3 +1,4 @@
+
 import React, { useContext } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
 import { GizmoArrowShape, GizmoCenterShape, GizmoPlaneShape } from './gizmos/GizmoUtils';
@@ -226,6 +227,14 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                             />
                          </div>
                      </div>
+                </div>
+                
+                {/* Axis Visibility Toggle */}
+                <div className="flex items-center gap-4 text-xs pt-1 px-1">
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-text-secondary hover:text-white transition-colors">
+                        <input type="checkbox" checked={gizmoConfig.axisFadeWhenAligned} onChange={(e) => updateConfig('axisFadeWhenAligned', e.target.checked)} />
+                        <span>Fade Axis When Aligned</span>
+                    </label>
                 </div>
             </div>
 

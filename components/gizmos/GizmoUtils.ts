@@ -27,6 +27,7 @@ export interface GizmoConfiguration {
     axisBaseThickness: number;
     axisHoverThicknessOffset: number;
     axisPressThicknessOffset: number;
+    axisFadeWhenAligned: boolean; // New Config
 
     centerHandleColor: string;
     centerHandleSize: number;
@@ -52,6 +53,7 @@ export const DEFAULT_GIZMO_CONFIG: GizmoConfiguration = {
     axisBaseThickness: 2,
     axisHoverThicknessOffset: 1.0,
     axisPressThicknessOffset: 1.0,
+    axisFadeWhenAligned: true,
 
     centerHandleColor: '#ffffff',
     centerHandleSize: 1.0
@@ -167,8 +169,6 @@ export const GizmoMath = {
     getAxisOpacity: (axisVec: Vector3, cameraPos: Vector3, origin: Vector3): number => {
         const viewDir = GizmoMath.normalize(GizmoMath.sub(cameraPos, origin));
         const dot = Math.abs(GizmoMath.dot(axisVec, viewDir));
-        // Relaxed threshold: Only fade slightly when perfectly aligned, do not disappear completely (0.0)
-        // 0.99 dot product ~ 8 degrees off axis
         if (dot > 0.99) return 0.2; 
         else if (dot > 0.90) return 1.0 - ((dot - 0.90) / 0.1);
         return 1.0;

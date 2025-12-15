@@ -157,7 +157,10 @@ export const ScaleGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport 
     };
 
     const renderHandle = (axis: Axis, vec: Vector3, color: string) => {
-        const opacity = GizmoMath.getAxisOpacity(vec, basis.cameraPosition, origin);
+        const opacity = gizmoConfig.axisFadeWhenAligned 
+            ? GizmoMath.getAxisOpacity(vec, basis.cameraPosition, origin)
+            : 1.0;
+            
         if (opacity < 0.1) return null;
         
         // Handle Logic

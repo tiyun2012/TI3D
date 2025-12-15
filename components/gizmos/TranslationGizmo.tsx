@@ -260,8 +260,12 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
     };
 
     const renderArrow = (axis: Axis, tipPos: any, baseColor: string, vec: Vector3, up: Vector3, right: Vector3) => {
-        const opacity = GizmoMath.getAxisOpacity(vec, basis.cameraPosition, origin);
+        const opacity = gizmoConfig.axisFadeWhenAligned 
+            ? GizmoMath.getAxisOpacity(vec, basis.cameraPosition, origin)
+            : 1.0;
+            
         if (opacity < 0.1) return null;
+        
         const isActive = dragState?.axis === axis;
         const isHover = hoverAxis === axis;
         const strokeWidth = gizmoConfig.axisBaseThickness * (isActive ? gizmoConfig.axisPressThicknessOffset : (isHover ? gizmoConfig.axisHoverThicknessOffset : 1));
