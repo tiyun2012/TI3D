@@ -308,8 +308,8 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
     
     const renderVolumetricMesh = (vertices: Vector3[], indices: number[][], fillStyle: string, opacity: number = 1.0) => {
          // Explicitly type projected to prevent unknown property access error
-         const projected = vertices.map(v => {
-            const p = project(v);
+         const projected: { x: number; y: number; z: number; w: number }[] = vertices.map(v => {
+            const p = project(v) as { x: number, y: number, z: number, w: number };
             return { x: p.x, y: p.y, z: p.z, w: p.w };
         });
         
