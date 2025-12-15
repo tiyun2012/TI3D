@@ -1,4 +1,3 @@
-
 // services/engine.ts
 
 import { Entity, ComponentType, GraphNode, GraphConnection, PerformanceMetrics } from '../types';
@@ -11,6 +10,8 @@ import { SoAEntitySystem } from './ecs/EntitySystem';
 import { PhysicsSystem } from './systems/PhysicsSystem';
 import { HistorySystem } from './systems/HistorySystem';
 import { compileShader } from './ShaderCompiler';
+import { assetManager } from './AssetManager';
+import { MESH_TYPES } from './constants';
 
 interface ExecutionStep {
     id: string;
@@ -72,6 +73,14 @@ export class Ti3DEngine {
   initGL(canvas: HTMLCanvasElement) { 
       this.renderer.init(canvas); 
       if (this.renderer.gl) this.debugRenderer.init(this.renderer.gl);
+      
+      // Register dynamic assets from AssetManager into Renderer
+      assetManager.getAllAssets().forEach(asset => {
+          if (asset.type === 'MESH') {
+              const id = assetManager.getMeshID(asset.id);
+              this.renderer.registerMesh(id, asset.geometry);
+          }
+      });
   }
   resize(width: number, height: number) { this.renderer.resize(width, height); }
 
@@ -167,7 +176,8 @@ export class Ti3DEngine {
           Vec3Utils.transformMat4Normal(ray.direction, invWorld, localRay.direction);
 
           let t: number | null = null;
-          if (meshType === 2) t = RayUtils.intersectSphere(localRay, {x:0, y:0, z:0}, 0.5);
+          // Rough approximation for selection
+          if (meshType === MESH_TYPES['Sphere']) t = RayUtils.intersectSphere(localRay, {x:0, y:0, z:0}, 0.5);
           else t = RayUtils.intersectBox(localRay, {x:-0.5, y:-0.5, z:-0.5}, {x:0.5, y:0.5, z:0.5});
 
           if (t !== null && t > 0) {
@@ -207,6 +217,26 @@ export class Ti3DEngine {
       this.pushUndoState();
       this.notifyUI();
       return this.ecs.createProxy(id, this.sceneGraph)!;
+  }
+  
+  createEntityFromAsset(assetId: string, position?: {x:number,y:number,z:number}) {
+      const asset = assetManager.getAsset(assetId);
+      if (!asset) return;
+      
+      const meshId = assetManager.getMeshID(assetId);
+      const e = this.createEntity(asset.name);
+      e.components[ComponentType.MESH].meshType = 'Custom'; // Placeholder string, actually sets int
+      
+      // Manually set integer mesh type bypassing string lookup
+      const idx = this.ecs.idToIndex.get(e.id);
+      if (idx !== undefined) {
+          this.ecs.store.meshType[idx] = meshId;
+          this.ecs.store.textureIndex[idx] = 1; // Default Grid texture
+          if(position) {
+              this.ecs.store.setPosition(idx, position.x, position.y, position.z);
+          }
+      }
+      this.notifyUI();
   }
 
   private initDemoScene() {

@@ -5,6 +5,7 @@ import { engineInstance } from '../services/engine';
 import { NodeRegistry, getTypeColor } from '../services/NodeRegistry';
 import { ShaderPreview } from './ShaderPreview';
 import { Icon } from './Icon';
+import { assetManager } from '../services/AssetManager';
 
 // --- 1. Shared Layout Constants (Explicit Pixels) ---
 const LayoutConfig = {
@@ -33,10 +34,20 @@ const GraphMath = {
         const def = NodeRegistry[node.type];
         if (!def) return { x: node.position.x, y: node.position.y };
 
+        // Calculate dynamic height offsets for content between inputs and outputs
+        let extraHeight = 0;
+        if ((node.type === 'Float' || node.type === 'Vec3') && node.data) {
+             const rowCount = Object.keys(node.data).length;
+             // Height of rows + marginBottom of the wrapper
+             extraHeight += rowCount * 20 + (rowCount * 4) + LayoutConfig.GAP; // Approx input height 20 + gap
+        }
+        if (node.type === 'ShaderOutput') {
+             extraHeight += 200 + LayoutConfig.GAP;
+        }
+
         let index = 0;
         if (type === 'output') {
             index += def.inputs.length;
-            if (node.type === 'Float') index += 1;
             const outIdx = def.outputs.findIndex(p => p.id === pinId);
             index += outIdx !== -1 ? outIdx : 0;
         } else {
@@ -44,8 +55,13 @@ const GraphMath = {
             index += inIdx !== -1 ? inIdx : 0;
         }
 
-        const yOffset = LayoutConfig.BORDER + LayoutConfig.HEADER_HEIGHT + LayoutConfig.PADDING_TOP + 
+        let yOffset = LayoutConfig.BORDER + LayoutConfig.HEADER_HEIGHT + LayoutConfig.PADDING_TOP + 
                        (index * (LayoutConfig.ITEM_HEIGHT + LayoutConfig.GAP)) + (LayoutConfig.ITEM_HEIGHT / 2);
+        
+        // Add extra offset only for outputs (as they appear after the dynamic content)
+        if (type === 'output') {
+            yOffset += extraHeight;
+        }
         
         const width = node.type === 'ShaderOutput' ? LayoutConfig.PREVIEW_NODE_WIDTH : LayoutConfig.NODE_WIDTH;
         const xOffset = type === 'output' ? width : 0;
@@ -126,7 +142,11 @@ const INITIAL_CONNECTIONS: GraphConnection[] = [
     { id: 'c10', fromNode: '7', fromPin: 'out', toNode: 'out', toPin: 'rgb' },
 ];
 
-export const NodeGraph: React.FC = () => {
+interface NodeGraphProps {
+    materialId?: string | null;
+}
+
+export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
     const [nodes, setNodes] = useState<GraphNode[]>(INITIAL_NODES);
     const [connections, setConnections] = useState<GraphConnection[]>(INITIAL_CONNECTIONS);
     const [connecting, setConnecting] = useState<{ nodeId: string, pinId: string, type: 'input'|'output', x: number, y: number, dataType: string } | null>(null);
@@ -151,6 +171,31 @@ export const NodeGraph: React.FC = () => {
     const hoverPortRef = useRef<boolean>(false);
     
     const activeListenersRef = useRef<{ move?: (ev: MouseEvent) => void; up?: (ev: MouseEvent) => void }>({});
+
+    // --- Loading Logic ---
+    useEffect(() => {
+        if (materialId) {
+            const asset = assetManager.getAsset(materialId);
+            if (asset && asset.type === 'MATERIAL') {
+                setNodes(asset.data.nodes);
+                setConnections(asset.data.connections);
+                // Also trigger immediate compile
+                engineInstance.compileGraph(asset.data.nodes, asset.data.connections);
+            }
+        } else {
+            // Default demo state if no material selected
+            // setNodes(INITIAL_NODES);
+            // setConnections(INITIAL_CONNECTIONS);
+        }
+    }, [materialId]);
+
+    const handleSave = () => {
+        if (materialId) {
+            const glsl = engineInstance.currentShaderSource;
+            assetManager.saveMaterial(materialId, nodes, connections, glsl);
+            alert(`Saved Material!`);
+        }
+    };
 
     // OPTIMIZATION: Debounce graph compilation
     useEffect(() => {
@@ -346,7 +391,8 @@ export const NodeGraph: React.FC = () => {
             }
 
             // Normal RMB = Context Menu
-            setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
+            // FIX: Use relative coordinates to avoid offsets when inside fixed containers with backdrop-filter
+            setContextMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top, visible: true });
             setPendingConnection(null);
             return;
         }
@@ -595,7 +641,8 @@ export const NodeGraph: React.FC = () => {
             
             // Workflow: Drop on background triggers Context Menu
             if (!hoverPortRef.current) {
-                setContextMenu({ x: ev.clientX, y: ev.clientY, visible: true });
+                // FIX: Use relative coordinates
+                setContextMenu({ x: ev.clientX - rect.left, y: ev.clientY - rect.top, visible: true });
                 setPendingConnection({ nodeId, pinId, type });
             }
         };
@@ -637,8 +684,12 @@ export const NodeGraph: React.FC = () => {
         if(!contextMenu || !containerRef.current) return;
         const rect = containerRef.current.getBoundingClientRect();
         
-        // Exact position from contextMenu state (which captured e.clientX/Y)
-        const pos = GraphMath.screenToWorld(contextMenu.x, contextMenu.y, rect, transformRef.current);
+        // Exact position from contextMenu state (which is now local relative to container)
+        const t = transformRef.current;
+        const pos = {
+            x: (contextMenu.x - t.x) / t.k,
+            y: (contextMenu.y - t.y) / t.k
+        };
         const newNodeId = crypto.randomUUID();
         
         const newNode: GraphNode = { id: newNodeId, type, position: pos, data: {} };
@@ -755,8 +806,8 @@ export const NodeGraph: React.FC = () => {
                 style={{ backgroundImage: 'linear-gradient(#333 1px, transparent 1px), linear-gradient(90deg, #333 1px, transparent 1px)' }}
             />
             
-            {/* Grid Toggle Icon */}
-            <div className="absolute top-2 left-2 z-50">
+            {/* Toolbar Overlay */}
+            <div className="absolute top-2 left-2 z-50 flex gap-2">
                 <button 
                     onClick={() => setShowGrid(!showGrid)} 
                     className={`p-1.5 rounded hover:bg-white/10 transition-colors ${showGrid ? 'text-white' : 'text-text-secondary opacity-50'}`}
@@ -764,7 +815,25 @@ export const NodeGraph: React.FC = () => {
                 >
                     <Icon name="Grid" size={16} />
                 </button>
+                
+                {materialId && (
+                    <button 
+                        onClick={handleSave} 
+                        className="bg-accent/80 hover:bg-accent text-white px-3 py-1 rounded text-xs flex items-center gap-2 shadow-lg"
+                        title="Save Material"
+                    >
+                        <Icon name="Save" size={12} />
+                        <span>Save</span>
+                    </button>
+                )}
             </div>
+            
+            {/* Info Overlay */}
+            {materialId && (
+                <div className="absolute top-2 right-2 z-50 px-2 py-1 bg-black/50 text-white/50 text-[10px] rounded border border-white/5 pointer-events-none">
+                    Editing: {assetManager.getAsset(materialId)?.name}
+                </div>
+            )}
 
             <div ref={viewRef} className="w-full h-full origin-top-left will-change-transform" style={{ transform: `translate3d(0px, 0px, 0) scale(1)` }}>
                 <svg className="absolute top-0 left-0 overflow-visible pointer-events-none w-1 h-1">
@@ -845,7 +914,7 @@ export const NodeGraph: React.FC = () => {
                                         {(def.type === 'Float' || def.type === 'Vec3') && node.data && (
                                             <div style={{ marginBottom: LayoutConfig.GAP }} className="relative flex flex-col gap-1 px-1">
                                                 {Object.entries(node.data).map(([key, val]) => (
-                                                    <div key={key} className="flex items-center gap-1">
+                                                    <div key={key} className="flex items-center gap-1" style={{ height: 20, marginBottom: 4 }}>
                                                         <span className="text-[9px] text-gray-500 uppercase w-3">{key}</span>
                                                         <input 
                                                             type="text" 
@@ -912,7 +981,7 @@ export const NodeGraph: React.FC = () => {
 
             {contextMenu && contextMenu.visible && (
                 <div 
-                    className="fixed w-48 bg-[#252525] border border-black shadow-2xl rounded text-xs flex flex-col z-[100] overflow-hidden"
+                    className="absolute w-48 bg-[#252525] border border-black shadow-2xl rounded text-xs flex flex-col z-[100] overflow-hidden"
                     style={{ left: contextMenu.x, top: contextMenu.y }}
                     onMouseDown={e => e.stopPropagation()}
                 >

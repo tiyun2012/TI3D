@@ -86,7 +86,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   }, [selectedIds]);
 
   // Derived Camera Matrices using stable viewport state
-  const { vpMatrix } = useMemo(() => {
+  const { vpMatrix, invVpMatrix } = useMemo(() => {
     const { width, height } = viewport;
     
     const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta);
@@ -103,8 +103,11 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     
     const vp = Mat4Utils.create();
     Mat4Utils.multiply(projMatrix, viewMatrix, vp);
+    
+    const invVp = Mat4Utils.create();
+    Mat4Utils.invert(vp, invVp);
 
-    return { vpMatrix: vp };
+    return { vpMatrix: vp, invVpMatrix: invVp };
   }, [camera, viewport.width, viewport.height]);
 
   useEffect(() => {
@@ -230,6 +233,54 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       }
   };
 
+  const handleDrop = (e: React.DragEvent) => {
+      e.preventDefault();
+      const assetId = e.dataTransfer.getData('application/ti3d-asset');
+      if (assetId) {
+          const rect = containerRef.current?.getBoundingClientRect();
+          if(!rect) return;
+          
+          // Calculate world position drop
+          // Cast ray against XZ plane (y=0)
+          const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+          const ndcY = 1 - ((e.clientY - rect.top) / rect.height) * 2;
+          
+          const camPos = getCameraPosition();
+          const start = { x: ndcX, y: ndcY, z: -1 };
+          const end = { x: ndcX, y: ndcY, z: 1 };
+          const worldStart = Vec3Utils.create();
+          const worldEnd = Vec3Utils.create();
+          
+          Vec3Utils.transformMat4(start, invVpMatrix, worldStart);
+          Vec3Utils.transformMat4(end, invVpMatrix, worldEnd);
+          
+          const dir = Vec3Utils.normalize(Vec3Utils.subtract(worldEnd, worldStart, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+          
+          // Plane intersection: P = O + tD
+          // P.y = 0 => O.y + t*D.y = 0 => t = -O.y / D.y
+          let dropPos = { x: 0, y: 0, z: 0 };
+          
+          if (Math.abs(dir.y) > 0.001) {
+              const t = -worldStart.y / dir.y;
+              if (t > 0) {
+                  dropPos = Vec3Utils.add(worldStart, Vec3Utils.scale(dir, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+              } else {
+                  // Ray points up, spawn at distance in front
+                  dropPos = Vec3Utils.add(camPos, Vec3Utils.scale(dir, 10, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+              }
+          } else {
+               dropPos = Vec3Utils.add(camPos, Vec3Utils.scale(dir, 10, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+          }
+
+          engineInstance.createEntityFromAsset(assetId, dropPos);
+      }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+      e.preventDefault(); // Allow drop
+      e.dataTransfer.dropEffect = 'copy';
+  };
+
   useEffect(() => {
     const handleWindowMouseMove = (e: MouseEvent) => {
       if (!dragState || !dragState.isDragging) return;
@@ -316,6 +367,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         onMouseUp={handleMouseUp}
         onWheel={handleWheel}
         onContextMenu={(e) => e.preventDefault()}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
     >
         <div className="absolute inset-0 bg-gradient-to-b from-[#202020] to-[#101010] -z-10 pointer-events-none" />
         <canvas ref={canvasRef} className="block w-full h-full outline-none" />

@@ -1,33 +1,43 @@
-import React, { useState } from 'react';
+
+import React, { useState, useContext } from 'react';
 import { Icon } from './Icon';
+import { assetManager } from '../services/AssetManager';
+import { EditorContext } from '../contexts/EditorContext';
+import { WindowManagerContext } from './WindowManager';
 
 export const ProjectPanel: React.FC = () => {
     const [tab, setTab] = useState<'PROJECT' | 'CONSOLE'>('PROJECT');
+    const [filter, setFilter] = useState<'ALL' | 'MESH' | 'MATERIAL'>('ALL');
     const [search, setSearch] = useState('');
     const [scale, setScale] = useState(40);
+    const { setEditingMaterialId } = useContext(EditorContext)!;
+    const wm = useContext(WindowManagerContext);
 
-    const assets = [
-        { name: 'Scripts', type: 'folder' },
-        { name: 'Materials', type: 'folder' },
-        { name: 'Prefabs', type: 'folder' },
-        { name: 'Player.ts', type: 'code' },
-        { name: 'GameManager.ts', type: 'code' },
-        { name: 'Main.scene', type: 'scene' },
-        { name: 'Enemy.prefab', type: 'prefab' },
-        { name: 'Wood.mat', type: 'material' },
-        { name: 'Jump.wav', type: 'audio' },
-    ];
+    const allAssets = assetManager.getAllAssets();
+    const filteredAssets = allAssets.filter(a => {
+        if (filter !== 'ALL' && a.type !== filter) return false;
+        if (!a.name.toLowerCase().includes(search.toLowerCase())) return false;
+        return true;
+    });
 
-    const getIcon = (type: string) => {
-        switch(type) {
-            case 'folder': return { name: 'Folder', color: 'text-yellow-500' };
-            case 'code': return { name: 'FileCode', color: 'text-blue-400' };
-            case 'scene': return { name: 'Box', color: 'text-gray-300' };
-            case 'prefab': return { name: 'Box', color: 'text-blue-300' };
-            case 'material': return { name: 'Palette', color: 'text-pink-400' };
-            case 'audio': return { name: 'Music', color: 'text-orange-400' };
-            default: return { name: 'File', color: 'text-gray-400' };
+    const handleDragStart = (e: React.DragEvent, assetId: string) => {
+        e.dataTransfer.setData('application/ti3d-asset', assetId);
+        e.dataTransfer.effectAllowed = 'copy';
+    };
+
+    const handleDoubleClick = (assetId: string) => {
+        const asset = assetManager.getAsset(assetId);
+        if (asset && asset.type === 'MATERIAL') {
+            setEditingMaterialId(assetId);
+            wm?.openWindow('graph');
         }
+    };
+
+    const createMaterial = () => {
+        assetManager.createMaterial(`New Material ${Math.floor(Math.random() * 1000)}`);
+        // Force refresh via local state toggle or specialized hook in future
+        // For now, re-render happens naturally via parent or we can use a dummy state
+        setSearch(s => s); // dummy refresh
     };
 
     return (
@@ -51,8 +61,15 @@ export const ProjectPanel: React.FC = () => {
                 
                 {tab === 'PROJECT' && (
                     <div className="flex items-center gap-2">
+                        <button 
+                            onClick={createMaterial}
+                            className="p-1 hover:bg-white/10 rounded text-accent"
+                            title="Create Material"
+                        >
+                            <Icon name="PlusSquare" size={16} />
+                        </button>
                         <input 
-                            type="range" min="30" max="60" 
+                            type="range" min="30" max="80" 
                             value={scale} onChange={(e) => setScale(Number(e.target.value))}
                             className="w-16 opacity-50 hover:opacity-100"
                             aria-label="Asset Scale"
@@ -61,7 +78,7 @@ export const ProjectPanel: React.FC = () => {
                             <Icon name="Search" size={12} className="absolute left-2 top-1.5 text-text-secondary" />
                             <input 
                                 type="text" 
-                                placeholder="Search assets..." 
+                                placeholder="Search..." 
                                 aria-label="Search Assets"
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
@@ -72,13 +89,14 @@ export const ProjectPanel: React.FC = () => {
                 )}
             </div>
 
-            {/* Breadcrumbs (Project Mode) */}
+            {/* Breadcrumbs / Filters (Project Mode) */}
             {tab === 'PROJECT' && (
                 <div className="bg-panel flex items-center gap-2 px-3 py-1.5 text-xs border-b border-black/10">
-                    <Icon name="HardDrive" size={12} className="text-text-secondary" />
-                    <span className="text-text-secondary hover:text-white cursor-pointer">Assets</span>
-                    <Icon name="ChevronRight" size={12} className="text-text-secondary" />
-                    <span className="text-white font-medium cursor-pointer">Scenes</span>
+                    <button onClick={() => setFilter('ALL')} className={`hover:text-white ${filter === 'ALL' ? 'text-white font-bold' : 'text-text-secondary'}`}>All</button>
+                    <span className="text-white/10">|</span>
+                    <button onClick={() => setFilter('MESH')} className={`hover:text-white ${filter === 'MESH' ? 'text-white font-bold' : 'text-text-secondary'}`}>Meshes</button>
+                    <span className="text-white/10">|</span>
+                    <button onClick={() => setFilter('MATERIAL')} className={`hover:text-white ${filter === 'MATERIAL' ? 'text-white font-bold' : 'text-text-secondary'}`}>Materials</button>
                 </div>
             )}
 
@@ -86,20 +104,32 @@ export const ProjectPanel: React.FC = () => {
             <div className="flex-1 overflow-y-auto p-2 bg-[#1a1a1a]">
                 {tab === 'PROJECT' && (
                     <div className="grid grid-cols-[repeat(auto-fill,minmax(80px,1fr))] gap-2">
-                        {assets
-                          .filter(a => a.name.toLowerCase().includes(search.toLowerCase()))
-                          .map((asset, i) => {
-                            const icon = getIcon(asset.type);
+                        {filteredAssets.map((asset) => {
+                            const isMat = asset.type === 'MATERIAL';
                             return (
-                                <div key={i} className="flex flex-col items-center group cursor-pointer p-2 rounded-md hover:bg-white/10 transition-colors border border-transparent hover:border-white/5">
-                                    <Icon 
-                                        name={icon.name as any} 
-                                        size={scale} 
-                                        className={`${icon.color} drop-shadow-md transition-transform group-hover:scale-110`} 
-                                    />
-                                    <span className="text-[10px] text-text-secondary mt-2 text-center w-full break-words leading-tight group-hover:text-white">
+                                <div 
+                                    key={asset.id} 
+                                    className="flex flex-col items-center group cursor-pointer p-2 rounded-md hover:bg-white/10 transition-colors border border-transparent hover:border-white/5 active:bg-white/20"
+                                    draggable={asset.type === 'MESH'} // Only drag meshes for now
+                                    onDragStart={(e) => asset.type === 'MESH' && handleDragStart(e, asset.id)}
+                                    onDoubleClick={() => handleDoubleClick(asset.id)}
+                                >
+                                    <div 
+                                        className="flex items-center justify-center bg-black/20 rounded mb-2 shadow-inner"
+                                        style={{ width: scale, height: scale }}
+                                    >
+                                        <Icon 
+                                            name={isMat ? 'Palette' : 'Box'} 
+                                            size={scale * 0.6} 
+                                            className={`${isMat ? 'text-pink-500' : 'text-accent'} drop-shadow-md transition-transform group-hover:scale-110`} 
+                                        />
+                                    </div>
+                                    <span className="text-[10px] text-text-secondary text-center w-full break-words leading-tight group-hover:text-white select-none">
                                         {asset.name}
                                     </span>
+                                    <div className="text-[8px] text-text-secondary opacity-0 group-hover:opacity-50 mt-1 uppercase tracking-wider">
+                                        {asset.type}
+                                    </div>
                                 </div>
                             );
                         })}
@@ -110,15 +140,7 @@ export const ProjectPanel: React.FC = () => {
                         <div className="flex items-start gap-2 py-1 px-2 hover:bg-white/5 border-b border-white/5">
                              <Icon name="Info" size={14} className="text-text-secondary mt-0.5" />
                              <div>
-                                 <span className="text-white">[System]</span> <span className="text-text-secondary">Engine initialized in 240ms</span>
-                                 <div className="text-[10px] text-gray-600">Core.ts:42</div>
-                             </div>
-                        </div>
-                        <div className="flex items-start gap-2 py-1 px-2 hover:bg-white/5 border-b border-white/5 bg-yellow-900/10">
-                             <Icon name="AlertTriangle" size={14} className="text-yellow-500 mt-0.5" />
-                             <div>
-                                 <span className="text-white">[Warning]</span> <span className="text-yellow-100">Mesh 'Sphere' has no material assigned. Using default.</span>
-                                 <div className="text-[10px] text-gray-500">MeshRenderer.ts:105</div>
+                                 <span className="text-white">[System]</span> <span className="text-text-secondary">Asset Manager loaded {allAssets.length} assets.</span>
                              </div>
                         </div>
                     </div>

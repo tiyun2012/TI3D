@@ -1,3 +1,4 @@
+
 // services/renderers/WebGLRenderer.ts
 
 import { ComponentStorage } from '../ecs/ComponentStorage';
@@ -104,10 +105,7 @@ export class WebGLRenderer {
 
         const gl = this.gl;
         gl.enable(gl.DEPTH_TEST);
-        
-        // Disable CULL_FACE initially to prevent invisible geometry due to winding order
         gl.disable(gl.CULL_FACE); 
-        
         gl.clearColor(0.1, 0.1, 0.1, 1.0);
 
         const vs = this.createShader(gl, gl.VERTEX_SHADER, VS_SOURCE);
@@ -117,23 +115,17 @@ export class WebGLRenderer {
         this.program = this.createProgram(gl, vs, fs);
         if (!this.program) return;
 
-        // DEBUG: Verify attribute locations exist (not optimized out)
-        console.log("Attrib Locations:", 
-            gl.getAttribLocation(this.program, "a_position"),
-            gl.getAttribLocation(this.program, "a_normal"),
-            gl.getAttribLocation(this.program, "a_model"),
-            gl.getAttribLocation(this.program, "a_color")
-        );
-
         this.uniforms = {
             u_viewProjection: gl.getUniformLocation(this.program, 'u_viewProjection'),
             u_textures: gl.getUniformLocation(this.program, 'u_textures'),
         };
 
         this.initTextureArray(gl);
-        this.createMesh(MESH_TYPES['Cube'], this.createCubeData());
-        this.createMesh(MESH_TYPES['Sphere'], this.createSphereData(24, 16));
-        this.createMesh(MESH_TYPES['Plane'], this.createPlaneData());
+        
+        // Register Default Primitives
+        this.registerMesh(MESH_TYPES['Cube'], this.createCubeData());
+        this.registerMesh(MESH_TYPES['Sphere'], this.createSphereData(24, 16));
+        this.registerMesh(MESH_TYPES['Plane'], this.createPlaneData());
     }
 
     ensureCapacity(count: number) {
@@ -147,7 +139,6 @@ export class WebGLRenderer {
             if(!gl) return;
             this.meshes.forEach(mesh => {
                 gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
-                // Buffer Orphaning: Reallocate storage
                 gl.bufferData(gl.ARRAY_BUFFER, this.instanceData.byteLength, gl.DYNAMIC_DRAW);
             });
         }
@@ -159,7 +150,6 @@ export class WebGLRenderer {
         gl.bindTexture(gl.TEXTURE_2D_ARRAY, texture);
         gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, width, height, depth);
 
-        // Explicit Wrap Parameters are mandatory for 2D Arrays on some drivers
         gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.REPEAT);
         gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.REPEAT);
         gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -196,22 +186,24 @@ export class WebGLRenderer {
         this.textureArray = texture;
     }
 
-    createMesh(typeId: number, data: { vertices: Float32Array, normals: Float32Array, uvs: Float32Array, indices: Uint16Array }) {
+    registerMesh(typeId: number, data: { vertices: Float32Array | number[], normals: Float32Array | number[], uvs: Float32Array | number[], indices: Uint16Array | number[] }) {
+        if (!this.gl) return;
         const gl = this.gl;
-        if (!gl) return;
 
         const vao = gl.createVertexArray();
         gl.bindVertexArray(vao);
 
-        // FIX: Allow ArrayBufferView (Float32Array/Uint16Array)
-        const createBuffer = (type: number, src: ArrayBuffer | ArrayBufferView) => {
+        const createBuffer = (type: number, src: any) => {
             const buf = gl.createBuffer();
             gl.bindBuffer(type, buf);
-            gl.bufferData(type, src, gl.STATIC_DRAW);
+            // Convert standard arrays to TypedArrays if needed
+            const typedData = (type === gl.ELEMENT_ARRAY_BUFFER && !(src instanceof Uint16Array)) ? new Uint16Array(src) 
+                            : (type === gl.ARRAY_BUFFER && !(src instanceof Float32Array)) ? new Float32Array(src) 
+                            : src;
+            gl.bufferData(type, typedData, gl.STATIC_DRAW);
             return buf;
         };
 
-        // Static attributes
         createBuffer(gl.ARRAY_BUFFER, data.vertices);
         gl.enableVertexAttribArray(0);
         gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
@@ -226,16 +218,11 @@ export class WebGLRenderer {
 
         createBuffer(gl.ELEMENT_ARRAY_BUFFER, data.indices);
 
-        // Instanced attributes
         const instBuf = gl.createBuffer();
-        
-        // Explicitly bind instance buffer so pointers are correctly linked
         gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
         gl.bufferData(gl.ARRAY_BUFFER, this.instanceData.byteLength, gl.DYNAMIC_DRAW);
         
-        const stride = 21 * 4; // 21 floats * 4 bytes
-        
-        // Mat4 (Model) - locations 2,3,4,5
+        const stride = 21 * 4; 
         for (let i = 0; i < 4; i++) {
             const loc = 2 + i;
             gl.enableVertexAttribArray(loc);
@@ -243,23 +230,20 @@ export class WebGLRenderer {
             gl.vertexAttribDivisor(loc, 1);
         }
         
-        // Color - location 6
         gl.enableVertexAttribArray(6);
         gl.vertexAttribPointer(6, 3, gl.FLOAT, false, stride, 16 * 4);
         gl.vertexAttribDivisor(6, 1);
         
-        // Selection - location 7
         gl.enableVertexAttribArray(7);
         gl.vertexAttribPointer(7, 1, gl.FLOAT, false, stride, 19 * 4);
         gl.vertexAttribDivisor(7, 1);
         
-        // Texture Index - location 9
         gl.enableVertexAttribArray(9);
         gl.vertexAttribPointer(9, 1, gl.FLOAT, false, stride, 20 * 4);
         gl.vertexAttribDivisor(9, 1);
 
         gl.bindVertexArray(null);
-        gl.bindBuffer(gl.ARRAY_BUFFER, null); // Clean up
+        gl.bindBuffer(gl.ARRAY_BUFFER, null); 
 
         this.meshes.set(typeId, { vao: vao!, count: data.indices.length, instanceBuffer: instBuf! });
     }
@@ -267,7 +251,7 @@ export class WebGLRenderer {
     createCubeData() {
         const v = [ -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,0.5,0.5, -0.5,0.5,0.5,  0.5,-0.5,-0.5, -0.5,-0.5,-0.5, -0.5,0.5,-0.5, 0.5,0.5,-0.5,  -0.5,0.5,0.5, 0.5,0.5,0.5, 0.5,0.5,-0.5, -0.5,0.5,-0.5,  -0.5,-0.5,-0.5, 0.5,-0.5,-0.5, 0.5,-0.5,0.5, -0.5,-0.5,0.5,  0.5,-0.5,0.5, 0.5,-0.5,-0.5, 0.5,0.5,-0.5, 0.5,0.5,0.5,  -0.5,-0.5,-0.5, -0.5,-0.5,0.5, -0.5,0.5,0.5, -0.5,0.5,-0.5 ];
         const n = [ 0,0,1, 0,0,1, 0,0,1, 0,0,1,  0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,  0,1,0, 0,1,0, 0,1,0, 0,1,0,  0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0,  1,0,0, 1,0,0, 1,0,0, 1,0,0,  -1,0,0, -1,0,0, -1,0,0, -1,0,0 ];
-        const uv = [ 0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1 ];
+        const uv = [ 0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1 ];
         const i = [ 0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11, 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23 ];
         return { vertices: new Float32Array(v), normals: new Float32Array(n), uvs: new Float32Array(uv), indices: new Uint16Array(i) };
     }
@@ -324,7 +308,6 @@ export class WebGLRenderer {
         if (!this.gl || !this.program) return;
         const gl = this.gl;
         
-        // CRITICAL VIEWPORT SYNC
         if (gl.canvas.width !== width || gl.canvas.height !== height) {
             gl.canvas.width = width;
             gl.canvas.height = height;
@@ -344,10 +327,8 @@ export class WebGLRenderer {
         this.ensureCapacity(store.capacity);
         this.drawCalls = 0; this.triangleCount = 0;
 
-        [1, 2, 3].forEach(typeId => { 
-            const mesh = this.meshes.get(typeId);
-            if (!mesh) return;
-            
+        // Iterate through all known meshes (both Hardcoded and Dynamic)
+        this.meshes.forEach((mesh, typeId) => {
             let instanceCount = 0, ptr = 0;
             
             // Dense Iteration (Fast)
@@ -357,7 +338,6 @@ export class WebGLRenderer {
                 if (!this.showGrid && store.textureIndex[index] === 1) continue;
                 
                 const start = index * 16;
-                // Culling disabled for robustness
                 
                 this.instanceData.set(store.worldMatrix.subarray(start, start + 16), ptr); ptr += 16;
                 this.instanceData[ptr++] = store.colorR[index];
@@ -371,11 +351,8 @@ export class WebGLRenderer {
             if (instanceCount > 0) {
                 gl.bindVertexArray(mesh.vao);
                 gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
-                
-                // Buffer Orphaning: Allocate fresh memory to prevent pipeline stalls
                 gl.bufferData(gl.ARRAY_BUFFER, this.instanceData.byteLength, gl.DYNAMIC_DRAW);
                 gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.instanceData.subarray(0, instanceCount * 21));
-                
                 gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, instanceCount);
                 this.drawCalls++;
                 this.triangleCount += (mesh.count / 3) * instanceCount;

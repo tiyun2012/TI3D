@@ -56,3 +56,30 @@ export interface PerformanceMetrics {
   triangleCount: number;
   entityCount: number;
 }
+
+// Asset Types
+export type AssetType = 'MESH' | 'MATERIAL' | 'TEXTURE' | 'SCRIPT';
+
+export interface StaticMeshAsset {
+    id: string;
+    name: string;
+    type: 'MESH';
+    thumbnail?: string; // Optional Base64 or Icon name
+    geometry: {
+        vertices: Float32Array | number[];
+        normals: Float32Array | number[];
+        uvs: Float32Array | number[];
+        indices: Uint16Array | number[];
+    };
+}
+
+export interface MaterialAsset {
+    id: string;
+    name: string;
+    type: 'MATERIAL';
+    data: {
+        nodes: GraphNode[];
+        connections: GraphConnection[];
+        glsl: string; // Compiled Source
+    };
+}

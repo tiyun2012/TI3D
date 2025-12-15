@@ -34,6 +34,10 @@ export interface EditorContextType {
   setGizmoConfig: (config: GizmoConfiguration) => void;
   uiConfig: UIConfiguration;
   setUiConfig: (config: UIConfiguration) => void;
+  
+  // Asset Editing
+  editingMaterialId: string | null;
+  setEditingMaterialId: (id: string | null) => void;
 }
 
 export const EditorContext = React.createContext<EditorContextType | null>(null);
