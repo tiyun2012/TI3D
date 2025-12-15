@@ -113,6 +113,25 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     }
   }, [vpMatrix, viewport.width, viewport.height]);
 
+  // Focus on Selection (F)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'f' || e.key === 'F') {
+            if (selectedIds.length > 0) {
+                const id = selectedIds[0];
+                const pos = sceneGraph.getWorldPosition(id);
+                setCamera(prev => ({
+                    ...prev,
+                    target: pos,
+                    radius: Math.max(5, prev.radius) // Ensure we don't zoom in too close inside the object
+                }));
+            }
+        }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedIds, sceneGraph]);
+
   const getCameraPosition = () => {
     const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta);
     const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);

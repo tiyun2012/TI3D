@@ -1,6 +1,7 @@
+
 import React from 'react';
 import { Icon } from './Icon';
-import { ToolType } from '../types';
+import { ToolType, TransformSpace } from '../types';
 
 interface ToolbarProps {
   isPlaying: boolean;
@@ -9,10 +10,13 @@ interface ToolbarProps {
   onStop: () => void;
   currentTool: ToolType;
   setTool: (t: ToolType) => void;
+  transformSpace: TransformSpace;
+  setTransformSpace: (t: TransformSpace) => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({ 
-  isPlaying, onPlay, onPause, onStop, currentTool, setTool
+  isPlaying, onPlay, onPause, onStop, currentTool, setTool,
+  transformSpace, setTransformSpace
 }) => {
   
   const toolClass = (active: boolean) => 
@@ -41,8 +45,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         <div className="h-5 w-px bg-white/10 mx-2"></div>
         
         <div className="flex gap-2 text-text-secondary text-xs font-medium">
-            <button className="flex items-center gap-1 hover:text-white transition-colors"><Icon name="Magnet" size={12}/> <span>Snap</span></button>
-            <button className="flex items-center gap-1 hover:text-white transition-colors"><Icon name="Globe" size={12}/> <span>Local</span></button>
+            <button className="flex items-center gap-1 hover:text-white transition-colors p-1 rounded hover:bg-white/5" title="Toggle Snapping">
+                <Icon name="Magnet" size={14}/> <span>Snap</span>
+            </button>
+            
+            <button 
+                className={`flex items-center gap-1 transition-colors p-1 rounded hover:bg-white/5 ${transformSpace === 'Local' ? 'text-white' : 'text-text-secondary'}`}
+                onClick={() => setTransformSpace(transformSpace === 'World' ? 'Local' : 'World')}
+                title={`Current Axis: ${transformSpace}`}
+            >
+                <Icon name={transformSpace === 'World' ? 'Globe' : 'Box'} size={14}/> 
+                <span>{transformSpace}</span>
+            </button>
         </div>
       </div>
 

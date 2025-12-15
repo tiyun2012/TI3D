@@ -328,6 +328,8 @@ const App: React.FC = () => {
           onStop={handleStop}
           currentTool={tool}
           setTool={setTool}
+          transformSpace={transformSpace}
+          setTransformSpace={setTransformSpace}
         />
 
         {/* Docking Area */}
