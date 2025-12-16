@@ -18,6 +18,81 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
         connections: []
     },
     {
+        name: 'Stylized Cloud Volume',
+        description: 'Vertex displacement and noise shading to create a fluffy cloud effect on a sphere.',
+        nodes: [
+            // --- VERTEX DISPLACEMENT ---
+            { id: 'objPos', type: 'ObjectPosition', position: { x: 50, y: 100 } },
+            { id: 'time', type: 'Time', position: { x: 50, y: 250 } },
+            { id: 'scale_shape', type: 'Float', position: { x: 250, y: 50 }, data: { value: '2.5' } },
+            { id: 'noise_shape', type: 'SimplexNoise', position: { x: 450, y: 100 } },
+            
+            { id: 'normal', type: 'WorldNormal', position: { x: 450, y: -50 } },
+            { id: 'strength', type: 'Float', position: { x: 450, y: 250 }, data: { value: '0.3' } },
+            { id: 'displace_mul', type: 'Multiply', position: { x: 650, y: 150 } }, // Noise * Strength
+            { id: 'offset_vec', type: 'Vec3Scale', position: { x: 800, y: 50 } }, // Normal * (Noise*Strength)
+            
+            // --- COLOR & SHADING ---
+            { id: 'noise_color', type: 'SimplexNoise', position: { x: 450, y: 400 } },
+            { id: 'scale_color', type: 'Float', position: { x: 250, y: 400 }, data: { value: '4.0' } },
+            
+            // Rim Light / Soft Edges
+            { id: 'view', type: 'ViewDirection', position: { x: 650, y: 350 } },
+            { id: 'dot', type: 'DotProduct', position: { x: 850, y: 300 } }, // N dot V
+            { id: 'one', type: 'Float', position: { x: 850, y: 450 }, data: { value: '1.0' } },
+            { id: 'rim', type: 'Subtract', position: { x: 1000, y: 350 } }, // 1.0 - dot
+            
+            // Mix Noise + Rim
+            { id: 'add_rim', type: 'Add', position: { x: 1150, y: 400 } },
+            { id: 'step', type: 'SmoothStep', position: { x: 1300, y: 400 } }, // Toon threshold
+            { id: 'edge0', type: 'Float', position: { x: 1150, y: 550 }, data: { value: '0.4' } },
+            { id: 'edge1', type: 'Float', position: { x: 1150, y: 650 }, data: { value: '0.6' } },
+            
+            // Final Color Mix
+            { id: 'color_shadow', type: 'Vec3', position: { x: 1300, y: 200 }, data: { x: '0.4', y: '0.5', z: '0.6' } }, // Blue-ish grey
+            { id: 'color_light', type: 'Vec3', position: { x: 1300, y: 300 }, data: { x: '1.0', y: '1.0', z: '1.0' } }, // White
+            { id: 'mix_final', type: 'Mix', position: { x: 1500, y: 250 } },
+
+            { id: 'out', type: 'ShaderOutput', position: { x: 1700, y: 150 } }
+        ],
+        connections: [
+            // Vertex Displacement Logic
+            { id: 'c1', fromNode: 'objPos', fromPin: 'pos', toNode: 'noise_shape', toPin: 'pos' },
+            { id: 'c2', fromNode: 'scale_shape', fromPin: 'out', toNode: 'noise_shape', toPin: 'scale' },
+            { id: 'c3', fromNode: 'time', fromPin: 'out', toNode: 'noise_shape', toPin: 'time' },
+            
+            { id: 'c4', fromNode: 'noise_shape', fromPin: 'out', toNode: 'displace_mul', toPin: 'a' },
+            { id: 'c5', fromNode: 'strength', fromPin: 'out', toNode: 'displace_mul', toPin: 'b' },
+            
+            { id: 'c6', fromNode: 'normal', fromPin: 'norm', toNode: 'offset_vec', toPin: 'a' },
+            { id: 'c7', fromNode: 'displace_mul', fromPin: 'out', toNode: 'offset_vec', toPin: 's' },
+            { id: 'c8', fromNode: 'offset_vec', fromPin: 'out', toNode: 'out', toPin: 'offset' },
+            
+            // Fragment Color Logic
+            { id: 'c9', fromNode: 'objPos', fromPin: 'pos', toNode: 'noise_color', toPin: 'pos' },
+            { id: 'c10', fromNode: 'scale_color', fromPin: 'out', toNode: 'noise_color', toPin: 'scale' },
+            { id: 'c11', fromNode: 'time', fromPin: 'out', toNode: 'noise_color', toPin: 'time' },
+            
+            { id: 'c12', fromNode: 'normal', fromPin: 'norm', toNode: 'dot', toPin: 'a' },
+            { id: 'c13', fromNode: 'view', fromPin: 'dir', toNode: 'dot', toPin: 'b' },
+            { id: 'c14', fromNode: 'one', fromPin: 'out', toNode: 'rim', toPin: 'a' },
+            { id: 'c15', fromNode: 'dot', fromPin: 'out', toNode: 'rim', toPin: 'b' },
+            
+            { id: 'c16', fromNode: 'noise_color', fromPin: 'out', toNode: 'add_rim', toPin: 'a' },
+            { id: 'c17', fromNode: 'rim', fromPin: 'out', toNode: 'add_rim', toPin: 'b' },
+            
+            { id: 'c18', fromNode: 'edge0', fromPin: 'out', toNode: 'step', toPin: 'e0' },
+            { id: 'c19', fromNode: 'edge1', fromPin: 'out', toNode: 'step', toPin: 'e1' },
+            { id: 'c20', fromNode: 'add_rim', fromPin: 'out', toNode: 'step', toPin: 'x' },
+            
+            { id: 'c21', fromNode: 'color_shadow', fromPin: 'out', toNode: 'mix_final', toPin: 'a' },
+            { id: 'c22', fromNode: 'color_light', fromPin: 'out', toNode: 'mix_final', toPin: 'b' },
+            { id: 'c23', fromNode: 'step', fromPin: 'out', toNode: 'mix_final', toPin: 't' },
+            
+            { id: 'c24', fromNode: 'mix_final', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
+        ]
+    },
+    {
         name: 'Pulsing Sphere (3D)',
         description: 'Demonstrates Vertex Displacement using Time and Normals.',
         nodes: [

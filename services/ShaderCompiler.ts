@@ -107,7 +107,7 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     precision mediump float;
     precision mediump sampler2DArray;
     
-    uniform float u_time;
+    uniform highp float u_time;
     uniform vec2 u_resolution;
     uniform vec3 u_cameraPos;
     uniform sampler2DArray u_textures;

@@ -29,7 +29,7 @@ layout(location=9) in float a_texIndex;
 layout(location=10) in float a_effectIndex;
 
 uniform mat4 u_viewProjection;
-uniform float u_time;
+uniform highp float u_time;
 uniform sampler2DArray u_textures;
 
 out vec3 v_normal;
