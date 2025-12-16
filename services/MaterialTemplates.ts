@@ -18,111 +18,94 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
         connections: []
     },
     {
-        name: 'Procedural Water (Graph)',
-        description: 'High-quality caustic water effect built with nodes (Domain Warping).',
+        name: 'Plasma Water',
+        description: 'A rippling water-like effect using sine wave interference.',
         nodes: [
-            // --- INPUTS ---
-            { id: 'uv', type: 'UV', position: { x: -100, y: 100 } },
-            { id: 'time', type: 'Time', position: { x: -100, y: 250 } },
-            
             // --- CONSTANTS ---
-            { id: 'uv_scale_factor', type: 'Float', position: { x: 50, y: 0 }, data: { value: '8.0' } },
-            { id: 'warp_strength', type: 'Float', position: { x: 300, y: 0 }, data: { value: '0.8' } },
-            { id: 'time_speed', type: 'Float', position: { x: 50, y: 350 }, data: { value: '0.5' } },
+            { id: 'Scale', type: 'Float', position: { x: 0, y: 150 }, data: { value: '10.0' } },
+            { id: 'Speed', type: 'Float', position: { x: 0, y: 400 }, data: { value: '1.0' } },
+            
+            // --- INPUTS ---
+            { id: 'uv', type: 'UV', position: { x: 0, y: 250 } },
+            { id: 'time', type: 'Time', position: { x: 0, y: 500 } },
 
             // --- SCALE UV ---
-            { id: 'uv_scale', type: 'Vec2Scale', position: { x: 200, y: 100 } },
-
-            // --- TIME SETUP ---
-            { id: 'slow_time', type: 'Multiply', position: { x: 50, y: 250 } }, // Time * 0.5
-            { id: 'time_vec', type: 'Vec2', position: { x: 200, y: 250 } },     // Vec2(Time)
-
-            // --- WARP PASS 1: p + Sin(p + t) ---
-            { id: 'p1_add_t', type: 'Vec2Add', position: { x: 400, y: 150 } },
-            { id: 'p1_sin', type: 'Vec2Sin', position: { x: 550, y: 150 } },
-            { id: 'p1_strength', type: 'Vec2Scale', position: { x: 700, y: 150 } }, // Sin * Strength
-            { id: 'p1_warped', type: 'Vec2Add', position: { x: 850, y: 100 } },      // UV + Warp1
-
-            // --- WARP PASS 2: p1 + Cos(p1 + t) ---
-            { id: 'p2_add_t', type: 'Vec2Add', position: { x: 1000, y: 150 } },
-            { id: 'p2_cos', type: 'Vec2Cos', position: { x: 1150, y: 150 } }, // Use Cos for variety
-            { id: 'p2_warped', type: 'Vec2Add', position: { x: 1300, y: 100 } },
-
-            // --- CAUSTIC INTENSITY: 1.0 / Length(Sin(p2)) ---
-            // This creates the "web" pattern
-            { id: 'final_sin', type: 'Vec2Sin', position: { x: 1450, y: 150 } },
-            { id: 'len', type: 'Vec2Length', position: { x: 1600, y: 150 } },
+            { id: 'uv_scaled', type: 'Vec2Scale', position: { x: 200, y: 200 } },
             
-            { id: 'thickness', type: 'Float', position: { x: 1600, y: 250 }, data: { value: '0.05' } },
-            { id: 'inv_len', type: 'Divide', position: { x: 1750, y: 150 } }, // 0.05 / Len
+            // --- TIME MULT ---
+            { id: 't_speed', type: 'Multiply', position: { x: 200, y: 450 } },
 
-            // --- COLOR & SHARPEN ---
-            { id: 'contrast', type: 'Float', position: { x: 1750, y: 250 }, data: { value: '1.2' } },
-            { id: 'sharp', type: 'Pow', position: { x: 1900, y: 150 } },
-            
-            { id: 'tint', type: 'Vec3', position: { x: 1900, y: 50 }, data: { x: '0.1', y: '0.5', z: '1.0' } },
-            { id: 'final_col', type: 'Vec3Scale', position: { x: 2050, y: 150 } },
-            
-            // --- CLAMP (Use Vec3Clamp since output of final_col is Vec3) ---
-            { id: 'clamp_min', type: 'Float', position: { x: 2050, y: 250 }, data: { value: '0.0' } },
-            { id: 'clamp_max', type: 'Float', position: { x: 2050, y: 300 }, data: { value: '1.5' } }, // Allow slight HDR
-            { id: 'clamped', type: 'Vec3Clamp', position: { x: 2200, y: 150 } },
+            // --- SPLIT ---
+            { id: 'split', type: 'SplitVec2', position: { x: 400, y: 200 } },
 
-            // --- OUT ---
-            { id: 'out', type: 'ShaderOutput', position: { x: 2400, y: 150 } }
+            // --- WAVE X ---
+            // sin(x + t)
+            { id: 'add_x', type: 'Add', position: { x: 600, y: 100 } },
+            { id: 'sin_x', type: 'Sine', position: { x: 800, y: 100 } },
+
+            // --- WAVE Y ---
+            // cos(y + t)
+            { id: 'add_y', type: 'Add', position: { x: 600, y: 300 } },
+            { id: 'cos_y', type: 'Cosine', position: { x: 800, y: 300 } },
+
+            // --- COMBINE ---
+            { id: 'sum', type: 'Add', position: { x: 1000, y: 200 } }, // -2 to 2 range
+            
+            // --- NORMALIZE TO 0-1 ---
+            { id: 'offset', type: 'Float', position: { x: 1000, y: 350 }, data: { value: '0.5' } },
+            { id: 'factor', type: 'Float', position: { x: 1000, y: 450 }, data: { value: '0.25' } },
+            { id: 'mul_norm', type: 'Multiply', position: { x: 1200, y: 200 } }, // sum * 0.25
+            { id: 'add_norm', type: 'Add', position: { x: 1400, y: 200 } }, // + 0.5
+
+            // --- COLORS ---
+            { id: 'col1', type: 'Vec3', position: { x: 1400, y: 50 }, data: { x: '0.0', y: '0.1', z: '0.5' } }, // Deep Blue
+            { id: 'col2', type: 'Vec3', position: { x: 1400, y: 350 }, data: { x: '0.0', y: '0.6', z: '1.0' } }, // Light Blue
+            
+            // --- MIX ---
+            { id: 'mix_water', type: 'Mix', position: { x: 1600, y: 200 } },
+            
+            // --- OUTPUT ---
+            { id: 'out', type: 'ShaderOutput', position: { x: 1800, y: 200 } }
         ],
         connections: [
-            // Time setup
-            { id: 't1', fromNode: 'time', fromPin: 'out', toNode: 'slow_time', toPin: 'a' },
-            { id: 't2', fromNode: 'time_speed', fromPin: 'out', toNode: 'slow_time', toPin: 'b' },
-            { id: 't3', fromNode: 'slow_time', fromPin: 'out', toNode: 'time_vec', toPin: 'x' },
-            { id: 't4', fromNode: 'slow_time', fromPin: 'out', toNode: 'time_vec', toPin: 'y' },
-
             // Scale UV
-            { id: 's1', fromNode: 'uv', fromPin: 'uv', toNode: 'uv_scale', toPin: 'a' },
-            { id: 's2', fromNode: 'uv_scale_factor', fromPin: 'out', toNode: 'uv_scale', toPin: 's' },
+            { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'uv_scaled', toPin: 'a' },
+            { id: 'c2', fromNode: 'Scale', fromPin: 'out', toNode: 'uv_scaled', toPin: 's' },
+            
+            // Time Speed
+            { id: 'c3', fromNode: 'time', fromPin: 'out', toNode: 't_speed', toPin: 'a' },
+            { id: 'c4', fromNode: 'Speed', fromPin: 'out', toNode: 't_speed', toPin: 'b' },
 
-            // --- Pass 1 ---
-            { id: 'p1_1', fromNode: 'uv_scale', fromPin: 'out', toNode: 'p1_add_t', toPin: 'a' },
-            { id: 'p1_2', fromNode: 'time_vec', fromPin: 'out', toNode: 'p1_add_t', toPin: 'b' },
-            
-            { id: 'p1_3', fromNode: 'p1_add_t', fromPin: 'out', toNode: 'p1_sin', toPin: 'a' },
-            
-            { id: 'p1_4', fromNode: 'p1_sin', fromPin: 'out', toNode: 'p1_strength', toPin: 'a' },
-            { id: 'p1_5', fromNode: 'warp_strength', fromPin: 'out', toNode: 'p1_strength', toPin: 's' },
-            
-            { id: 'p1_6', fromNode: 'uv_scale', fromPin: 'out', toNode: 'p1_warped', toPin: 'a' },
-            { id: 'p1_7', fromNode: 'p1_strength', fromPin: 'out', toNode: 'p1_warped', toPin: 'b' },
+            // Split
+            { id: 'c5', fromNode: 'uv_scaled', fromPin: 'out', toNode: 'split', toPin: 'in' },
 
-            // --- Pass 2 ---
-            { id: 'p2_1', fromNode: 'p1_warped', fromPin: 'out', toNode: 'p2_add_t', toPin: 'a' },
-            { id: 'p2_2', fromNode: 'time_vec', fromPin: 'out', toNode: 'p2_add_t', toPin: 'b' },
-            
-            { id: 'p2_3', fromNode: 'p2_add_t', fromPin: 'out', toNode: 'p2_cos', toPin: 'a' },
-            
-            { id: 'p2_4', fromNode: 'p1_warped', fromPin: 'out', toNode: 'p2_warped', toPin: 'a' },
-            { id: 'p2_5', fromNode: 'p2_cos', fromPin: 'out', toNode: 'p2_warped', toPin: 'b' },
+            // X Chain
+            { id: 'c6', fromNode: 'split', fromPin: 'x', toNode: 'add_x', toPin: 'a' },
+            { id: 'c7', fromNode: 't_speed', fromPin: 'out', toNode: 'add_x', toPin: 'b' },
+            { id: 'c8', fromNode: 'add_x', fromPin: 'out', toNode: 'sin_x', toPin: 'in' },
 
-            // --- Caustics ---
-            { id: 'c_1', fromNode: 'p2_warped', fromPin: 'out', toNode: 'final_sin', toPin: 'a' },
-            { id: 'c_2', fromNode: 'final_sin', fromPin: 'out', toNode: 'len', toPin: 'a' },
-            
-            { id: 'c_3', fromNode: 'thickness', fromPin: 'out', toNode: 'inv_len', toPin: 'a' },
-            { id: 'c_4', fromNode: 'len', fromPin: 'out', toNode: 'inv_len', toPin: 'b' },
+            // Y Chain
+            { id: 'c9', fromNode: 'split', fromPin: 'y', toNode: 'add_y', toPin: 'a' },
+            { id: 'c10', fromNode: 't_speed', fromPin: 'out', toNode: 'add_y', toPin: 'b' },
+            { id: 'c11', fromNode: 'add_y', fromPin: 'out', toNode: 'cos_y', toPin: 'in' },
 
-            // --- Finish ---
-            { id: 'f_1', fromNode: 'inv_len', fromPin: 'out', toNode: 'sharp', toPin: 'a' },
-            { id: 'f_2', fromNode: 'contrast', fromPin: 'out', toNode: 'sharp', toPin: 'b' },
-            
-            { id: 'f_3', fromNode: 'tint', fromPin: 'out', toNode: 'final_col', toPin: 'a' },
-            { id: 'f_4', fromNode: 'sharp', fromPin: 'out', toNode: 'final_col', toPin: 's' },
-            
-            // Connect to Vec3Clamp (uses 'in' instead of 'x')
-            { id: 'f_5', fromNode: 'final_col', fromPin: 'out', toNode: 'clamped', toPin: 'in' },
-            { id: 'f_6', fromNode: 'clamp_min', fromPin: 'out', toNode: 'clamped', toPin: 'min' },
-            { id: 'f_7', fromNode: 'clamp_max', fromPin: 'out', toNode: 'clamped', toPin: 'max' },
-            
-            { id: 'out_1', fromNode: 'clamped', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
+            // Combine
+            { id: 'c12', fromNode: 'sin_x', fromPin: 'out', toNode: 'sum', toPin: 'a' },
+            { id: 'c13', fromNode: 'cos_y', fromPin: 'out', toNode: 'sum', toPin: 'b' },
+
+            // Normalize
+            { id: 'c14', fromNode: 'sum', fromPin: 'out', toNode: 'mul_norm', toPin: 'a' },
+            { id: 'c15', fromNode: 'factor', fromPin: 'out', toNode: 'mul_norm', toPin: 'b' },
+            { id: 'c16', fromNode: 'mul_norm', fromPin: 'out', toNode: 'add_norm', toPin: 'a' },
+            { id: 'c17', fromNode: 'offset', fromPin: 'out', toNode: 'add_norm', toPin: 'b' },
+
+            // Color Mix
+            { id: 'c18', fromNode: 'col1', fromPin: 'out', toNode: 'mix_water', toPin: 'a' },
+            { id: 'c19', fromNode: 'col2', fromPin: 'out', toNode: 'mix_water', toPin: 'b' },
+            { id: 'c20', fromNode: 'add_norm', fromPin: 'out', toNode: 'mix_water', toPin: 't' },
+
+            // Output
+            { id: 'c21', fromNode: 'mix_water', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
         ]
     },
     {
@@ -141,27 +124,14 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
         ]
     },
     {
-        name: 'Water Turbulence (Code)',
-        description: 'Complex procedural water caustics effect (GLSL).',
-        nodes: [
-            { id: 'uv', type: 'UV', position: { x: 50, y: 150 } },
-            { id: 'time', type: 'Time', position: { x: 50, y: 300 } },
-            { id: 'water', type: 'WaterTurbulence', position: { x: 300, y: 200 } },
-            { id: 'out', type: 'ShaderOutput', position: { x: 600, y: 200 } }
-        ],
-        connections: [
-            { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'water', toPin: 'uv' },
-            { id: 'c2', fromNode: 'time', fromPin: 'out', toNode: 'water', toPin: 'time' },
-            { id: 'c3', fromNode: 'water', fromPin: 'rgb', toNode: 'out', toPin: 'rgb' }
-        ]
-    },
-    {
         name: 'Radial Circle',
         description: 'A soft circle using Distance and SmoothStep.',
         nodes: [
             { id: 'uv', type: 'UV', position: { x: 50, y: 150 } },
-            { id: 'center', type: 'Vec3', position: { x: 50, y: 300 }, data: { x: '0.5', y: '0.5', z: '0.0' } },
-            { id: 'dist', type: 'Distance', position: { x: 250, y: 200 } },
+            // Changed Center to Vec2
+            { id: 'center', type: 'Vec2', position: { x: 50, y: 300 }, data: { x: '0.5', y: '0.5' } },
+            // Changed Distance to Vec2Distance
+            { id: 'dist', type: 'Vec2Distance', position: { x: 250, y: 200 } },
             { id: 'edge0', type: 'Float', position: { x: 300, y: 350 }, data: { value: '0.45' } },
             { id: 'edge1', type: 'Float', position: { x: 300, y: 450 }, data: { value: '0.40' } },
             { id: 'smooth', type: 'SmoothStep', position: { x: 500, y: 200 } },
@@ -195,7 +165,8 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
             { id: 'col2', type: 'Vec3', position: { x: 600, y: 350 }, data: { x: '1.0', y: '0.5', z: '0.0' } }, // Orange
             
             // Logic: (UV.x + Time) -> Sine -> Normalize -> Mix
-            { id: 'split', type: 'Split', position: { x: 200, y: 100 } },
+            // Changed to SplitVec2
+            { id: 'split', type: 'SplitVec2', position: { x: 200, y: 100 } },
             { id: 'add_t', type: 'Add', position: { x: 350, y: 200 } },
             { id: 'sin', type: 'Sine', position: { x: 500, y: 200 } },
             
@@ -238,10 +209,16 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
         description: 'Visualize UV texture coordinates.',
         nodes: [
             { id: 'uv', type: 'UV', position: { x: 300, y: 200 } },
+            // Need to convert vec2 to vec3 for shader output
+            { id: 'uv_to_vec3', type: 'Vec3', position: { x: 450, y: 200 } }, 
+            { id: 'split', type: 'SplitVec2', position: { x: 450, y: 50 } }, // Alternative: Split then reconstruct
             { id: 'out', type: 'ShaderOutput', position: { x: 600, y: 200 } }
         ],
         connections: [
-            { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'out', toPin: 'rgb' }
+            { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'split', toPin: 'in' },
+            { id: 'c2', fromNode: 'split', fromPin: 'x', toNode: 'uv_to_vec3', toPin: 'x' },
+            { id: 'c3', fromNode: 'split', fromPin: 'y', toNode: 'uv_to_vec3', toPin: 'y' },
+            { id: 'c4', fromNode: 'uv_to_vec3', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
         ]
     }
 ];

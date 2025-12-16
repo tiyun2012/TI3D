@@ -34,6 +34,9 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
     const [selectionBox, setSelectionBox] = useState<{ startX: number, startY: number, currentX: number, currentY: number } | null>(null);
     const [cutLine, setCutLine] = useState<{ start: {x:number, y:number}, end: {x:number, y:number} } | null>(null);
 
+    // Compile State
+    const [compileStatus, setCompileStatus] = useState<'IDLE' | 'COMPILING' | 'READY'>('READY');
+
     // Clipboard (In-memory)
     const clipboard = useRef<{ nodes: GraphNode[], connections: GraphConnection[] } | null>(null);
 
@@ -68,12 +71,24 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
         }
     };
 
+    const triggerCompile = useCallback(() => {
+        if (!materialId) return;
+        setCompileStatus('COMPILING');
+        // Small delay to show visual feedback
+        setTimeout(() => {
+            engineInstance.compileGraph(nodes, connections);
+            setCompileStatus('READY');
+        }, 100);
+    }, [nodes, connections, materialId]);
+
     // OPTIMIZATION: Debounce graph compilation
     useEffect(() => {
         if (!materialId) return;
+        setCompileStatus('COMPILING');
         const timeoutId = setTimeout(() => {
             engineInstance.compileGraph(nodes, connections);
-        }, 150); 
+            setCompileStatus('READY');
+        }, 500); // Slightly longer debounce to reduce flicker
         return () => clearTimeout(timeoutId);
     }, [nodes, connections, materialId]);
 
@@ -418,11 +433,6 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
         
         cleanupListeners();
 
-        // Push history before drag
-        // Wait, snapshotting on start means we undo to the position *before* dragging. Correct.
-        // However, dragging is continuous. If we push here, we capture state.
-        // We should push on UP to capture the *previous* state? 
-        // No, standard is: Current State -> Push -> Modify.
         pushSnapshot(nodes, connections);
 
         let currentSelection = new Set(selectedNodeIds);
@@ -590,8 +600,6 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
     };
 
     const handleNodeDataChange = useCallback((nodeId: string, key: string, value: string) => {
-        // We might want to debounce pushSnapshot here if we typed characters
-        // For now, let's just update state. Real history might need to be "onBlur" or debounced.
         setNodes(prev => prev.map(n => n.id === nodeId ? {...n, data: {...n.data, [key]: value}} : n));
     }, []);
 
@@ -629,7 +637,7 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
                 style={{ backgroundImage: 'linear-gradient(#333 1px, transparent 1px), linear-gradient(90deg, #333 1px, transparent 1px)' }}
             />
             
-            <div className="absolute top-2 left-2 z-50 flex gap-2">
+            <div className="absolute top-2 left-2 z-50 flex gap-2 items-center">
                 <button 
                     onClick={() => setShowGrid(!showGrid)} 
                     className={`p-1.5 rounded hover:bg-white/10 transition-colors ${showGrid ? 'text-white' : 'text-text-secondary opacity-50'}`}
@@ -646,6 +654,27 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
                     <Icon name="Save" size={12} />
                     <span>Save</span>
                 </button>
+
+                <div className="h-4 w-px bg-white/10 mx-2"></div>
+
+                <div className="flex items-center gap-2 bg-black/40 rounded-full px-3 py-1 border border-white/5">
+                    {/* Status Dot */}
+                    <div className={`w-2 h-2 rounded-full ${compileStatus === 'COMPILING' ? 'bg-yellow-500 animate-pulse' : 'bg-emerald-500'}`}></div>
+                    
+                    {/* Status Text */}
+                    <span className="text-[10px] text-text-secondary font-mono uppercase tracking-wider">
+                        {compileStatus === 'COMPILING' ? 'Compiling...' : 'Ready'}
+                    </span>
+
+                    {/* Manual Compile Button */}
+                    <button 
+                        onClick={triggerCompile}
+                        className="ml-2 hover:text-white text-text-secondary"
+                        title="Force Compile"
+                    >
+                        <Icon name="RefreshCw" size={12} className={compileStatus === 'COMPILING' ? 'animate-spin' : ''} />
+                    </button>
+                </div>
                 
                 {/* Help hint */}
                 <div className="flex items-center gap-2 ml-4 text-[10px] text-text-secondary opacity-50">
