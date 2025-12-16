@@ -12,7 +12,7 @@ import { PhysicsSystem } from './systems/PhysicsSystem';
 import { HistorySystem } from './systems/HistorySystem';
 import { compileShader } from './ShaderCompiler';
 import { assetManager } from './AssetManager';
-import { MESH_TYPES } from './constants';
+import { MESH_TYPES, VIEW_MODES } from './constants';
 
 interface ExecutionStep {
     id: string;
@@ -43,6 +43,9 @@ export class Ti3DEngine {
   
   // Shader Graph State
   currentShaderSource: string = '';
+  
+  // View State
+  renderMode: number = 0; // 0=Lit, 1=Normals
 
   // Performance
   metrics: PerformanceMetrics = { fps: 60, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0 };
@@ -115,6 +118,18 @@ export class Ti3DEngine {
   
   toggleGrid() {
       this.renderer.showGrid = !this.renderer.showGrid;
+      this.notifyUI();
+  }
+  
+  cycleRenderMode() {
+      // Cycle through available modes defined in constants
+      const nextMode = (this.renderMode + 1) % VIEW_MODES.length;
+      this.setRenderMode(nextMode);
+  }
+
+  setRenderMode(mode: number) {
+      this.renderMode = mode;
+      this.renderer.renderMode = mode;
       this.notifyUI();
   }
   
@@ -305,7 +320,8 @@ export class Ti3DEngine {
       const p = this.createEntity('Player Cube');
       p.components[ComponentType.MESH].meshType = 'Cube';
       p.components[ComponentType.MESH].color = '#3b82f6';
-      p.components[ComponentType.MESH].textureIndex = 1;
+      // Use 0 (White) instead of 1 (Grid) to avoid looking like the floor
+      p.components[ComponentType.MESH].textureIndex = 0; 
 
       const s = this.createEntity('Orbiting Satellite');
       s.components[ComponentType.MESH].meshType = 'Sphere';

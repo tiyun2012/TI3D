@@ -24,8 +24,14 @@ export interface EditorContextType {
   entities: Entity[];
   sceneGraph: SceneGraph;
   
+  // Entity Selection
   selectedIds: string[];
   setSelectedIds: (ids: string[]) => void;
+
+  // Asset Selection
+  selectedAssetIds: string[];
+  setSelectedAssetIds: (ids: string[]) => void;
+
   selectionType: SelectionType;
   setSelectionType: (type: SelectionType) => void;
 

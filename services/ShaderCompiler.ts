@@ -111,6 +111,7 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     uniform vec2 u_resolution;
     uniform vec3 u_cameraPos;
     uniform sampler2DArray u_textures;
+    uniform int u_renderMode; // 0=Lit, 1=Normals
     
     // Varyings
     in highp vec3 v_normal;
@@ -134,6 +135,11 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
         ${fsData.body}
         
         ${fsFinalAssignment}
+        
+        // Debug Override
+        if (u_renderMode == 1) {
+            finalColor = normalize(v_normal) * 0.5 + 0.5;
+        }
         
         if (v_isSelected > 0.5) {
             finalColor = mix(finalColor, vec3(1.0, 1.0, 0.0), 0.3);

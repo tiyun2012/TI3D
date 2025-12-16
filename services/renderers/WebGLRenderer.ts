@@ -88,6 +88,7 @@ in highp float v_texIndex;
 in highp float v_effectIndex;
 
 uniform sampler2DArray u_textures;
+uniform int u_renderMode; // 0=Lit, 1=Normals
 
 // MRT Output
 layout(location=0) out vec4 outColor;
@@ -108,6 +109,11 @@ void main() {
     
     vec3 finalAlbedo = v_color * texColor.rgb;
     vec3 result = finalAlbedo * (ambient + diff); 
+    
+    // Render Mode Overrides
+    if (u_renderMode == 1) {
+        result = normal * 0.5 + 0.5; // Visualise Normals
+    }
     
     if (v_isSelected > 0.5) {
         result = mix(result, vec3(1.0, 1.0, 0.0), 0.3);
@@ -324,6 +330,7 @@ export class WebGLRenderer {
     // Program Management
     defaultProgram: WebGLProgram | null = null;
     materialPrograms: Map<number, WebGLProgram> = new Map();
+    gridProgram: WebGLProgram | null = null;
     
     meshes: Map<number, MeshBatch> = new Map();
     textureArray: WebGLTexture | null = null;
@@ -343,6 +350,9 @@ export class WebGLRenderer {
     drawCalls = 0;
     triangleCount = 0;
     showGrid = true;
+    
+    // 0 = Lit (Default), 1 = Normals (Debug)
+    renderMode: number = 0;
     
     ppConfig: PostProcessConfig = {
         enabled: true,
@@ -384,11 +394,74 @@ export class WebGLRenderer {
         this.defaultProgram = this.createProgram(gl, defaultVS, FS_DEFAULT_SOURCE);
         this.initTextureArray(gl);
         this.initPostProcess(gl);
+        this.initGridShader(gl);
         
         // Register Default Primitives
         this.registerMesh(MESH_TYPES['Cube'], this.createCubeData());
         this.registerMesh(MESH_TYPES['Sphere'], this.createSphereData(24, 16));
         this.registerMesh(MESH_TYPES['Plane'], this.createPlaneData());
+    }
+
+    initGridShader(gl: WebGL2RenderingContext) {
+        const gridVS = `#version 300 es
+        layout(location=0) in vec3 a_position;
+        uniform mat4 u_viewProjection;
+        out vec3 v_worldPos;
+        void main() {
+            // Scale plane HUGE to act as infinite grid (500x500)
+            vec3 pos = a_position * 500.0;
+            v_worldPos = pos;
+            gl_Position = u_viewProjection * vec4(pos, 1.0);
+        }`;
+
+        const gridFS = `#version 300 es
+        precision mediump float;
+        in vec3 v_worldPos;
+        layout(location=0) out vec4 outColor;
+        // No second output needed if we switch drawBuffers to [BACK] or [COLOR_ATTACHMENT0] only
+        
+        void main() {
+            vec2 coord = v_worldPos.xz;
+            vec2 derivative = fwidth(coord);
+            vec2 grid = abs(fract(coord - 0.5) - 0.5) / derivative;
+            float line = min(grid.x, grid.y);
+            float alpha = 1.0 - min(line, 1.0);
+            
+            // Major grid lines (every 10 units)
+            vec2 grid10 = abs(fract(coord * 0.1 - 0.5) - 0.5) / (derivative * 0.1);
+            float line10 = min(grid10.x, grid10.y);
+            float alpha10 = 1.0 - min(line10, 1.0);
+            
+            // Highlight axes
+            float xAxis = 1.0 - min(abs(v_worldPos.z) / derivative.y, 1.0);
+            float zAxis = 1.0 - min(abs(v_worldPos.x) / derivative.x, 1.0);
+
+            // Fade out distance
+            float dist = length(v_worldPos.xz);
+            float fade = max(0.0, 1.0 - dist / 200.0);
+
+            vec3 color = vec3(0.5); // Default Grey
+            float finalAlpha = alpha * 0.3; // Base dim grid
+
+            if (alpha10 > 0.0) {
+                finalAlpha = max(finalAlpha, alpha10 * 0.5);
+                color = vec3(0.7); // Brighter major lines
+            }
+
+            if (xAxis > 0.0) {
+                finalAlpha = max(finalAlpha, xAxis);
+                color = vec3(1.0, 0.1, 0.1); // Red X
+            }
+            if (zAxis > 0.0) {
+                finalAlpha = max(finalAlpha, zAxis);
+                color = vec3(0.1, 0.1, 1.0); // Blue Z
+            }
+
+            if (finalAlpha * fade <= 0.05) discard;
+            outColor = vec4(color, finalAlpha * fade);
+        }`;
+        
+        this.gridProgram = this.createProgram(gl, gridVS, gridFS);
     }
 
     initPostProcess(gl: WebGL2RenderingContext) {
@@ -755,6 +828,9 @@ export class WebGLRenderer {
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
         gl.viewport(0, 0, this.fboWidth, this.fboHeight); // Use FBO dims
         
+        // Ensure both attachments are active for the opaque pass
+        gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+
         // Clear Color and Data buffers
         gl.clearBufferfv(gl.COLOR, 0, [0.1, 0.1, 0.1, 1.0]); 
         gl.clearBufferfv(gl.COLOR, 1, [0.0, 0.0, 0.0, 0.0]); 
@@ -766,8 +842,7 @@ export class WebGLRenderer {
         
         for (let i = 0; i < count; i++) {
             if (!store.isActive[i]) continue;
-            // Check grid visibility
-            if (!this.showGrid && store.textureIndex[i] === 1) continue;
+            // Grid toggling is now handled in the dedicated grid pass, not here.
 
             const matId = store.materialIndex[i];
             // Use 0 as default key for no material
@@ -800,6 +875,10 @@ export class WebGLRenderer {
             
             const uTime = gl.getUniformLocation(program, 'u_time');
             if (uTime) gl.uniform1f(uTime, performance.now() / 1000);
+
+            // Pass Render Mode
+            const uRenderMode = gl.getUniformLocation(program, 'u_renderMode');
+            if (uRenderMode) gl.uniform1i(uRenderMode, this.renderMode);
 
             // Note: Use actual drawing resolution, which matches FBO size here
             const uRes = gl.getUniformLocation(program, 'u_resolution');
@@ -860,9 +939,39 @@ export class WebGLRenderer {
             });
         });
 
+        // --- 3. Draw Infinite Grid (Transparent Pass) ---
+        if (this.showGrid && this.gridProgram) {
+            gl.bindVertexArray(null); // Safety clear
+            
+            // FIX: Set drawBuffers to ONLY Color0.
+            // The Grid Shader only has 1 output (outColor).
+            // Trying to draw with 2 active drawBuffers and 1 shader output triggers GL_INVALID_OPERATION.
+            gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+
+            gl.enable(gl.BLEND);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            gl.depthMask(false); // Don't write to depth, but test against opaque objects
+            gl.useProgram(this.gridProgram);
+            
+            const uVP = gl.getUniformLocation(this.gridProgram, 'u_viewProjection');
+            if (uVP) gl.uniformMatrix4fv(uVP, false, viewProjection);
+            
+            // Reuse Plane VAO (MESH_TYPES['Plane'] = 3)
+            const planeMesh = this.meshes.get(3);
+            if (planeMesh) {
+                gl.bindVertexArray(planeMesh.vao);
+                gl.drawElements(gl.TRIANGLES, planeMesh.count, gl.UNSIGNED_SHORT, 0);
+            }
+            gl.depthMask(true);
+            gl.disable(gl.BLEND);
+            
+            // Restore MRT state for next frame/pass
+            gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+        }
+
         gl.bindVertexArray(null);
         
-        // 2. Pass: Post Processing (Composite to Screen)
+        // 4. Pass: Post Processing (Composite to Screen)
         if (this.ppProgram && this.quadVAO && this.fboTexture && this.fboDataTexture) {
             gl.bindFramebuffer(gl.FRAMEBUFFER, null); // Back to Screen
             gl.viewport(0, 0, width, height); // Canvas size

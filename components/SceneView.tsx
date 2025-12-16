@@ -6,6 +6,7 @@ import { Mat4Utils, Vec3Utils } from '../services/math';
 import { engineInstance } from '../services/engine';
 import { Icon } from './Icon';
 import { Gizmo } from './Gizmo';
+import { VIEW_MODES } from '../services/constants';
 
 interface SceneViewProps {
   entities: Entity[];
@@ -39,6 +40,9 @@ const StatsOverlay: React.FC = () => {
 export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSelect, selectedIds, tool }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [renderMode, setRenderMode] = useState(engineInstance.renderMode);
+  const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
+  const viewMenuRef = useRef<HTMLDivElement>(null);
   
   // Optimization: Stable viewport state
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
@@ -84,6 +88,19 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   useEffect(() => {
       engineInstance.setSelected(selectedIds);
   }, [selectedIds]);
+
+  // Handle outside click for menu
+  useEffect(() => {
+      const handleClickOutside = (e: MouseEvent) => {
+          if (viewMenuRef.current && !viewMenuRef.current.contains(e.target as Node)) {
+              setIsViewMenuOpen(false);
+          }
+      };
+      if (isViewMenuOpen) {
+          window.addEventListener('mousedown', handleClickOutside);
+      }
+      return () => window.removeEventListener('mousedown', handleClickOutside);
+  }, [isViewMenuOpen]);
 
   // Derived Camera Matrices using stable viewport state
   const { vpMatrix, invVpMatrix, eye } = useMemo(() => {
@@ -356,7 +373,14 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     setCamera(prev => ({ ...prev, radius: Math.max(2, prev.radius + e.deltaY * 0.01) }));
   };
 
+  const handleModeSelect = (modeId: number) => {
+      engineInstance.setRenderMode(modeId);
+      setRenderMode(modeId);
+      setIsViewMenuOpen(false);
+  };
+
   const cursorClass = dragState ? (dragState.mode === 'PAN' ? 'cursor-move' : 'cursor-grabbing') : 'cursor-default';
+  const currentModeDef = VIEW_MODES.find(m => m.id === renderMode) || VIEW_MODES[0];
 
   return (
     <div 
@@ -402,13 +426,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             <div className="bg-black/40 backdrop-blur border border-white/5 rounded-md flex p-1 text-text-secondary">
                  <button 
                     className="p-1 hover:text-white rounded hover:bg-white/10" 
-                    title="View Mode" 
-                    aria-label="View Mode"
-                 >
-                    <Icon name="Box" size={14} />
-                 </button>
-                 <button 
-                    className="p-1 hover:text-white rounded hover:bg-white/10" 
                     onClick={() => engineInstance.toggleGrid()} 
                     title="Toggle Grid" 
                     aria-label="Toggle Grid"
@@ -416,10 +433,42 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     <Icon name="Grid" size={14} />
                  </button>
             </div>
-            <div className="bg-black/40 backdrop-blur border border-white/5 rounded-md flex items-center px-2 text-[10px] text-text-secondary">
-                <span>Perspective</span>
+            
+            {/* Expanded View Mode Dropdown */}
+            <div className="relative" ref={viewMenuRef}>
+                <div 
+                    className="bg-black/40 backdrop-blur border border-white/5 rounded-md flex items-center px-2 py-1 text-[10px] text-text-secondary min-w-[100px] justify-between cursor-pointer hover:bg-white/5 transition-colors group"
+                    onClick={() => setIsViewMenuOpen(!isViewMenuOpen)}
+                >
+                    <div className="flex items-center gap-2">
+                        <Icon name={currentModeDef.icon as any} size={12} className="text-accent" />
+                        <span className="font-semibold text-white/90">{currentModeDef.label}</span>
+                    </div>
+                    
+                    {/* Small option button indicator (Chevron) at bottom right of the box area */}
+                    <Icon name="ChevronDown" size={10} className={`opacity-50 group-hover:opacity-100 transition-transform ${isViewMenuOpen ? 'rotate-180' : ''}`} />
+                </div>
+
+                {isViewMenuOpen && (
+                    <div className="absolute top-full left-0 mt-1 w-32 bg-[#252525] border border-white/10 rounded-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100 z-50">
+                        {VIEW_MODES.map((mode) => (
+                            <button
+                                key={mode.id}
+                                onClick={() => handleModeSelect(mode.id)}
+                                className={`w-full flex items-center gap-2 px-3 py-1.5 text-[10px] hover:bg-accent hover:text-white transition-colors text-left
+                                    ${mode.id === renderMode ? 'bg-white/5 text-white font-bold' : 'text-text-secondary'}
+                                `}
+                            >
+                                <Icon name={mode.icon as any} size={12} />
+                                <span>{mode.label}</span>
+                                {mode.id === renderMode && <Icon name="Check" size={10} className="ml-auto" />}
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
+        
         <div className="absolute bottom-2 right-2 text-[10px] text-text-secondary bg-black/40 px-2 py-0.5 rounded backdrop-blur border border-white/5 z-20">
             Cam: {camera.target.x.toFixed(1)}, {camera.target.y.toFixed(1)}, {camera.target.z.toFixed(1)}
         </div>

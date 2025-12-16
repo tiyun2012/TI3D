@@ -10,3 +10,11 @@ export const ROTATION_ORDER_MAP: Record<string, number> = {
 export const ROTATION_ORDER_ZY_MAP: Record<number, string> = { 
     0: 'XYZ', 1: 'XZY', 2: 'YXZ', 3: 'YZX', 4: 'ZXY', 5: 'ZYX' 
 };
+
+export const VIEW_MODES = [
+    { id: 0, label: 'Lit', icon: 'Sun' },
+    { id: 1, label: 'Normals', icon: 'BoxSelect' },
+    { id: 2, label: 'Unlit', icon: 'Circle' },
+    { id: 3, label: 'Wireframe', icon: 'Grid' },
+    { id: 4, label: 'Overdraw', icon: 'Layers' }
+];

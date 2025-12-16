@@ -40,27 +40,36 @@ const InspectorWrapper = () => {
   if (!ctx) return null;
   
   let target: any = null;
-  if (ctx.selectedIds.length > 0) {
-      if (ctx.selectionType === 'ENTITY') {
+  let count = 0;
+
+  if (ctx.selectionType === 'ENTITY') {
+      if (ctx.selectedIds.length > 0) {
           target = ctx.entities.find(e => e.id === ctx.selectedIds[0]) || null;
-      } else if (ctx.selectionType === 'ASSET') {
-          target = assetManager.getAsset(ctx.selectedIds[0]) || null;
+          count = ctx.selectedIds.length;
+      }
+  } else if (ctx.selectionType === 'ASSET') {
+      if (ctx.selectedAssetIds.length > 0) {
+          target = assetManager.getAsset(ctx.selectedAssetIds[0]) || null;
+          count = ctx.selectedAssetIds.length;
       }
   }
 
-  return <InspectorPanel object={target} selectionCount={ctx.selectedIds.length} type={ctx.selectionType} />;
+  return <InspectorPanel object={target} selectionCount={count} type={ctx.selectionType} />;
 };
-
-const EMPTY_SELECTION: string[] = [];
 
 const SceneWrapper = () => {
   const ctx = useContext(EditorContext);
   if (!ctx) return null;
+  
+  // NOTE: We ALWAYS pass the entity selection to the SceneView, 
+  // even if the user is currently inspecting an Asset. 
+  // This allows the user to see what they are applying the asset TO.
+  
   return (
     <SceneView 
       entities={ctx.entities}
       sceneGraph={ctx.sceneGraph}
-      selectedIds={ctx.selectionType === 'ENTITY' ? ctx.selectedIds : EMPTY_SELECTION}
+      selectedIds={ctx.selectedIds}
       onSelect={(ids) => {
           ctx.setSelectedIds(ids);
           ctx.setSelectionType('ENTITY');
@@ -279,6 +288,7 @@ const EditorLayout: React.FC = () => {
 const App: React.FC = () => {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [selectionType, setSelectionType] = useState<SelectionType>('ENTITY');
   const [tool, setTool] = useState<ToolType>('SELECT');
   const [transformSpace, setTransformSpace] = useState<TransformSpace>('Gimbal');
@@ -323,6 +333,8 @@ const App: React.FC = () => {
       sceneGraph: engineInstance.sceneGraph,
       selectedIds,
       setSelectedIds,
+      selectedAssetIds,
+      setSelectedAssetIds,
       selectionType,
       setSelectionType,
       tool,

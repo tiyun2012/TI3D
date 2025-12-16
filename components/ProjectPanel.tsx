@@ -13,7 +13,7 @@ export const ProjectPanel: React.FC = () => {
     const [filter, setFilter] = useState<'ALL' | 'MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'SCRIPT'>('ALL');
     const [search, setSearch] = useState('');
     const [scale, setScale] = useState(40);
-    const { setEditingAssetId, setSelectedIds, setSelectionType } = useContext(EditorContext)!;
+    const { setEditingAssetId, setSelectedAssetIds, selectedAssetIds, setSelectionType } = useContext(EditorContext)!;
     const wm = useContext(WindowManagerContext);
     
     // UI State
@@ -54,7 +54,7 @@ export const ProjectPanel: React.FC = () => {
     };
 
     const handleClick = (assetId: string) => {
-        setSelectedIds([assetId]);
+        setSelectedAssetIds([assetId]);
         setSelectionType('ASSET');
     };
 
@@ -207,6 +207,7 @@ export const ProjectPanel: React.FC = () => {
                             const isMat = asset.type === 'MATERIAL';
                             const isPhys = asset.type === 'PHYSICS_MATERIAL';
                             const isScript = asset.type === 'SCRIPT';
+                            const isSelected = selectedAssetIds.includes(asset.id);
                             
                             let iconName = 'Box';
                             let color = 'text-accent';
@@ -217,7 +218,9 @@ export const ProjectPanel: React.FC = () => {
                             return (
                                 <div 
                                     key={asset.id} 
-                                    className="flex flex-col items-center group cursor-pointer p-2 rounded-md hover:bg-white/10 transition-colors border border-transparent hover:border-white/5 active:bg-white/20 relative"
+                                    className={`flex flex-col items-center group cursor-pointer p-2 rounded-md transition-colors border active:bg-white/20 relative
+                                        ${isSelected ? 'bg-accent/20 border-accent' : 'hover:bg-white/10 border-transparent hover:border-white/5'}
+                                    `}
                                     draggable={asset.type === 'MESH'} 
                                     onDragStart={(e) => asset.type === 'MESH' && handleDragStart(e, asset.id)}
                                     onClick={() => handleClick(asset.id)}
@@ -234,7 +237,9 @@ export const ProjectPanel: React.FC = () => {
                                             className={`${color} drop-shadow-md transition-transform group-hover:scale-110`} 
                                         />
                                     </div>
-                                    <span className="text-[10px] text-text-secondary text-center w-full break-words leading-tight group-hover:text-white select-none">
+                                    <span className={`text-[10px] text-center w-full break-words leading-tight select-none
+                                        ${isSelected ? 'text-white font-bold' : 'text-text-secondary group-hover:text-white'}
+                                    `}>
                                         {asset.name}
                                     </span>
                                     <div className="text-[8px] text-text-secondary opacity-0 group-hover:opacity-50 mt-1 uppercase tracking-wider">
