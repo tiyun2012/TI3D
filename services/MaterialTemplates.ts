@@ -18,6 +18,35 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
         connections: []
     },
     {
+        name: 'offsetVertices',
+        description: 'Water Distortion effect using normal map displacement.',
+        nodes: [
+            { id: 'uv', type: 'UV', position: { x: 50, y: 100 } },
+            { id: 'time', type: 'Time', position: { x: 50, y: 250 } },
+            
+            // Constants
+            { id: 'nStr', type: 'Float', position: { x: 250, y: 50 }, data: { value: '5.0' } },
+            { id: 'dStr', type: 'Float', position: { x: 250, y: 400 }, data: { value: '0.12' } },
+            
+            // Effect Node
+            { 
+                id: 'distort', 
+                type: 'WaterDistortion', 
+                position: { x: 500, y: 150 },
+                data: { normalChannel: '2.0', bgChannel: '3.0' } // Noise & Brick defaults
+            },
+            
+            { id: 'out', type: 'ShaderOutput', position: { x: 850, y: 200 } }
+        ],
+        connections: [
+            { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'distort', toPin: 'uv' },
+            { id: 'c2', fromNode: 'time', fromPin: 'out', toNode: 'distort', toPin: 'time' },
+            { id: 'c3', fromNode: 'nStr', fromPin: 'out', toNode: 'distort', toPin: 'normStr' },
+            { id: 'c4', fromNode: 'dStr', fromPin: 'out', toNode: 'distort', toPin: 'distStr' },
+            { id: 'c5', fromNode: 'distort', fromPin: 'rgb', toNode: 'out', toPin: 'rgb' }
+        ]
+    },
+    {
         name: 'Holographic Rim',
         description: 'Sci-fi effect using View Direction and Normal data.',
         nodes: [

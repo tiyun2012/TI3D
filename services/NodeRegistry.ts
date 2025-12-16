@@ -580,6 +580,51 @@ export const NodeRegistry: Record<string, NodeDef> = {
         `;
       }
   },
+  
+  'WaterDistortion': {
+      type: 'WaterDistortion',
+      category: 'Effects',
+      title: 'Water Distortion',
+      inputs: [
+          { id: 'uv', name: 'UV', type: 'vec2' },
+          { id: 'time', name: 'Time', type: 'float' },
+          { id: 'normStr', name: 'Normal Str', type: 'float' },
+          { id: 'distStr', name: 'Distortion Str', type: 'float' }
+      ],
+      outputs: [{ id: 'rgb', name: 'Color', type: 'vec3' }],
+      execute: () => ({ x:0, y:0, z:1 }),
+      glsl: (inVars, id, data) => {
+          const funcName = `heightToNormal_${id}`;
+          // Default: Height=2 (Noise), Background=3 (Brick)
+          const normalCh = data?.normalChannel || '2.0';
+          const bgCh = data?.bgChannel || '3.0'; 
+          
+          return {
+              functions: `
+                  vec4 ${funcName}(vec2 uv, float strength, float texIdx) {
+                      vec2 s = vec2(1.0/64.0, 1.0/64.0);
+                      float p = texture(u_textures, vec3(uv, texIdx)).x;
+                      float h1 = texture(u_textures, vec3(uv + s * vec2(1,0), texIdx)).x;
+                      float v1 = texture(u_textures, vec3(uv + s * vec2(0,1), texIdx)).x;
+                      vec2 xy = (p - vec2(h1, v1)) * strength;
+                      return vec4(xy + .5, 1., 1.);
+                  }
+              `,
+              body: `
+                  vec2 ${id}_uv = ${inVars[0] || 'v_uv'};
+                  float ${id}_t = ${inVars[1] || 'u_time'} * 0.06;
+                  float ${id}_nStr = ${inVars[2] || '5.0'};
+                  float ${id}_dStr = ${inVars[3] || '0.12'};
+                  
+                  vec4 ${id}_norm = ${funcName}(${id}_uv + ${id}_t, ${id}_nStr, ${normalCh});
+                  vec2 ${id}_disp = clamp((${id}_norm.xy - 0.5) * ${id}_dStr, -1.0, 1.0);
+                  
+                  vec3 ${id} = texture(u_textures, vec3(${id}_uv + ${id}_t/6.0 + ${id}_disp, ${bgCh})).rgb;
+                  ${id} *= vec3(0.8, 0.8, 1.0);
+              `
+          };
+      }
+  },
 
   // --- ECS / QUERY NODES (CPU ONLY) ---
   
