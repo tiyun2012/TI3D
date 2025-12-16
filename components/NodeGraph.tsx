@@ -483,11 +483,18 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
                      const wMinX = (minX - t.x) / t.k, wMaxX = (maxX - t.x) / t.k;
                      const wMinY = (minY - t.y) / t.k, wMaxY = (maxY - t.y) / t.k;
 
-                     nodeRefs.current.forEach((el, id) => {
+                     nodeRefs.current.forEach((wrapperEl, id) => {
                          const node = nodeMap.get(id);
                          if (!node) return;
+                         
+                         // Get the inner NodeItem element which has the correct width/height
+                         const nodeEl = wrapperEl.firstElementChild as HTMLElement;
+                         if (!nodeEl) return;
+
                          const nx = node.position.x, ny = node.position.y;
-                         const nw = el.offsetWidth, nh = el.offsetHeight;
+                         const nw = nodeEl.offsetWidth, nh = nodeEl.offsetHeight;
+                         
+                         // Check overlap (AABB Intersection)
                          if (wMinX < nx + nw && wMaxX > nx && wMinY < ny + nh && wMaxY > ny) {
                              newSelected.add(id);
                          }
