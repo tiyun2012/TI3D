@@ -147,12 +147,20 @@ export const NodeItem = memo(({
                         )}
                         
                         {(isCustomCode || isForLoop) && (
-                            <div className="flex flex-col gap-1 mb-2 px-1">
-                                <span className="text-[9px] text-gray-500 uppercase">
+                            // Enforce strict heights using constants
+                            <div 
+                                className="flex flex-col px-1" 
+                                style={{ 
+                                    gap: LayoutConfig.CODE_GAP, 
+                                    marginBottom: LayoutConfig.CODE_MARGIN_BOTTOM 
+                                }}
+                            >
+                                <span className="text-[9px] text-gray-500 uppercase flex items-center" style={{ height: LayoutConfig.CODE_LABEL_HEIGHT }}>
                                     {isForLoop ? 'Loop Body (GLSL)' : 'GLSL Code Body'}
                                 </span>
                                 <textarea
-                                    className="w-full h-32 bg-black/40 text-[10px] font-mono text-gray-300 p-2 rounded border border-white/10 focus:border-accent outline-none resize-none custom-scrollbar"
+                                    className="w-full bg-black/40 text-[10px] font-mono text-gray-300 p-2 rounded border border-white/10 focus:border-accent outline-none resize-none custom-scrollbar"
+                                    style={{ height: LayoutConfig.CODE_BLOCK_HEIGHT }}
                                     value={node.data?.code || ''}
                                     placeholder={isForLoop 
                                         ? "acc += a + vec3(sin(index + time));" 
@@ -162,7 +170,7 @@ export const NodeItem = memo(({
                                     onMouseDown={e => e.stopPropagation()}
                                     spellCheck={false}
                                 />
-                                <div className="text-[8px] text-gray-500">
+                                <div className="text-[8px] text-gray-500 flex items-center" style={{ height: LayoutConfig.CODE_FOOTER_HEIGHT }}>
                                     {isForLoop 
                                         ? <span>Vars: <code>acc, index, a, b, time</code></span> 
                                         : <span>Return: <code>vec3 result</code></span>
