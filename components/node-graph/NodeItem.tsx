@@ -28,6 +28,8 @@ export const NodeItem = memo(({
 
     const isReroute = node.type === 'Reroute';
     const isShaderOutput = node.type === 'ShaderOutput';
+    const isCustomCode = node.type === 'CustomExpression';
+    
     const borderStyle = selected ? 'ring-1 ring-accent border-accent' : 'border-white/10';
 
     const renderPort = (pinId: string, type: 'input'|'output', color?: string, portType?: string) => {
@@ -72,14 +74,22 @@ export const NodeItem = memo(({
         );
     };
 
+    let nodeWidth = LayoutConfig.NODE_WIDTH;
+    if (isReroute) nodeWidth = LayoutConfig.REROUTE_SIZE;
+    else if (isShaderOutput) nodeWidth = LayoutConfig.PREVIEW_NODE_WIDTH;
+    else if (isCustomCode) nodeWidth = LayoutConfig.CODE_NODE_WIDTH;
+
+    let nodeHeight: number | string = 'auto';
+    if (isReroute) nodeHeight = LayoutConfig.REROUTE_SIZE;
+
     return (
         <div
             className={`absolute flex flex-col pointer-events-auto transition-shadow hover:shadow-2xl 
                 ${isReroute ? '' : `rounded-md shadow-xl border bg-[#1e1e1e] ${borderStyle}`}`}
             style={{ 
                 transform: `translate(${node.position.x}px, ${node.position.y}px)`,
-                width: isReroute ? LayoutConfig.REROUTE_SIZE : (isShaderOutput ? LayoutConfig.PREVIEW_NODE_WIDTH : LayoutConfig.NODE_WIDTH), 
-                height: isReroute ? LayoutConfig.REROUTE_SIZE : 'auto'
+                width: nodeWidth, 
+                height: nodeHeight
             }}
         >
              {isReroute ? (
@@ -132,6 +142,23 @@ export const NodeItem = memo(({
                                         />
                                     </div>
                                 ))}
+                            </div>
+                        )}
+                        
+                        {isCustomCode && (
+                            <div className="flex flex-col gap-1 mb-2 px-1">
+                                <span className="text-[9px] text-gray-500 uppercase">GLSL Code Body</span>
+                                <textarea
+                                    className="w-full h-32 bg-black/40 text-[10px] font-mono text-gray-300 p-2 rounded border border-white/10 focus:border-accent outline-none resize-none custom-scrollbar"
+                                    value={node.data?.code || ''}
+                                    placeholder="result = b * sin(a + time);"
+                                    onChange={(e) => onDataChange(node.id, 'code', e.target.value)}
+                                    onMouseDown={e => e.stopPropagation()}
+                                    spellCheck={false}
+                                />
+                                <div className="text-[8px] text-gray-500">
+                                    Return variable: <code>vec3 result</code>
+                                </div>
                             </div>
                         )}
                         

@@ -3,6 +3,7 @@ export const LayoutConfig = {
     GRID_SIZE: 20,
     NODE_WIDTH: 180,
     PREVIEW_NODE_WIDTH: 240, 
+    CODE_NODE_WIDTH: 300, // New: Wider for code editing
     REROUTE_SIZE: 12,
     HEADER_HEIGHT: 36, 
     ITEM_HEIGHT: 24,   

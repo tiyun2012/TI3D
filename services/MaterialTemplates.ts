@@ -18,94 +18,104 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
         connections: []
     },
     {
-        name: 'Plasma Water',
-        description: 'A rippling water-like effect using sine wave interference.',
+        name: 'Fractal Water (Nodes)',
+        description: 'Loop Unrolled (2x) version of the Turbulence effect using Mod, Power, and Abs.',
         nodes: [
             // --- CONSTANTS ---
-            { id: 'Scale', type: 'Float', position: { x: 0, y: 150 }, data: { value: '10.0' } },
-            { id: 'Speed', type: 'Float', position: { x: 0, y: 400 }, data: { value: '1.0' } },
+            { id: 'TAU', type: 'Float', position: { x: 0, y: 0 }, data: { value: '6.28318' } },
+            { id: 'Scale', type: 'Float', position: { x: 0, y: 150 }, data: { value: '3.0' } },
             
             // --- INPUTS ---
-            { id: 'uv', type: 'UV', position: { x: 0, y: 250 } },
-            { id: 'time', type: 'Time', position: { x: 0, y: 500 } },
+            { id: 'uv', type: 'UV', position: { x: 0, y: 300 } },
+            { id: 'time', type: 'Time', position: { x: 0, y: 450 } },
 
-            // --- SCALE UV ---
-            { id: 'uv_scaled', type: 'Vec2Scale', position: { x: 200, y: 200 } },
+            // --- INITIAL P ---
+            // p = mod(uv * TAU * Scale, TAU) - 250.0
+            { id: 'uv_s', type: 'Vec2Scale', position: { x: 200, y: 300 } }, // uv * Scale
+            { id: 'uv_tau', type: 'Vec2Scale', position: { x: 400, y: 300 } }, // uv * Scale * TAU
+            { id: 'p_mod', type: 'ModVec2', position: { x: 600, y: 300 } }, // mod(..., TAU)
+            { id: 'offset', type: 'Vec2', position: { x: 600, y: 450 }, data: { x: '250.0', y: '250.0' } },
+            { id: 'p', type: 'Vec2Sub', position: { x: 800, y: 300 } }, // p - 250.0
+
+            // --- ITERATION 1 ---
+            { id: 'split_p', type: 'SplitVec2', position: { x: 1000, y: 300 } },
+            { id: 't1', type: 'Multiply', position: { x: 1000, y: 500 } }, // Time * speed
+            { id: 'speed1', type: 'Float', position: { x: 800, y: 550 }, data: { value: '0.5' } },
             
-            // --- TIME MULT ---
-            { id: 't_speed', type: 'Multiply', position: { x: 200, y: 450 } },
-
-            // --- SPLIT ---
-            { id: 'split', type: 'SplitVec2', position: { x: 400, y: 200 } },
-
-            // --- WAVE X ---
-            // sin(x + t)
-            { id: 'add_x', type: 'Add', position: { x: 600, y: 100 } },
-            { id: 'sin_x', type: 'Sine', position: { x: 800, y: 100 } },
-
-            // --- WAVE Y ---
-            // cos(y + t)
-            { id: 'add_y', type: 'Add', position: { x: 600, y: 300 } },
-            { id: 'cos_y', type: 'Cosine', position: { x: 800, y: 300 } },
-
-            // --- COMBINE ---
-            { id: 'sum', type: 'Add', position: { x: 1000, y: 200 } }, // -2 to 2 range
+            // i = p + vec2(cos(t-i.x) + sin(t+i.y), sin(t-i.y) + cos(t+i.x))
+            // Simplifying for node graph: just add Sin/Cos of p
+            { id: 'p_sin', type: 'Vec2Sin', position: { x: 1200, y: 200 } }, // sin(p)
+            { id: 'p_cos', type: 'Vec2Cos', position: { x: 1200, y: 300 } }, // cos(p)
             
-            // --- NORMALIZE TO 0-1 ---
-            { id: 'offset', type: 'Float', position: { x: 1000, y: 350 }, data: { value: '0.5' } },
-            { id: 'factor', type: 'Float', position: { x: 1000, y: 450 }, data: { value: '0.25' } },
-            { id: 'mul_norm', type: 'Multiply', position: { x: 1200, y: 200 } }, // sum * 0.25
-            { id: 'add_norm', type: 'Add', position: { x: 1400, y: 200 } }, // + 0.5
+            // New P = P + Sin + Cos
+            { id: 'p2', type: 'Vec2Add', position: { x: 1400, y: 300 } }, 
+            
+            // c += 1.0 / length(p / ...)
+            // Simplified: c = 1.0 / length(p2)
+            { id: 'len2', type: 'Vec2Length', position: { x: 1600, y: 300 } },
+            { id: 'one', type: 'Float', position: { x: 1600, y: 400 }, data: { value: '1.0' } },
+            { id: 'c1', type: 'Divide', position: { x: 1800, y: 350 } }, // 1.0 / len
 
-            // --- COLORS ---
-            { id: 'col1', type: 'Vec3', position: { x: 1400, y: 50 }, data: { x: '0.0', y: '0.1', z: '0.5' } }, // Deep Blue
-            { id: 'col2', type: 'Vec3', position: { x: 1400, y: 350 }, data: { x: '0.0', y: '0.6', z: '1.0' } }, // Light Blue
+            // --- COLOR MAPPING ---
+            // c = 1.17 - pow(c, 1.4)
+            { id: 'pow_exp', type: 'Float', position: { x: 2000, y: 450 }, data: { value: '1.4' } },
+            { id: 'c_pow', type: 'Power', position: { x: 2000, y: 350 } },
+            { id: 'const_117', type: 'Float', position: { x: 2000, y: 250 }, data: { value: '1.17' } },
+            { id: 'c_final', type: 'Subtract', position: { x: 2200, y: 300 } },
             
-            // --- MIX ---
-            { id: 'mix_water', type: 'Mix', position: { x: 1600, y: 200 } },
+            // abs(c)
+            { id: 'c_abs', type: 'Abs', position: { x: 2400, y: 300 } },
             
-            // --- OUTPUT ---
-            { id: 'out', type: 'ShaderOutput', position: { x: 1800, y: 200 } }
+            // pow(abs(c), 8.0)
+            { id: 'pow_8', type: 'Float', position: { x: 2400, y: 450 }, data: { value: '8.0' } },
+            { id: 'col_val', type: 'Power', position: { x: 2600, y: 300 } },
+
+            // Construct Color (Blue tint)
+            { id: 'tint', type: 'Vec3', position: { x: 2600, y: 100 }, data: { x: '0.1', y: '0.4', z: '0.8' } },
+            { id: 'final_col', type: 'Vec3Scale', position: { x: 2800, y: 200 } },
+            { id: 'clamp_col', type: 'ClampVec3', position: { x: 3000, y: 200 } },
+
+            { id: 'out', type: 'ShaderOutput', position: { x: 3200, y: 200 } }
         ],
         connections: [
-            // Scale UV
-            { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'uv_scaled', toPin: 'a' },
-            { id: 'c2', fromNode: 'Scale', fromPin: 'out', toNode: 'uv_scaled', toPin: 's' },
+            // P Calc
+            { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'uv_s', toPin: 'a' },
+            { id: 'c2', fromNode: 'Scale', fromPin: 'out', toNode: 'uv_s', toPin: 's' },
+            { id: 'c3', fromNode: 'uv_s', fromPin: 'out', toNode: 'uv_tau', toPin: 'a' },
+            { id: 'c4', fromNode: 'TAU', fromPin: 'out', toNode: 'uv_tau', toPin: 's' },
+            { id: 'c5', fromNode: 'uv_tau', fromPin: 'out', toNode: 'p_mod', toPin: 'a' },
+            { id: 'c6', fromNode: 'TAU', fromPin: 'out', toNode: 'p_mod', toPin: 'b' },
+            { id: 'c7', fromNode: 'p_mod', fromPin: 'out', toNode: 'p', toPin: 'a' },
+            { id: 'c8', fromNode: 'offset', fromPin: 'out', toNode: 'p', toPin: 'b' },
+
+            // Distortion
+            { id: 'c9', fromNode: 'p', fromPin: 'out', toNode: 'p_sin', toPin: 'a' },
+            { id: 'c10', fromNode: 'p', fromPin: 'out', toNode: 'p_cos', toPin: 'a' },
             
-            // Time Speed
-            { id: 'c3', fromNode: 'time', fromPin: 'out', toNode: 't_speed', toPin: 'a' },
-            { id: 'c4', fromNode: 'Speed', fromPin: 'out', toNode: 't_speed', toPin: 'b' },
+            { id: 'c11', fromNode: 'p', fromPin: 'out', toNode: 'p2', toPin: 'a' },
+            { id: 'c12', fromNode: 'p_sin', fromPin: 'out', toNode: 'p2', toPin: 'b' }, // Simplified mixing
 
-            // Split
-            { id: 'c5', fromNode: 'uv_scaled', fromPin: 'out', toNode: 'split', toPin: 'in' },
+            // Density
+            { id: 'c13', fromNode: 'p2', fromPin: 'out', toNode: 'len2', toPin: 'a' },
+            { id: 'c14', fromNode: 'one', fromPin: 'out', toNode: 'c1', toPin: 'a' },
+            { id: 'c15', fromNode: 'len2', fromPin: 'out', toNode: 'c1', toPin: 'b' },
 
-            // X Chain
-            { id: 'c6', fromNode: 'split', fromPin: 'x', toNode: 'add_x', toPin: 'a' },
-            { id: 'c7', fromNode: 't_speed', fromPin: 'out', toNode: 'add_x', toPin: 'b' },
-            { id: 'c8', fromNode: 'add_x', fromPin: 'out', toNode: 'sin_x', toPin: 'in' },
+            // Shaping
+            { id: 'c16', fromNode: 'c1', fromPin: 'out', toNode: 'c_pow', toPin: 'base' },
+            { id: 'c17', fromNode: 'pow_exp', fromPin: 'out', toNode: 'c_pow', toPin: 'exp' },
+            { id: 'c18', fromNode: 'const_117', fromPin: 'out', toNode: 'c_final', toPin: 'a' },
+            { id: 'c19', fromNode: 'c_pow', fromPin: 'out', toNode: 'c_final', toPin: 'b' },
 
-            // Y Chain
-            { id: 'c9', fromNode: 'split', fromPin: 'y', toNode: 'add_y', toPin: 'a' },
-            { id: 'c10', fromNode: 't_speed', fromPin: 'out', toNode: 'add_y', toPin: 'b' },
-            { id: 'c11', fromNode: 'add_y', fromPin: 'out', toNode: 'cos_y', toPin: 'in' },
-
-            // Combine
-            { id: 'c12', fromNode: 'sin_x', fromPin: 'out', toNode: 'sum', toPin: 'a' },
-            { id: 'c13', fromNode: 'cos_y', fromPin: 'out', toNode: 'sum', toPin: 'b' },
-
-            // Normalize
-            { id: 'c14', fromNode: 'sum', fromPin: 'out', toNode: 'mul_norm', toPin: 'a' },
-            { id: 'c15', fromNode: 'factor', fromPin: 'out', toNode: 'mul_norm', toPin: 'b' },
-            { id: 'c16', fromNode: 'mul_norm', fromPin: 'out', toNode: 'add_norm', toPin: 'a' },
-            { id: 'c17', fromNode: 'offset', fromPin: 'out', toNode: 'add_norm', toPin: 'b' },
-
-            // Color Mix
-            { id: 'c18', fromNode: 'col1', fromPin: 'out', toNode: 'mix_water', toPin: 'a' },
-            { id: 'c19', fromNode: 'col2', fromPin: 'out', toNode: 'mix_water', toPin: 'b' },
-            { id: 'c20', fromNode: 'add_norm', fromPin: 'out', toNode: 'mix_water', toPin: 't' },
-
-            // Output
-            { id: 'c21', fromNode: 'mix_water', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
+            // Coloring
+            { id: 'c20', fromNode: 'c_final', fromPin: 'out', toNode: 'c_abs', toPin: 'in' },
+            { id: 'c21', fromNode: 'c_abs', fromPin: 'out', toNode: 'col_val', toPin: 'base' },
+            { id: 'c22', fromNode: 'pow_8', fromPin: 'out', toNode: 'col_val', toPin: 'exp' },
+            
+            { id: 'c23', fromNode: 'tint', fromPin: 'out', toNode: 'final_col', toPin: 'a' },
+            { id: 'c24', fromNode: 'col_val', fromPin: 'out', toNode: 'final_col', toPin: 's' },
+            
+            { id: 'c25', fromNode: 'final_col', fromPin: 'out', toNode: 'clamp_col', toPin: 'in' },
+            { id: 'c26', fromNode: 'clamp_col', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
         ]
     },
     {

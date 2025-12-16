@@ -49,6 +49,39 @@ export const NodeRegistry: Record<string, NodeDef> = {
       glsl: (inVars, id) => `fragColor = vec4(${inVars[0] || 'vec3(1.0, 0.0, 1.0)'}, 1.0);`
   },
 
+  'CustomExpression': {
+      type: 'CustomExpression',
+      category: 'Advanced',
+      title: 'Custom Loop / Code',
+      inputs: [
+          { id: 'a', name: 'A (float)', type: 'float' },
+          { id: 'b', name: 'B (vec3)', type: 'vec3' },
+          { id: 'c', name: 'C (vec3)', type: 'vec3' },
+          { id: 'time', name: 'Time', type: 'float' }
+      ],
+      outputs: [{ id: 'out', name: 'Result (vec3)', type: 'vec3' }],
+      execute: () => ({ x: 0, y: 0, z: 0 }), // CPU Execution not supported for raw GLSL
+      glsl: (inVars, id, data) => {
+          // Default Loop Code if empty
+          const userCode = data?.code || `
+            vec3 result = vec3(0.0);
+            for(int i=0; i<3; i++) {
+                result += b * sin(a * float(i) + time);
+            }
+            return result;
+          `;
+          
+          // Wrap in an IIFE-like closure for GLSL to prevent variable leaking
+          // We define a helper function unique to this node instance
+          return `
+            vec3 ${id}_func(float a, vec3 b, vec3 c, float time) {
+                ${userCode}
+            }
+            vec3 ${id} = ${id}_func(${inVars[0]||'0.0'}, ${inVars[1]||'vec3(0.0)'}, ${inVars[2]||'vec3(0.0)'}, ${inVars[3]||'0.0'});
+          `;
+      }
+  },
+
   'UV': {
       type: 'UV',
       category: 'Shader',
@@ -110,7 +143,7 @@ export const NodeRegistry: Record<string, NodeDef> = {
       ],
       outputs: [{ id: 'out', name: 'Out', type: 'vec3' }],
       execute: (i) => {
-          // CPU Mix implementation for reference (simplified)
+          // Simplified CPU Mix
           return { x: 0, y: 0, z: 0 }; 
       },
       glsl: (inVars, id) => `vec3 ${id} = mix(${inVars[0]||'vec3(0.0)'}, ${inVars[1]||'vec3(1.0)'}, ${inVars[2]||'0.5'});`
@@ -217,7 +250,6 @@ export const NodeRegistry: Record<string, NodeDef> = {
         const b = i[1] || {x:1,y:1};
         return { x: a.x / (b.x || 1), y: a.y / (b.y || 1) };
     },
-    // Prevent Divide by Zero in GLSL to avoid black screen
     glsl: (v, id) => `vec2 ${id} = ${v[0]||'vec2(0)'} / (${v[1]||'vec2(1)'} + 0.00001);`
   },
   'Vec2Scale': {
@@ -240,6 +272,15 @@ export const NodeRegistry: Record<string, NodeDef> = {
     outputs: [{ id: 'out', name: 'Dist', type: 'float' }],
     execute: (i) => Math.hypot(i[0].x-i[1].x, i[0].y-i[1].y),
     glsl: (inVars, id) => `float ${id} = distance(${inVars[0] || 'vec2(0.0)'}, ${inVars[1] || 'vec2(0.0)'});`
+  },
+  'ModVec2': {
+      type: 'ModVec2',
+      category: 'Vec2 Math',
+      title: 'Modulo (Vec2)',
+      inputs: [{ id: 'a', name: 'A', type: 'vec2' }, { id: 'b', name: 'B', type: 'float' }],
+      outputs: [{ id: 'out', name: 'Out', type: 'vec2' }],
+      execute: (i) => ({ x: (i[0]?.x||0)%(i[1]||1), y: (i[0]?.y||0)%(i[1]||1) }),
+      glsl: (v, id) => `vec2 ${id} = mod(${v[0] || 'vec2(0.0)'}, ${v[1] || '1.0'});`
   },
 
   // --- SCALAR MATH ---
@@ -292,6 +333,42 @@ export const NodeRegistry: Record<string, NodeDef> = {
     glsl: (inVars, id) => `float ${id} = ${inVars[0] || '0.0'} / (${inVars[1] || '1.0'} + 0.00001);`
   },
 
+  'Mod': {
+      type: 'Mod', category: 'Math', title: 'Modulo',
+      inputs: [{ id: 'a', name: 'A', type: 'float' }, { id: 'b', name: 'B', type: 'float' }],
+      outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+      execute: (i) => (i[0] || 0) % (i[1] || 1),
+      glsl: (v, id) => `float ${id} = mod(${v[0] || '0.0'}, ${v[1] || '1.0'});`
+  },
+
+  'Power': {
+      type: 'Power', category: 'Math', title: 'Power',
+      inputs: [{ id: 'base', name: 'Base', type: 'float' }, { id: 'exp', name: 'Exp', type: 'float' }],
+      outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+      execute: (i) => Math.pow(i[0] || 0, i[1] || 1),
+      glsl: (v, id) => `float ${id} = pow(${v[0] || '0.0'}, ${v[1] || '1.0'});`
+  },
+
+  'Abs': {
+      type: 'Abs', category: 'Math', title: 'Absolute',
+      inputs: [{ id: 'in', name: 'In', type: 'float' }],
+      outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+      execute: (i) => Math.abs(i[0] || 0),
+      glsl: (v, id) => `float ${id} = abs(${v[0] || '0.0'});`
+  },
+
+  'Clamp': {
+      type: 'Clamp', category: 'Math', title: 'Clamp',
+      inputs: [
+          { id: 'in', name: 'In', type: 'float' },
+          { id: 'min', name: 'Min', type: 'float' },
+          { id: 'max', name: 'Max', type: 'float' }
+      ],
+      outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+      execute: (i) => Math.max(i[1]||0, Math.min(i[2]||1, i[0]||0)),
+      glsl: (v, id) => `float ${id} = clamp(${v[0] || '0.0'}, ${v[1] || '0.0'}, ${v[2] || '1.0'});`
+  },
+
   'SmoothStep': {
       type: 'SmoothStep', category: 'Math', title: 'SmoothStep',
       inputs: [{ id: 'e0', name: 'Edge0', type: 'float' }, { id: 'e1', name: 'Edge1', type: 'float' }, { id: 'x', name: 'X', type: 'float' }],
@@ -319,6 +396,25 @@ export const NodeRegistry: Record<string, NodeDef> = {
     outputs: [{ id: 'out', name: 'Out', type: 'vec3' }],
     execute: (i) => ({x:(i[0]?.x||0)*i[1], y:(i[0]?.y||0)*i[1], z:(i[0]?.z||0)*i[1]}),
     glsl: (v, id) => `vec3 ${id} = ${v[0]||'vec3(0)'} * ${v[1]||'1.0'};`
+  },
+  'ClampVec3': {
+      type: 'ClampVec3', category: 'Vec3 Math', title: 'Clamp (Vec3)',
+      inputs: [
+          { id: 'in', name: 'In', type: 'vec3' },
+          { id: 'min', name: 'Min', type: 'float' },
+          { id: 'max', name: 'Max', type: 'float' }
+      ],
+      outputs: [{ id: 'out', name: 'Out', type: 'vec3' }],
+      execute: (i) => {
+          const min = i[1]||0, max = i[2]||1;
+          const v = i[0] || {x:0, y:0, z:0};
+          return {
+              x: Math.max(min, Math.min(max, v.x)),
+              y: Math.max(min, Math.min(max, v.y)),
+              z: Math.max(min, Math.min(max, v.z))
+          };
+      },
+      glsl: (v, id) => `vec3 ${id} = clamp(${v[0] || 'vec3(0.0)'}, ${v[1] || '0.0'}, ${v[2] || '1.0'});`
   },
   
   'WaterTurbulence': {
