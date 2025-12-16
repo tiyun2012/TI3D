@@ -18,6 +18,76 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
         connections: []
     },
     {
+        name: 'Holographic Rim',
+        description: 'Sci-fi effect using View Direction and Normal data.',
+        nodes: [
+            // Geometry Data
+            { id: 'norm', type: 'WorldNormal', position: { x: 50, y: 100 } },
+            { id: 'view', type: 'ViewDirection', position: { x: 50, y: 250 } },
+            
+            // Fresnel Calc: 1.0 - dot(N, V)
+            { id: 'dot', type: 'DotProduct', position: { x: 250, y: 150 } },
+            { id: 'abs', type: 'Abs', position: { x: 400, y: 150 } }, // Handle backfaces if any
+            { id: 'one', type: 'Float', position: { x: 400, y: 50 }, data: { value: '1.0' } },
+            { id: 'sub', type: 'Subtract', position: { x: 550, y: 150 } },
+            
+            // Sharpness: pow(fresnel, 3.0)
+            { id: 'pow', type: 'Power', position: { x: 700, y: 150 } },
+            { id: 'exp', type: 'Float', position: { x: 550, y: 300 }, data: { value: '3.0' } },
+            
+            // Color
+            { id: 'color', type: 'Vec3', position: { x: 700, y: 50 }, data: { x: '0.0', y: '0.8', z: '1.0' } }, // Cyan
+            { id: 'mul', type: 'Vec3Scale', position: { x: 900, y: 150 } },
+            
+            // Add Scanline effect
+            { id: 'pos', type: 'WorldPosition', position: { x: 50, y: 400 } },
+            { id: 'split', type: 'Split', position: { x: 250, y: 400 } }, // Get Y
+            { id: 'time', type: 'Time', position: { x: 250, y: 550 } },
+            { id: 'add_t', type: 'Add', position: { x: 450, y: 450 } },
+            { id: 'sin', type: 'Sine', position: { x: 600, y: 450 } },
+            { id: 'add_1', type: 'Add', position: { x: 750, y: 450 } }, // make 0..2
+            { id: 'half', type: 'Float', position: { x: 600, y: 350 }, data: { value: '0.5' } },
+            { id: 'one_scan', type: 'Float', position: { x: 600, y: 550 }, data: { value: '1.0' } },
+            { id: 'mul_scan', type: 'Multiply', position: { x: 900, y: 450 } }, // scale to 0..1
+            
+            // Combine Rim + Scanline
+            { id: 'add_final', type: 'Vec3Add', position: { x: 1100, y: 200 } },
+            { id: 'scan_color', type: 'Vec3Scale', position: { x: 1050, y: 400 } }, // Scanline is whiteish
+            { id: 'white', type: 'Vec3', position: { x: 900, y: 350 }, data: { x: '0.5', y: '0.5', z: '0.5' } },
+
+            { id: 'out', type: 'ShaderOutput', position: { x: 1300, y: 200 } }
+        ],
+        connections: [
+            // Fresnel
+            { id: 'c1', fromNode: 'norm', fromPin: 'norm', toNode: 'dot', toPin: 'a' },
+            { id: 'c2', fromNode: 'view', fromPin: 'dir', toNode: 'dot', toPin: 'b' },
+            { id: 'c3', fromNode: 'dot', fromPin: 'out', toNode: 'abs', toPin: 'in' },
+            { id: 'c4', fromNode: 'one', fromPin: 'out', toNode: 'sub', toPin: 'a' },
+            { id: 'c5', fromNode: 'abs', fromPin: 'out', toNode: 'sub', toPin: 'b' },
+            { id: 'c6', fromNode: 'sub', fromPin: 'out', toNode: 'pow', toPin: 'base' },
+            { id: 'c7', fromNode: 'exp', fromPin: 'out', toNode: 'pow', toPin: 'exp' },
+            { id: 'c8', fromNode: 'color', fromPin: 'out', toNode: 'mul', toPin: 'a' },
+            { id: 'c9', fromNode: 'pow', fromPin: 'out', toNode: 'mul', toPin: 's' },
+            
+            // Scanline: sin(pos.y * 10 + time)
+            { id: 'c10', fromNode: 'pos', fromPin: 'pos', toNode: 'split', toPin: 'in' },
+            { id: 'c11', fromNode: 'split', fromPin: 'y', toNode: 'add_t', toPin: 'a' }, // scaling skipped for brevity
+            { id: 'c12', fromNode: 'time', fromPin: 'out', toNode: 'add_t', toPin: 'b' },
+            { id: 'c13', fromNode: 'add_t', fromPin: 'out', toNode: 'sin', toPin: 'in' },
+            { id: 'c14', fromNode: 'sin', fromPin: 'out', toNode: 'add_1', toPin: 'a' },
+            { id: 'c15', fromNode: 'one_scan', fromPin: 'out', toNode: 'add_1', toPin: 'b' },
+            { id: 'c16', fromNode: 'add_1', fromPin: 'out', toNode: 'mul_scan', toPin: 'a' },
+            { id: 'c17', fromNode: 'half', fromPin: 'out', toNode: 'mul_scan', toPin: 'b' },
+            
+            // Compose
+            { id: 'c18', fromNode: 'white', fromPin: 'out', toNode: 'scan_color', toPin: 'a' },
+            { id: 'c19', fromNode: 'mul_scan', fromPin: 'out', toNode: 'scan_color', toPin: 's' },
+            { id: 'c20', fromNode: 'mul', fromPin: 'out', toNode: 'add_final', toPin: 'a' },
+            { id: 'c21', fromNode: 'scan_color', fromPin: 'out', toNode: 'add_final', toPin: 'b' },
+            { id: 'c22', fromNode: 'add_final', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
+        ]
+    },
+    {
         name: 'For Loop',
         description: 'Demonstrates the GLSL ForLoop node to create a rotating pattern.',
         nodes: [

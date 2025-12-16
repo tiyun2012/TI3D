@@ -82,11 +82,13 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     
     uniform float u_time;
     uniform vec2 u_resolution;
+    uniform vec3 u_cameraPos;
     uniform sampler2DArray u_textures;
     
     // Varyings from Vertex Shader
     in vec3 v_normal;
     in vec3 v_worldPos;
+    in vec3 v_objectPos;
     in vec3 v_color;
     in float v_isSelected;
     in vec2 v_uv;

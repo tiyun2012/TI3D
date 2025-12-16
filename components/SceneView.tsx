@@ -86,16 +86,16 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   }, [selectedIds]);
 
   // Derived Camera Matrices using stable viewport state
-  const { vpMatrix, invVpMatrix } = useMemo(() => {
+  const { vpMatrix, invVpMatrix, eye } = useMemo(() => {
     const { width, height } = viewport;
     
     const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta);
     const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
     const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
-    const eye = { x: eyeX, y: eyeY, z: eyeZ };
+    const eyeVec = { x: eyeX, y: eyeY, z: eyeZ };
 
     const viewMatrix = Mat4Utils.create();
-    Mat4Utils.lookAt(eye, camera.target, { x: 0, y: 1, z: 0 }, viewMatrix);
+    Mat4Utils.lookAt(eyeVec, camera.target, { x: 0, y: 1, z: 0 }, viewMatrix);
     
     const aspect = width / height;
     const projMatrix = Mat4Utils.create();
@@ -107,14 +107,14 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const invVp = Mat4Utils.create();
     Mat4Utils.invert(vp, invVp);
 
-    return { vpMatrix: vp, invVpMatrix: invVp };
+    return { vpMatrix: vp, invVpMatrix: invVp, eye: eyeVec };
   }, [camera, viewport.width, viewport.height]);
 
   useEffect(() => {
     if (viewport.width > 1) {
-       engineInstance.updateCamera(vpMatrix, viewport.width, viewport.height);
+       engineInstance.updateCamera(vpMatrix, eye, viewport.width, viewport.height);
     }
-  }, [vpMatrix, viewport.width, viewport.height]);
+  }, [vpMatrix, eye, viewport.width, viewport.height]);
 
   // Focus on Selection (F)
   useEffect(() => {

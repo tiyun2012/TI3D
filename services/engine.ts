@@ -192,11 +192,13 @@ export class Ti3DEngine {
   }
 
   viewProjectionMatrix = Mat4Utils.create();
+  cameraPosition = { x: 0, y: 0, z: 0 };
   private canvasWidth = 1;
   private canvasHeight = 1;
 
-  updateCamera(vpMatrix: Mat4, w: number, h: number) {
+  updateCamera(vpMatrix: Mat4, cameraPos: {x:number, y:number, z:number}, w: number, h: number) {
       Mat4Utils.copy(this.viewProjectionMatrix, vpMatrix);
+      this.cameraPosition = cameraPos;
       this.canvasWidth = w;
       this.canvasHeight = h;
   }
@@ -368,7 +370,8 @@ export class Ti3DEngine {
           this.selectedIndices,
           this.viewProjectionMatrix,
           this.canvasWidth,
-          this.canvasHeight
+          this.canvasHeight,
+          this.cameraPosition
       );
       
       this.debugRenderer.render(this.viewProjectionMatrix);

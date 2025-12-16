@@ -19,6 +19,7 @@ uniform mat4 u_viewProjection;
 
 out vec3 v_normal;
 out vec3 v_worldPos;
+out vec3 v_objectPos; // Center of the object
 out vec3 v_color;
 out float v_isSelected;
 out vec2 v_uv;
@@ -31,6 +32,8 @@ void main() {
     
     v_normal = mat3(model) * a_normal;
     v_worldPos = worldPos.xyz;
+    // Extract translation from model matrix (column 3)
+    v_objectPos = vec3(model[3][0], model[3][1], model[3][2]);
     v_color = a_color;
     v_isSelected = a_isSelected;
     v_uv = a_uv;
@@ -43,6 +46,7 @@ precision mediump sampler2DArray;
 
 in vec3 v_normal;
 in vec3 v_worldPos;
+in vec3 v_objectPos;
 in vec3 v_color;
 in float v_isSelected;
 in vec2 v_uv;
@@ -352,7 +356,7 @@ export class WebGLRenderer {
         return p;
     }
 
-    render(store: ComponentStorage, count: number, selectedIndices: Set<number>, viewProjection: Mat4, width: number, height: number) {
+    render(store: ComponentStorage, count: number, selectedIndices: Set<number>, viewProjection: Mat4, width: number, height: number, cameraPos: {x:number,y:number,z:number}) {
         if (!this.gl || !this.defaultProgram) return;
         const gl = this.gl;
         
@@ -407,6 +411,9 @@ export class WebGLRenderer {
 
             const uRes = gl.getUniformLocation(program, 'u_resolution');
             if (uRes) gl.uniform2f(uRes, width, height);
+            
+            const uCam = gl.getUniformLocation(program, 'u_cameraPos');
+            if (uCam) gl.uniform3f(uCam, cameraPos.x, cameraPos.y, cameraPos.z);
 
             const uTex = gl.getUniformLocation(program, 'u_textures');
             if (uTex) {

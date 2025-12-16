@@ -115,12 +115,72 @@ export const NodeRegistry: Record<string, NodeDef> = {
 
   'UV': {
       type: 'UV',
-      category: 'Shader',
+      category: 'Geometry',
       title: 'UV Coord',
       inputs: [],
       outputs: [{ id: 'uv', name: 'UV', type: 'vec2' }], 
       execute: () => ({ x:0, y:0 }), 
       glsl: (inVars, id) => `vec2 ${id} = v_uv;`
+  },
+
+  'WorldPosition': {
+      type: 'WorldPosition',
+      category: 'Geometry',
+      title: 'World Position',
+      inputs: [],
+      outputs: [{ id: 'pos', name: 'Position', type: 'vec3' }],
+      execute: () => ({ x:0, y:0, z:0 }),
+      glsl: (v, id) => `vec3 ${id} = v_worldPos;`
+  },
+
+  'ObjectPosition': {
+      type: 'ObjectPosition',
+      category: 'Geometry',
+      title: 'Object Position',
+      inputs: [],
+      outputs: [{ id: 'pos', name: 'Position', type: 'vec3' }],
+      execute: () => ({ x:0, y:0, z:0 }),
+      glsl: (v, id) => `vec3 ${id} = v_objectPos;`
+  },
+
+  'WorldNormal': {
+      type: 'WorldNormal',
+      category: 'Geometry',
+      title: 'World Normal',
+      inputs: [],
+      outputs: [{ id: 'norm', name: 'Normal', type: 'vec3' }],
+      execute: () => ({ x:0, y:1, z:0 }),
+      glsl: (v, id) => `vec3 ${id} = normalize(v_normal);`
+  },
+
+  'VertexColor': {
+      type: 'VertexColor',
+      category: 'Geometry',
+      title: 'Vertex Color',
+      inputs: [],
+      outputs: [{ id: 'col', name: 'Color', type: 'vec3' }],
+      execute: () => ({ x:1, y:1, z:1 }),
+      glsl: (v, id) => `vec3 ${id} = v_color;`
+  },
+
+  'CameraPosition': {
+      type: 'CameraPosition',
+      category: 'Input',
+      title: 'Camera Position',
+      inputs: [],
+      outputs: [{ id: 'pos', name: 'Position', type: 'vec3' }],
+      execute: () => ({ x:0, y:0, z:5 }),
+      glsl: (v, id) => `vec3 ${id} = u_cameraPos;`
+  },
+
+  'ViewDirection': {
+      type: 'ViewDirection',
+      category: 'Geometry',
+      title: 'View Direction',
+      inputs: [],
+      outputs: [{ id: 'dir', name: 'Direction', type: 'vec3' }],
+      execute: () => ({ x:0, y:0, z:1 }),
+      glsl: (v, id) => `vec3 ${id} = normalize(u_cameraPos - v_worldPos);`
   },
 
   'Split': {
@@ -193,6 +253,19 @@ export const NodeRegistry: Record<string, NodeDef> = {
           return { x: 0, y: 0, z: 0 }; 
       },
       glsl: (inVars, id) => `vec3 ${id} = mix(${inVars[0]||'vec3(0.0)'}, ${inVars[1]||'vec3(1.0)'}, ${inVars[2]||'0.5'});`
+  },
+  
+  'DotProduct': {
+      type: 'DotProduct',
+      category: 'Vector',
+      title: 'Dot Product',
+      inputs: [
+          { id: 'a', name: 'A', type: 'vec3' },
+          { id: 'b', name: 'B', type: 'vec3' }
+      ],
+      outputs: [{ id: 'out', name: 'Dot', type: 'float' }],
+      execute: (i) => 0, 
+      glsl: (v, id) => `float ${id} = dot(${v[0]||'vec3(0)'}, ${v[1]||'vec3(0)'});`
   },
 
   // --- HYBRID NODES (CPU + GLSL) ---
