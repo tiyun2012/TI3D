@@ -6,6 +6,14 @@ import { SceneGraph } from '../SceneGraph';
 import { Mat4, Mat4Utils } from '../math';
 import { INITIAL_CAPACITY, MESH_TYPES } from '../constants';
 
+// --- CONFIGURATION INTERFACE ---
+export interface PostProcessConfig {
+    enabled: boolean;
+    vignetteStrength: number;   // 0.0 to 2.0
+    aberrationStrength: number; // 0.0 to 0.02
+    toneMapping: boolean;
+}
+
 const VS_TEMPLATE = `#version 300 es
 precision highp float;
 precision highp int;
@@ -18,6 +26,7 @@ layout(location=2) in mat4 a_model;
 layout(location=6) in vec3 a_color;
 layout(location=7) in float a_isSelected;
 layout(location=9) in float a_texIndex;
+layout(location=10) in float a_effectIndex;
 
 uniform mat4 u_viewProjection;
 uniform float u_time;
@@ -30,6 +39,7 @@ out vec3 v_color;
 out float v_isSelected;
 out vec2 v_uv;
 out float v_texIndex;
+out float v_effectIndex;
 
 // %VERTEX_LOGIC%
 
@@ -39,7 +49,6 @@ void main() {
     
     // Pre-calculate context variables for the graph
     // These names must match what NodeRegistry uses. 
-    // We assign directly to the varyings here to initialize them.
     vec3 v_pos_graph = a_position; 
     v_worldPos = (model * localPos).xyz;
     v_normal = mat3(model) * a_normal;
@@ -47,6 +56,7 @@ void main() {
     v_color = a_color;
     v_isSelected = a_isSelected;
     v_texIndex = a_texIndex;
+    v_effectIndex = a_effectIndex;
     
     vec3 vertexOffset = vec3(0.0);
     
@@ -75,10 +85,13 @@ in vec3 v_color;
 in float v_isSelected;
 in vec2 v_uv;
 in float v_texIndex;
+in float v_effectIndex;
 
 uniform sampler2DArray u_textures;
 
-out vec4 outColor;
+// MRT Output
+layout(location=0) out vec4 outColor;
+layout(location=1) out vec4 outData; // R=EffectID
 
 void main() {
     vec3 normal = normalize(v_normal);
@@ -94,13 +107,207 @@ void main() {
     vec3 ambient = vec3(0.3);
     
     vec3 finalAlbedo = v_color * texColor.rgb;
-    vec3 result = finalAlbedo * (ambient + diff); // Corrected lighting mix
+    vec3 result = finalAlbedo * (ambient + diff); 
     
     if (v_isSelected > 0.5) {
         result = mix(result, vec3(1.0, 1.0, 0.0), 0.3);
     }
     
     outColor = vec4(result, 1.0);
+    // Write Effect Index to Red channel of attachment 1. 
+    // Requires Floating Point Texture to store values > 1.0
+    outData = vec4(v_effectIndex, 0.0, 0.0, 1.0);
+}`;
+
+// --- POST PROCESS SHADERS ---
+
+const PP_VS = `#version 300 es
+layout(location=0) in vec2 a_pos;
+out vec2 v_uv;
+void main() {
+    v_uv = a_pos * 0.5 + 0.5;
+    gl_Position = vec4(a_pos, 0.0, 1.0);
+}`;
+
+const PP_FS = `#version 300 es
+precision mediump float;
+in vec2 v_uv;
+uniform sampler2D u_scene;
+uniform sampler2D u_data; // MRT Texture (R=EffectID)
+uniform vec2 u_resolution;
+uniform float u_time;
+
+// Config Uniforms
+uniform float u_enabled;
+uniform float u_vignetteStrength;
+uniform float u_aberrationStrength;
+uniform float u_toneMapping;
+
+out vec4 outColor;
+
+// ACES Tone Mapping
+vec3 aces(vec3 x) {
+  const float a = 2.51;
+  const float b = 0.03;
+  const float c = 2.43;
+  const float d = 0.59;
+  const float e = 0.14;
+  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
+// Effect 1: Pixelate
+vec3 applyPixelate(vec3 color, vec2 uv) {
+    float pixels = 64.0;
+    vec2 pUV = floor(uv * pixels) / pixels;
+    return texture(u_scene, pUV).rgb;
+}
+
+// Effect 2: Glitch / Offset
+vec3 applyGlitch(vec3 color, vec2 uv) {
+    float offset = sin(uv.y * 50.0 + u_time * 10.0) * 0.01;
+    float r = texture(u_scene, uv + vec2(offset, 0.0)).r;
+    float g = texture(u_scene, uv).g;
+    float b = texture(u_scene, uv - vec2(offset, 0.0)).b;
+    return vec3(r, g, b);
+}
+
+// Effect 3: Invert / Thermal
+vec3 applyInvert(vec3 color) {
+    vec3 inv = 1.0 - color;
+    // Tint slightly blue/orange for thermal feel
+    return mix(inv, vec3(0.0, 0.5, 1.0), 0.2);
+}
+
+// Effect 4: Grayscale
+vec3 applyGrayscale(vec3 color) {
+    float gray = dot(color, vec3(0.299, 0.587, 0.114));
+    return vec3(gray);
+}
+
+// Effect 5: Halftone (Comic)
+vec3 applyHalftone(vec3 color, vec2 uv) {
+    float gray = dot(color, vec3(0.299, 0.587, 0.114));
+    float scale = 120.0; // Dot density
+    
+    // Rotate 45 deg
+    float s = sin(0.785); float c = cos(0.785);
+    vec2 rotUV = mat2(c, -s, s, c) * (uv * u_resolution / u_resolution.y);
+    
+    vec2 nearest = 2.0 * fract(scale * rotUV) - 1.0;
+    float dist = length(nearest);
+    float radius = sqrt(1.0 - gray);
+    float dotPattern = step(radius, dist);
+    
+    return mix(vec3(0.1), vec3(1.0), dotPattern) * color;
+}
+
+// Effect 6: Cross Hatch (Sketch)
+vec3 applyCrossHatch(vec3 color, vec2 uv) {
+    float lum = dot(color, vec3(0.299, 0.587, 0.114));
+    vec3 outCol = vec3(1.0); // Paper white
+    
+    // Screen space coords for consistent hatch size
+    vec2 coord = gl_FragCoord.xy;
+    
+    if (lum < 0.8) {
+        if (mod(coord.x + coord.y, 10.0) == 0.0) outCol *= 0.6;
+    }
+    if (lum < 0.6) {
+        if (mod(coord.x - coord.y, 10.0) == 0.0) outCol *= 0.6;
+    }
+    if (lum < 0.4) {
+        if (mod(coord.x + coord.y - 5.0, 10.0) == 0.0) outCol *= 0.6;
+    }
+    if (lum < 0.2) {
+        if (mod(coord.x - coord.y - 5.0, 10.0) == 0.0) outCol *= 0.6;
+    }
+    
+    // Mix slightly with original color for flavor
+    return mix(outCol, color, 0.3);
+}
+
+// Effect 7: Posterize (Cel)
+vec3 applyPosterize(vec3 color) {
+    float steps = 4.0;
+    return floor(color * steps) / steps;
+}
+
+// Effect 8: Dither (Retro 1-bit)
+vec3 applyDither(vec3 color) {
+    float lum = dot(color, vec3(0.299, 0.587, 0.114));
+    // Bayer Matrix 4x4
+    int x = int(gl_FragCoord.x) % 4;
+    int y = int(gl_FragCoord.y) % 4;
+    float M[16] = float[](
+        0., 8., 2., 10.,
+        12., 4., 14., 6.,
+        3., 11., 1., 9.,
+        15., 7., 13., 5.
+    );
+    float threshold = M[y * 4 + x] / 16.0;
+    
+    return lum < threshold ? vec3(0.05, 0.15, 0.1) : vec3(0.6, 0.7, 0.5); // Gameboy greens
+}
+
+void main() {
+    vec3 color = texture(u_scene, v_uv).rgb;
+    
+    // Read Object ID / Effect ID from the Data Buffer
+    // ID is stored in Red channel.
+    float effectId = texture(u_data, v_uv).r;
+    
+    // Per-Object Effects (Integers 1..8)
+    // Tolerance for float comparison
+    if (effectId > 0.5 && effectId < 1.5) {
+        color = applyPixelate(color, v_uv);
+    } else if (effectId > 1.5 && effectId < 2.5) {
+        color = applyGlitch(color, v_uv);
+    } else if (effectId > 2.5 && effectId < 3.5) {
+        color = applyInvert(color);
+    } else if (effectId > 3.5 && effectId < 4.5) {
+        color = applyGrayscale(color);
+    } else if (effectId > 4.5 && effectId < 5.5) {
+        color = applyHalftone(color, v_uv);
+    } else if (effectId > 5.5 && effectId < 6.5) {
+        color = applyCrossHatch(color, v_uv);
+    } else if (effectId > 6.5 && effectId < 7.5) {
+        color = applyPosterize(color);
+    } else if (effectId > 7.5 && effectId < 8.5) {
+        color = applyDither(color);
+    }
+
+    if (u_enabled > 0.5) {
+        // 1. Chromatic Aberration
+        if (u_aberrationStrength > 0.0) {
+            float offset = u_aberrationStrength;
+            float r = texture(u_scene, v_uv + vec2(offset, 0.0)).r;
+            float b = texture(u_scene, v_uv - vec2(offset, 0.0)).b;
+            // Only apply aberration to base color, mix carefully
+            color.r = max(color.r, r);
+            color.b = max(color.b, b);
+        }
+
+        // 2. Vignette
+        if (u_vignetteStrength > 0.0) {
+            vec2 uv = v_uv * (1.0 - v_uv.yx);
+            float vig = uv.x * uv.y * 15.0;
+            vig = pow(vig, 0.15 * u_vignetteStrength);
+            color *= vig;
+        }
+
+        // 3. Tone Mapping (ACES)
+        if (u_toneMapping > 0.5) {
+            color = aces(color);
+        }
+
+        // 4. Gamma Correction
+        color = pow(color, vec3(1.0 / 2.2));
+    } else {
+        // Simple Gamma only for fair comparison, or raw linear if debugging
+        color = pow(color, vec3(1.0 / 2.2));
+    }
+
+    outColor = vec4(color, 1.0);
 }`;
 
 interface MeshBatch {
@@ -121,9 +328,28 @@ export class WebGLRenderer {
     meshes: Map<number, MeshBatch> = new Map();
     textureArray: WebGLTexture | null = null;
     
+    // Post Processing State
+    fbo: WebGLFramebuffer | null = null;
+    fboTexture: WebGLTexture | null = null;
+    fboDataTexture: WebGLTexture | null = null; // MRT Texture
+    depthRenderbuffer: WebGLRenderbuffer | null = null;
+    ppProgram: WebGLProgram | null = null;
+    quadVAO: WebGLVertexArrayObject | null = null;
+    
+    // Track FBO size to prevent unnecessary resizing
+    private fboWidth: number = 0;
+    private fboHeight: number = 0;
+    
     drawCalls = 0;
     triangleCount = 0;
     showGrid = true;
+    
+    ppConfig: PostProcessConfig = {
+        enabled: true,
+        vignetteStrength: 1.0,
+        aberrationStrength: 0.002,
+        toneMapping: true
+    };
     
     // Render Buckets: Map<MaterialID, Array<EntityIndex>>
     // Reused per frame to avoid allocation
@@ -132,7 +358,7 @@ export class WebGLRenderer {
     init(canvas: HTMLCanvasElement) {
         this.gl = canvas.getContext('webgl2', { 
             alpha: false, 
-            antialias: true, 
+            antialias: false, // Turn off MSAA for manual post-process pipeline (or handle MSAA FBOs)
             powerPreference: "high-performance" 
         });
         
@@ -142,6 +368,13 @@ export class WebGLRenderer {
         }
 
         const gl = this.gl;
+        
+        // CRITICAL: Enable Floating Point Textures for MRT (Effect IDs > 1.0)
+        const ext = gl.getExtension("EXT_color_buffer_float");
+        if (!ext) {
+            console.warn("EXT_color_buffer_float not supported! Per-object effects may be clamped.");
+        }
+
         gl.enable(gl.DEPTH_TEST);
         gl.disable(gl.CULL_FACE); 
         gl.clearColor(0.1, 0.1, 0.1, 1.0);
@@ -150,11 +383,117 @@ export class WebGLRenderer {
         const defaultVS = VS_TEMPLATE.replace('// %VERTEX_LOGIC%', '').replace('// %VERTEX_BODY%', '');
         this.defaultProgram = this.createProgram(gl, defaultVS, FS_DEFAULT_SOURCE);
         this.initTextureArray(gl);
+        this.initPostProcess(gl);
         
         // Register Default Primitives
         this.registerMesh(MESH_TYPES['Cube'], this.createCubeData());
         this.registerMesh(MESH_TYPES['Sphere'], this.createSphereData(24, 16));
         this.registerMesh(MESH_TYPES['Plane'], this.createPlaneData());
+    }
+
+    initPostProcess(gl: WebGL2RenderingContext) {
+        // Initialize with 1x1 to ensure FBO is complete immediately. 
+        // Real size comes in `resize()` later.
+        this.fboWidth = 1;
+        this.fboHeight = 1;
+
+        // 1. Create Framebuffer Resources
+        this.fbo = gl.createFramebuffer();
+        this.fboTexture = gl.createTexture();
+        this.fboDataTexture = gl.createTexture(); // MRT
+        this.depthRenderbuffer = gl.createRenderbuffer();
+
+        // Main Color Texture (Standard 8-bit RGBA)
+        gl.bindTexture(gl.TEXTURE_2D, this.fboTexture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.fboWidth, this.fboHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+        // Data Texture (RGBA32F - Float Texture to support ID > 1.0)
+        // Using Nearest filter to strictly preserve integer IDs
+        gl.bindTexture(gl.TEXTURE_2D, this.fboDataTexture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.fboWidth, this.fboHeight, 0, gl.RGBA, gl.FLOAT, null);
+        
+        // Depth Renderbuffer
+        gl.bindRenderbuffer(gl.RENDERBUFFER, this.depthRenderbuffer);
+        gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, this.fboWidth, this.fboHeight);
+        
+        // Attach to FBO
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.fboTexture, 0);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.fboDataTexture, 0); 
+        gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.depthRenderbuffer);
+        
+        // Tell WebGL to draw to both attachments
+        gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+        
+        // Verify Status
+        const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+        if (status !== gl.FRAMEBUFFER_COMPLETE) {
+            console.error("FBO Incomplete at init:", status);
+        }
+        
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+        // 2. Create Fullscreen Quad
+        this.quadVAO = gl.createVertexArray();
+        const quadVBO = gl.createBuffer();
+        gl.bindVertexArray(this.quadVAO);
+        gl.bindBuffer(gl.ARRAY_BUFFER, quadVBO);
+        const verts = new Float32Array([ -1, -1,  1, -1,  -1, 1,  1, 1 ]);
+        gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+        gl.bindVertexArray(null);
+
+        // 3. Compile Post Process Shader
+        this.ppProgram = this.createProgram(gl, PP_VS, PP_FS);
+    }
+
+    resize(w: number, h: number) { 
+        if(!this.gl) return;
+        const gl = this.gl;
+        
+        // Ensure valid positive dimensions
+        w = Math.max(1, w);
+        h = Math.max(1, h);
+
+        // Update Canvas size
+        if (gl.canvas.width !== w || gl.canvas.height !== h) {
+            gl.canvas.width = w;
+            gl.canvas.height = h;
+        }
+        
+        // Resize FBO attachments if dimensions changed
+        if (this.fboWidth !== w || this.fboHeight !== h) {
+            this.fboWidth = w;
+            this.fboHeight = h;
+
+            if (this.fboTexture && this.fboDataTexture && this.depthRenderbuffer && this.fbo) {
+                // Resize Color
+                gl.bindTexture(gl.TEXTURE_2D, this.fboTexture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                
+                // Resize Data (Keep using Float32)
+                gl.bindTexture(gl.TEXTURE_2D, this.fboDataTexture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, null);
+                
+                gl.bindRenderbuffer(gl.RENDERBUFFER, this.depthRenderbuffer);
+                gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
+                
+                // Re-validate just in case
+                gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
+                const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+                if (status !== gl.FRAMEBUFFER_COMPLETE) console.error("FBO Incomplete after resize", status);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            }
+        }
     }
 
     updateMaterial(materialId: number, shaderData: { vs: string, fs: string } | string) {
@@ -177,26 +516,6 @@ export class WebGLRenderer {
             fsSource = shaderData;
         } else {
             // Full Compilation
-            // The compiler returns the body logic. We need to split it if it contains functions vs body.
-            // But currently the compiler returns full formatted blocks.
-            // Let's assume the compiler returns code that fits into the template placeholders.
-            
-            // Actually, the compiler currently returns a full string with functions and body mixed.
-            // We need to inject the compiler's VS output into the template.
-            
-            // The compiler's `vs` string looks like:
-            // // --- Global Functions ---
-            // func() {}
-            // // --- Graph Body ---
-            // logic...
-            // vertexOffset = ...
-            
-            // We can treat the whole thing as body + functions, but functions can't be inside main().
-            // So we need to split it manually or rely on the compiler structure.
-            
-            // HACK: The compiler returns the whole block.
-            // We'll split by "// --- Graph Body (VS) ---"
-            
             const parts = shaderData.vs.split('// --- Graph Body (VS) ---');
             const functions = parts[0] || '';
             const body = parts[1] || '';
@@ -216,8 +535,8 @@ export class WebGLRenderer {
     }
 
     ensureCapacity(count: number) {
-        // Stride is 21 floats per instance
-        const stride = 21;
+        // Stride is now 22 floats per instance (added effectIndex)
+        const stride = 22;
         const requiredSize = count * stride;
 
         this.meshes.forEach(mesh => {
@@ -311,14 +630,15 @@ export class WebGLRenderer {
         createBuffer(gl.ELEMENT_ARRAY_BUFFER, data.indices);
 
         // Instance Buffer Setup
-        const initialCapacity = INITIAL_CAPACITY * 21; 
+        // Increased stride to 22 floats
+        const initialCapacity = INITIAL_CAPACITY * 22; 
         const instBuf = gl.createBuffer();
         const cpuBuffer = new Float32Array(initialCapacity);
         
         gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
         gl.bufferData(gl.ARRAY_BUFFER, cpuBuffer.byteLength, gl.DYNAMIC_DRAW);
         
-        const stride = 21 * 4; 
+        const stride = 22 * 4; 
         for (let i = 0; i < 4; i++) {
             const loc = 2 + i;
             gl.enableVertexAttribArray(loc);
@@ -326,17 +646,25 @@ export class WebGLRenderer {
             gl.vertexAttribDivisor(loc, 1);
         }
         
+        // Color
         gl.enableVertexAttribArray(6);
         gl.vertexAttribPointer(6, 3, gl.FLOAT, false, stride, 16 * 4);
         gl.vertexAttribDivisor(6, 1);
         
+        // isSelected
         gl.enableVertexAttribArray(7);
         gl.vertexAttribPointer(7, 1, gl.FLOAT, false, stride, 19 * 4);
         gl.vertexAttribDivisor(7, 1);
         
+        // texIndex
         gl.enableVertexAttribArray(9);
         gl.vertexAttribPointer(9, 1, gl.FLOAT, false, stride, 20 * 4);
         gl.vertexAttribDivisor(9, 1);
+
+        // effectIndex (Loc 10)
+        gl.enableVertexAttribArray(10);
+        gl.vertexAttribPointer(10, 1, gl.FLOAT, false, stride, 21 * 4);
+        gl.vertexAttribDivisor(10, 1);
 
         gl.bindVertexArray(null);
         gl.bindBuffer(gl.ARRAY_BUFFER, null); 
@@ -420,16 +748,17 @@ export class WebGLRenderer {
     }
 
     render(store: ComponentStorage, count: number, selectedIndices: Set<number>, viewProjection: Mat4, width: number, height: number, cameraPos: {x:number,y:number,z:number}) {
-        if (!this.gl || !this.defaultProgram) return;
+        if (!this.gl || !this.defaultProgram || !this.fbo) return;
         const gl = this.gl;
         
-        if (gl.canvas.width !== width || gl.canvas.height !== height) {
-            gl.canvas.width = width;
-            gl.canvas.height = height;
-            gl.viewport(0, 0, width, height);
-        }
-
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        // 1. Pass: Render Scene to Framebuffer
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
+        gl.viewport(0, 0, this.fboWidth, this.fboHeight); // Use FBO dims
+        
+        // Clear Color and Data buffers
+        gl.clearBufferfv(gl.COLOR, 0, [0.1, 0.1, 0.1, 1.0]); 
+        gl.clearBufferfv(gl.COLOR, 1, [0.0, 0.0, 0.0, 0.0]); 
+        gl.clear(gl.DEPTH_BUFFER_BIT);
         
         // --- 1. Bucket Sort Entities by Material ---
         // Reuse map arrays to prevent GC
@@ -472,8 +801,9 @@ export class WebGLRenderer {
             const uTime = gl.getUniformLocation(program, 'u_time');
             if (uTime) gl.uniform1f(uTime, performance.now() / 1000);
 
+            // Note: Use actual drawing resolution, which matches FBO size here
             const uRes = gl.getUniformLocation(program, 'u_resolution');
-            if (uRes) gl.uniform2f(uRes, width, height);
+            if (uRes) gl.uniform2f(uRes, this.fboWidth, this.fboHeight);
             
             const uCam = gl.getUniformLocation(program, 'u_cameraPos');
             if (uCam) gl.uniform3f(uCam, cameraPos.x, cameraPos.y, cameraPos.z);
@@ -496,7 +826,8 @@ export class WebGLRenderer {
                 const mesh = this.meshes.get(type);
                 
                 if (mesh) {
-                    const ptr = mesh.instanceCount * 21;
+                    // Stride is 22 floats
+                    const ptr = mesh.instanceCount * 22;
                     const start = index * 16;
                     const buf = mesh.cpuBuffer;
 
@@ -507,6 +838,7 @@ export class WebGLRenderer {
                     buf[ptr + 18] = store.colorB[index];
                     buf[ptr + 19] = selectedIndices.has(index) ? 1.0 : 0.0;
                     buf[ptr + 20] = store.textureIndex[index];
+                    buf[ptr + 21] = store.effectIndex[index];
                     
                     mesh.instanceCount++;
                 }
@@ -518,7 +850,7 @@ export class WebGLRenderer {
                     gl.bindVertexArray(mesh.vao);
                     gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
                     
-                    gl.bufferSubData(gl.ARRAY_BUFFER, 0, mesh.cpuBuffer.subarray(0, mesh.instanceCount * 21));
+                    gl.bufferSubData(gl.ARRAY_BUFFER, 0, mesh.cpuBuffer.subarray(0, mesh.instanceCount * 22));
                     
                     gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, mesh.instanceCount);
                     
@@ -529,13 +861,50 @@ export class WebGLRenderer {
         });
 
         gl.bindVertexArray(null);
-    }
-    
-    resize(w: number, h: number) { 
-        if(this.gl) {
-            this.gl.canvas.width = w;
-            this.gl.canvas.height = h;
-            this.gl.viewport(0, 0, w, h); 
+        
+        // 2. Pass: Post Processing (Composite to Screen)
+        if (this.ppProgram && this.quadVAO && this.fboTexture && this.fboDataTexture) {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null); // Back to Screen
+            gl.viewport(0, 0, width, height); // Canvas size
+            gl.clearColor(0,0,0,1);
+            gl.clear(gl.COLOR_BUFFER_BIT); 
+            
+            gl.useProgram(this.ppProgram);
+            
+            // Pass Toggle State
+            const uEnabled = gl.getUniformLocation(this.ppProgram, 'u_enabled');
+            if (uEnabled) gl.uniform1f(uEnabled, this.ppConfig.enabled ? 1.0 : 0.0);
+            
+            const uTime = gl.getUniformLocation(this.ppProgram, 'u_time');
+            if (uTime) gl.uniform1f(uTime, performance.now() / 1000);
+            
+            const uVig = gl.getUniformLocation(this.ppProgram, 'u_vignetteStrength');
+            if (uVig) gl.uniform1f(uVig, this.ppConfig.vignetteStrength);
+            
+            const uAberration = gl.getUniformLocation(this.ppProgram, 'u_aberrationStrength');
+            if (uAberration) gl.uniform1f(uAberration, this.ppConfig.aberrationStrength);
+            
+            const uTone = gl.getUniformLocation(this.ppProgram, 'u_toneMapping');
+            if (uTone) gl.uniform1f(uTone, this.ppConfig.toneMapping ? 1.0 : 0.0);
+            
+            // Bind the FBO texture
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, this.fboTexture);
+            const uScene = gl.getUniformLocation(this.ppProgram, 'u_scene');
+            if (uScene) gl.uniform1i(uScene, 0);
+            
+            // Bind Data Texture
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, this.fboDataTexture);
+            const uData = gl.getUniformLocation(this.ppProgram, 'u_data');
+            if (uData) gl.uniform1i(uData, 1);
+            
+            const uRes = gl.getUniformLocation(this.ppProgram, 'u_resolution');
+            if (uRes) gl.uniform2f(uRes, width, height);
+
+            gl.bindVertexArray(this.quadVAO);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            gl.bindVertexArray(null);
         }
     }
 }

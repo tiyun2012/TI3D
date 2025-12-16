@@ -1,9 +1,10 @@
 
-import React, { useContext } from 'react';
+import React, { useContext, useState } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
 import { GizmoArrowShape, GizmoCenterShape, GizmoPlaneShape } from './gizmos/GizmoUtils';
 import { Icon } from './Icon';
 import { Slider } from './ui/Slider';
+import { engineInstance } from '../services/engine';
 
 interface Props {
   onClose: () => void;
@@ -35,6 +36,7 @@ const SelectionCard: React.FC<{
 
 export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   const { gizmoConfig, setGizmoConfig, uiConfig, setUiConfig } = useContext(EditorContext)!;
+  const [ppConfig, setPpConfig] = useState(engineInstance.getPostProcessConfig());
 
   const setArrowShape = (shape: GizmoArrowShape) => setGizmoConfig({ ...gizmoConfig, translationShape: shape });
   const setCenterShape = (shape: GizmoCenterShape) => setGizmoConfig({ ...gizmoConfig, centerHandleShape: shape });
@@ -45,6 +47,12 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   const updateConfig = (key: keyof typeof gizmoConfig, value: any) => setGizmoConfig({ ...gizmoConfig, [key]: value });
   
   const updateUiConfig = (key: keyof typeof uiConfig, value: any) => setUiConfig({ ...uiConfig, [key]: value });
+
+  const updatePp = (key: string, val: any) => {
+      const newConfig = { ...ppConfig, [key]: val };
+      setPpConfig(newConfig);
+      engineInstance.setPostProcessConfig(newConfig);
+  };
 
   // Minimal SVG Previews for UI
   const PreviewCone = <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L4 22h16L12 2z"/></svg>;
@@ -115,6 +123,55 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                         </div>
                     </div>
                 </div>
+            </div>
+
+            {/* Section: Rendering Settings (NEW) */}
+            <div className="space-y-3">
+                <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
+                    <Icon name="Aperture" size={12} /> Post Processing
+                </h3>
+                <div className="flex items-center justify-between bg-input-bg p-3 rounded border border-white/5">
+                    <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Master Switch</span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" className="sr-only peer" checked={ppConfig.enabled} onChange={(e) => updatePp('enabled', e.target.checked)} />
+                        <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
+                    </label>
+                </div>
+                
+                {ppConfig.enabled && (
+                    <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                        <Slider 
+                            label="Vignette"
+                            value={ppConfig.vignetteStrength}
+                            onChange={(v) => updatePp('vignetteStrength', v)}
+                            min={0} max={2.0} step={0.1}
+                        />
+                        <div className="bg-input-bg p-3 rounded border border-white/5 flex flex-col justify-between">
+                             <div className="flex justify-between items-center mb-2">
+                                <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Chromatic</span>
+                                <span className="text-[10px] font-mono text-white">{ppConfig.aberrationStrength.toFixed(3)}</span>
+                            </div>
+                            <input 
+                                type="range" 
+                                min="0" max="0.01" step="0.001" 
+                                value={ppConfig.aberrationStrength} 
+                                onChange={(e) => updatePp('aberrationStrength', parseFloat(e.target.value))}
+                                className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:bg-accent"
+                            />
+                        </div>
+                        
+                        <div className="flex items-center justify-between bg-input-bg p-3 rounded border border-white/5 col-span-2">
+                            <div className="flex flex-col">
+                                <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">ACES Tone Mapping</span>
+                                <span className="text-[9px] text-text-secondary opacity-60">Filmic color grading curve</span>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" className="sr-only peer" checked={ppConfig.toneMapping} onChange={(e) => updatePp('toneMapping', e.target.checked)} />
+                                <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
+                            </label>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Section: Gizmo Arrows */}

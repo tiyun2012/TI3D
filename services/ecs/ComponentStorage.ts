@@ -32,6 +32,7 @@ export class ComponentStorage {
     meshType = new Int32Array(this.capacity); 
     textureIndex = new Float32Array(this.capacity);
     materialIndex = new Int32Array(this.capacity); // ID from AssetManager
+    effectIndex = new Float32Array(this.capacity); // 0=None, 1=Pixelate, 2=Glitch, 3=Invert
     
     colorR = new Float32Array(this.capacity);
     colorG = new Float32Array(this.capacity);
@@ -175,6 +176,7 @@ export class ComponentStorage {
         this.meshType = resizeInt32(this.meshType);
         this.textureIndex = resizeFloat(this.textureIndex);
         this.materialIndex = resizeInt32(this.materialIndex);
+        this.effectIndex = resizeFloat(this.effectIndex);
         
         this.colorR = resizeFloat(this.colorR);
         this.colorG = resizeFloat(this.colorG);
@@ -210,6 +212,7 @@ export class ComponentStorage {
             meshType: new Int32Array(this.meshType),
             textureIndex: new Float32Array(this.textureIndex),
             materialIndex: new Int32Array(this.materialIndex),
+            effectIndex: new Float32Array(this.effectIndex),
             colorR: new Float32Array(this.colorR), colorG: new Float32Array(this.colorG), colorB: new Float32Array(this.colorB),
             mass: new Float32Array(this.mass),
             useGravity: new Uint8Array(this.useGravity),
@@ -233,6 +236,7 @@ export class ComponentStorage {
         this.meshType.set(snap.meshType);
         this.textureIndex.set(snap.textureIndex);
         if(snap.materialIndex) this.materialIndex.set(snap.materialIndex);
+        if(snap.effectIndex) this.effectIndex.set(snap.effectIndex);
         
         this.colorR.set(snap.colorR); this.colorG.set(snap.colorG); this.colorB.set(snap.colorB);
         

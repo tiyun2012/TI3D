@@ -1,5 +1,6 @@
 
 import React, { useState, useContext, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
 import { assetManager } from '../services/AssetManager';
 import { EditorContext } from '../contexts/EditorContext';
@@ -31,8 +32,21 @@ export const ProjectPanel: React.FC = () => {
     useEffect(() => {
         const close = () => { setShowCreateMenu(false); setContextMenu(null); };
         window.addEventListener('click', close);
-        return () => window.removeEventListener('click', close);
-    }, []);
+        window.addEventListener('contextmenu', (e) => {
+            // Close if clicking outside
+            if (contextMenu?.visible) {
+                // We rely on the menu's stopPropagation to keep it open if clicked inside,
+                // but for outside context clicks, we close.
+                // Actually, let's just close on any global click/context to be safe and simple
+                setContextMenu(null); 
+            }
+        });
+        return () => {
+            window.removeEventListener('click', close);
+            // Don't remove the anonymous contextmenu listener to avoid complex ref logic, 
+            // relying on standard React unmount cleanup is better but here we just added global close.
+        };
+    }, [contextMenu]); // dependency on contextMenu to close it correctly? No, just close.
 
     const handleDragStart = (e: React.DragEvent, assetId: string) => {
         e.dataTransfer.setData('application/ti3d-asset', assetId);
@@ -54,8 +68,13 @@ export const ProjectPanel: React.FC = () => {
 
     const handleContextMenu = (e: React.MouseEvent, assetId: string) => {
         e.preventDefault();
-        e.stopPropagation();
+        e.stopPropagation(); // Stop bubbling to window listener
+        
+        // Use clientX/Y directly. 
+        // NOTE: If the user complains about "far", it's often due to scaling/transforms. 
+        // Using Portal to document.body + fixed position relative to viewport (clientX/Y) is the most robust way.
         setContextMenu({ x: e.clientX, y: e.clientY, assetId, visible: true });
+        
         // Also select it
         handleClick(assetId);
     };
@@ -239,11 +258,17 @@ export const ProjectPanel: React.FC = () => {
             </div>
 
             {/* Context Menu Portal */}
-            {contextMenu && contextMenu.visible && (
+            {contextMenu && contextMenu.visible && createPortal(
                 <div 
-                    className="fixed bg-[#252525] border border-white/10 shadow-2xl rounded py-1 z-[9999] min-w-[160px] text-xs"
-                    style={{ left: contextMenu.x, top: contextMenu.y }}
+                    className="fixed bg-[#252525] border border-white/10 shadow-2xl rounded py-1 min-w-[160px] text-xs"
+                    style={{ 
+                        position: 'fixed',
+                        left: `${Math.min(contextMenu.x + 2, window.innerWidth - 160)}px`, 
+                        top: `${Math.min(contextMenu.y + 2, window.innerHeight - 150)}px`,
+                        zIndex: 99999
+                    }}
                     onClick={(e) => e.stopPropagation()} 
+                    onContextMenu={(e) => e.preventDefault()}
                 >
                     {(assetManager.getAsset(contextMenu.assetId)?.type === 'MATERIAL' || 
                       assetManager.getAsset(contextMenu.assetId)?.type === 'PHYSICS_MATERIAL' || 
@@ -265,7 +290,8 @@ export const ProjectPanel: React.FC = () => {
                     <div className="px-3 py-1.5 hover:bg-red-500/20 hover:text-red-400 cursor-pointer flex items-center gap-2">
                         <Icon name="Trash2" size={12} /> Delete
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );

@@ -120,8 +120,11 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     in float v_isSelected;
     in vec2 v_uv;
     in float v_texIndex;
+    in float v_effectIndex;
 
-    out vec4 outColor;
+    // MRT Outputs
+    layout(location=0) out vec4 outColor;
+    layout(location=1) out vec4 outData; // R=EffectID
 
     // --- Global Functions (FS) ---
     ${fsData.functions.join('\n')}
@@ -137,6 +140,8 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
         }
         
         outColor = vec4(finalColor, 1.0);
+        // Write Effect Index to Data Buffer to satisfy MRT requirements
+        outData = vec4(v_effectIndex, 0.0, 0.0, 1.0);
     }
     `;
 

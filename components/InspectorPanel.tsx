@@ -154,6 +154,18 @@ const ComponentCard: React.FC<{
       onCommit();
   };
 
+  const effects = [
+      { label: 'None', value: 0 },
+      { label: 'Pixelate', value: 1 },
+      { label: 'Glitch', value: 2 },
+      { label: 'Invert', value: 3 },
+      { label: 'Grayscale', value: 4 },
+      { label: 'Halftone (Comic)', value: 5 },
+      { label: 'Cross-Hatch', value: 6 },
+      { label: 'Posterize (Cel)', value: 7 },
+      { label: 'Dither (Retro)', value: 8 }
+  ];
+
   return (
     <div className="bg-panel-header border-b border-black/20">
       {/* Header */}
@@ -270,6 +282,20 @@ const ComponentCard: React.FC<{
                     </div>
                  </>
              )}
+             
+             {/* Post Process Effect Selection */}
+             <div className="border-t border-white/5 my-1"></div>
+             <div className="flex items-center gap-2">
+                <span className="w-24 text-text-secondary">Post FX</span>
+                <div className="flex-1">
+                   <Select 
+                      icon="Wand2"
+                      value={component.effectIndex || 0}
+                      options={effects}
+                      onChange={(v) => handleAtomicChange('effectIndex', v)}
+                   />
+                </div>
+             </div>
 
              <div className="border-t border-white/5 my-1"></div>
              <div className="flex items-center gap-2">

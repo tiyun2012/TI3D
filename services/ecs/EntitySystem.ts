@@ -49,6 +49,7 @@ export class SoAEntitySystem {
         this.store.rotationOrder[index] = 0; // Default XYZ
         this.store.meshType[index] = 0;
         this.store.textureIndex[index] = 0;
+        this.store.effectIndex[index] = 0; // None
         this.store.colorR[index] = 1; this.store.colorG[index] = 1; this.store.colorB[index] = 1;
         this.store.physicsMaterialIndex[index] = 0;
         this.store.materialIndex[index] = 0;
@@ -137,6 +138,8 @@ export class SoAEntitySystem {
                     set meshType(v: string) { store.meshType[index] = MESH_TYPES[v] || 0; },
                     get textureIndex() { return store.textureIndex[index]; },
                     set textureIndex(v: number) { store.textureIndex[index] = v; },
+                    get effectIndex() { return store.effectIndex[index]; },
+                    set effectIndex(v: number) { store.effectIndex[index] = v; },
                     get color() { 
                         const r = Math.floor(store.colorR[index] * 255);
                         const g = Math.floor(store.colorG[index] * 255);
@@ -213,6 +216,7 @@ export class SoAEntitySystem {
                 meshType: Array.from(this.store.meshType.subarray(0, this.count + 1)),
                 textureIndex: Array.from(this.store.textureIndex.subarray(0, this.count + 1)),
                 materialIndex: Array.from(this.store.materialIndex.subarray(0, this.count + 1)),
+                effectIndex: Array.from(this.store.effectIndex.subarray(0, this.count + 1)),
                 colorR: Array.from(this.store.colorR.subarray(0, this.count + 1)),
                 colorG: Array.from(this.store.colorG.subarray(0, this.count + 1)),
                 colorB: Array.from(this.store.colorB.subarray(0, this.count + 1)),
@@ -260,6 +264,7 @@ export class SoAEntitySystem {
             fill(this.store.meshType, data.store.meshType);
             fill(this.store.textureIndex, data.store.textureIndex);
             fill(this.store.materialIndex, data.store.materialIndex);
+            fill(this.store.effectIndex, data.store.effectIndex);
             
             fill(this.store.colorR, data.store.colorR);
             fill(this.store.colorG, data.store.colorG);

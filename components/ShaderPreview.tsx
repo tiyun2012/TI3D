@@ -13,6 +13,7 @@ out vec3 v_worldPos;
 out vec3 v_color;
 out float v_isSelected;
 out float v_texIndex;
+out float v_effectIndex;
 
 void main() {
     v_uv = a_uv;
@@ -23,6 +24,7 @@ void main() {
     v_color = vec3(1.0);
     v_isSelected = 0.0;
     v_texIndex = 0.0;
+    v_effectIndex = 0.0;
 
     gl_Position = vec4(a_pos, 1.0);
 }`;

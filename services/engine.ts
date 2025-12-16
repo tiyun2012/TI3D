@@ -6,7 +6,7 @@ import { SceneGraph } from './SceneGraph';
 import { Mat4, Mat4Utils, RayUtils, Vec3Utils, TMP_MAT4_1, TMP_MAT4_2 } from './math';
 import { NodeRegistry, NodeDef } from './NodeRegistry';
 import { DebugRenderer } from './renderers/DebugRenderer';
-import { WebGLRenderer } from './renderers/WebGLRenderer';
+import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { SoAEntitySystem } from './ecs/EntitySystem';
 import { PhysicsSystem } from './systems/PhysicsSystem';
 import { HistorySystem } from './systems/HistorySystem';
@@ -116,6 +116,15 @@ export class Ti3DEngine {
   toggleGrid() {
       this.renderer.showGrid = !this.renderer.showGrid;
       this.notifyUI();
+  }
+  
+  setPostProcessConfig(config: Partial<PostProcessConfig>) {
+      this.renderer.ppConfig = { ...this.renderer.ppConfig, ...config };
+      this.notifyUI();
+  }
+  
+  getPostProcessConfig() {
+      return this.renderer.ppConfig;
   }
 
   // --- Material Management ---
