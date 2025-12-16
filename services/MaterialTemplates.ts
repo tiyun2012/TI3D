@@ -36,7 +36,8 @@ vec2 offset = vec2(cos(theta), sin(theta)) * 0.3;
 float d = length(a.xy - 0.5 - offset);
 
 // Color variation based on index
-vec3 col = 0.5 + 0.5 * cos(vec3(0,2,4) + index);
+// Use floats (0.0, 2.0, 4.0) explicitly
+vec3 col = 0.5 + 0.5 * cos(vec3(0.0, 2.0, 4.0) + index);
 
 // Accumulate light (1/d falloff)
 acc += (vec3(0.015) / (d + 0.001)) * col;

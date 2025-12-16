@@ -78,6 +78,7 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     // Assembly
     return `#version 300 es
     precision mediump float;
+    precision mediump sampler2DArray;
     
     uniform float u_time;
     uniform vec2 u_resolution;

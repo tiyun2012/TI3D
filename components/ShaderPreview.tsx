@@ -1,5 +1,5 @@
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { engineInstance } from '../services/engine';
 
 const VERTEX_SHADER = `#version 300 es
@@ -26,6 +26,7 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ minimal = false })
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const requestRef = useRef<number>(0);
     const programRef = useRef<WebGLProgram | null>(null);
+    const [error, setError] = useState<string | null>(null);
     
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -69,8 +70,9 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ minimal = false })
             gl.compileShader(fs);
             
             if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
-                // If compilation fails, keep using the old program if it exists
-                // console.warn("Shader Preview Compile Error:", gl.getShaderInfoLog(fs));
+                const log = gl.getShaderInfoLog(fs);
+                console.error("Shader Compile Error:", log);
+                setError(log);
                 return; 
             }
 
@@ -80,12 +82,16 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ minimal = false })
             gl.linkProgram(p);
 
             if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+                const log = gl.getProgramInfoLog(p);
+                console.error("Program Link Error:", log);
+                setError(log);
                 return;
             }
 
             // Safe swap: Only delete old program AFTER new one is ready
             if (programRef.current) gl.deleteProgram(programRef.current);
             programRef.current = p;
+            setError(null);
         };
 
         compile(FALLBACK_FRAGMENT);
@@ -148,6 +154,16 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ minimal = false })
                     ref={canvasRef} 
                     className="absolute inset-0 w-full h-full block" 
                 />
+                
+                {error && (
+                    <div className="absolute inset-0 bg-red-900/90 text-white p-2 font-mono text-[10px] overflow-auto whitespace-pre-wrap scrollbar-thin scrollbar-thumb-white/20">
+                        <div className="font-bold border-b border-white/20 mb-1 pb-1 flex justify-between items-center">
+                            <span>SHADER ERROR</span>
+                            <button onClick={() => setError(null)} className="text-white/50 hover:text-white">✕</button>
+                        </div>
+                        {error}
+                    </div>
+                )}
             </div>
         </div>
     );
