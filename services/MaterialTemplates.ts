@@ -33,6 +33,37 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
         ]
     },
     {
+        name: 'Radial Circle',
+        description: 'A soft circle using Distance and SmoothStep.',
+        nodes: [
+            { id: 'uv', type: 'UV', position: { x: 50, y: 150 } },
+            { id: 'center', type: 'Vec3', position: { x: 50, y: 300 }, data: { x: '0.5', y: '0.5', z: '0.0' } },
+            { id: 'dist', type: 'Distance', position: { x: 250, y: 200 } },
+            { id: 'edge0', type: 'Float', position: { x: 300, y: 350 }, data: { value: '0.45' } },
+            { id: 'edge1', type: 'Float', position: { x: 300, y: 450 }, data: { value: '0.40' } },
+            { id: 'smooth', type: 'SmoothStep', position: { x: 500, y: 200 } },
+            { id: 'color', type: 'Vec3', position: { x: 500, y: 50 }, data: { x: '1.0', y: '0.2', z: '0.5' } },
+            { id: 'mult', type: 'Mix', position: { x: 700, y: 150 } }, // Mix as multiply (a*t + b*(1-t)) or just use Multiply node?
+                                                                        // Wait, Mix is lerp. To tint, we want (Color * Mask). 
+                                                                        // We don't have Vec3 * Float multiply yet.
+                                                                        // Let's use Mix(Black, Color, Mask).
+            { id: 'black', type: 'Vec3', position: { x: 500, y: 400 }, data: { x: '0.0', y: '0.0', z: '0.0' } },
+            { id: 'mix_col', type: 'Mix', position: { x: 750, y: 200 } },
+            { id: 'out', type: 'ShaderOutput', position: { x: 950, y: 200 } }
+        ],
+        connections: [
+            { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'dist', toPin: 'a' },
+            { id: 'c2', fromNode: 'center', fromPin: 'out', toNode: 'dist', toPin: 'b' },
+            { id: 'c3', fromNode: 'edge0', fromPin: 'out', toNode: 'smooth', toPin: 'e0' },
+            { id: 'c4', fromNode: 'edge1', fromPin: 'out', toNode: 'smooth', toPin: 'e1' },
+            { id: 'c5', fromNode: 'dist', fromPin: 'out', toNode: 'smooth', toPin: 'x' },
+            { id: 'c6', fromNode: 'black', fromPin: 'out', toNode: 'mix_col', toPin: 'a' },
+            { id: 'c7', fromNode: 'color', fromPin: 'out', toNode: 'mix_col', toPin: 'b' },
+            { id: 'c8', fromNode: 'smooth', fromPin: 'out', toNode: 'mix_col', toPin: 't' },
+            { id: 'c9', fromNode: 'mix_col', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
+        ]
+    },
+    {
         name: 'Moving Sine Gradient',
         description: 'A smooth gradient wave moving horizontally.',
         nodes: [

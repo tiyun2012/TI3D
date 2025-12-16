@@ -191,6 +191,97 @@ export const NodeRegistry: Record<string, NodeDef> = {
     execute: (inputs) => (inputs[0] || 0) * (inputs[1] || 0),
     glsl: (inVars, id) => `float ${id} = ${inVars[0] || '0.0'} * ${inVars[1] || '1.0'};`
   },
+
+  'Abs': {
+      type: 'Abs',
+      category: 'Math',
+      title: 'Abs',
+      inputs: [{ id: 'in', name: 'In', type: 'float' }],
+      outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+      execute: (i) => Math.abs(i[0]||0),
+      glsl: (inVars, id) => `float ${id} = abs(${inVars[0]||'0.0'});`
+  },
+
+  'Clamp': {
+      type: 'Clamp',
+      category: 'Math',
+      title: 'Clamp',
+      inputs: [
+          { id: 'x', name: 'X', type: 'float' },
+          { id: 'min', name: 'Min', type: 'float' },
+          { id: 'max', name: 'Max', type: 'float' }
+      ],
+      outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+      execute: (inputs) => Math.max(inputs[1]||0, Math.min(inputs[2]||1, inputs[0]||0)),
+      glsl: (inVars, id) => `float ${id} = clamp(${inVars[0]||'0.0'}, ${inVars[1]||'0.0'}, ${inVars[2]||'1.0'});`
+  },
+
+  'SmoothStep': {
+      type: 'SmoothStep',
+      category: 'Math',
+      title: 'SmoothStep',
+      inputs: [
+          { id: 'e0', name: 'Edge0', type: 'float' },
+          { id: 'e1', name: 'Edge1', type: 'float' },
+          { id: 'x', name: 'X', type: 'float' }
+      ],
+      outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+      execute: (inputs) => {
+          const e0 = inputs[0] || 0;
+          const e1 = inputs[1] || 1;
+          const x = inputs[2] || 0;
+          const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
+          return t * t * (3 - 2 * t);
+      },
+      glsl: (inVars, id) => `float ${id} = smoothstep(${inVars[0] || '0.0'}, ${inVars[1] || '1.0'}, ${inVars[2] || '0.5'});`
+  },
+
+  'Step': {
+      type: 'Step',
+      category: 'Math',
+      title: 'Step',
+      inputs: [
+          { id: 'edge', name: 'Edge', type: 'float' },
+          { id: 'x', name: 'X', type: 'float' }
+      ],
+      outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+      execute: (inputs) => {
+          const edge = inputs[0] || 0.5;
+          const x = inputs[1] || 0;
+          return x < edge ? 0.0 : 1.0;
+      },
+      glsl: (inVars, id) => `float ${id} = step(${inVars[0] || '0.5'}, ${inVars[1] || '0.0'});`
+  },
+
+  'Distance': {
+      type: 'Distance',
+      category: 'Vector Math',
+      title: 'Distance',
+      inputs: [
+          { id: 'a', name: 'A', type: 'vec3' },
+          { id: 'b', name: 'B', type: 'vec3' }
+      ],
+      outputs: [{ id: 'out', name: 'Dist', type: 'float' }],
+      execute: (inputs) => {
+          const a = inputs[0] || {x:0,y:0,z:0};
+          const b = inputs[1] || {x:0,y:0,z:0};
+          return Math.sqrt(Math.pow(a.x-b.x, 2) + Math.pow(a.y-b.y, 2) + Math.pow(a.z-b.z, 2));
+      },
+      glsl: (inVars, id) => `float ${id} = distance(${inVars[0] || 'vec3(0.0)'}, ${inVars[1] || 'vec3(0.0)'});`
+  },
+
+  'Length': {
+      type: 'Length',
+      category: 'Vector Math',
+      title: 'Length',
+      inputs: [{ id: 'in', name: 'Vec', type: 'vec3' }],
+      outputs: [{ id: 'out', name: 'Len', type: 'float' }],
+      execute: (inputs) => {
+          const v = inputs[0] || {x:0,y:0,z:0};
+          return Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+      },
+      glsl: (inVars, id) => `float ${id} = length(${inVars[0] || 'vec3(0.0)'});`
+  },
   
   'WaveViewer': {
       type: 'WaveViewer',
