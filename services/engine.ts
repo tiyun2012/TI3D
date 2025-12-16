@@ -84,10 +84,11 @@ export class Ti3DEngine {
           // Restore material shaders if possible (needs asset data parsing on load)
           if (asset.type === 'MATERIAL') {
               // Re-compile shader for existing material assets
-              const source = compileShader(asset.data.nodes, asset.data.connections);
+              const compiled = compileShader(asset.data.nodes, asset.data.connections);
               const matIntId = assetManager.getMaterialID(asset.id);
-              if (matIntId && source) {
-                  this.renderer.updateMaterial(matIntId, source);
+              if (matIntId && compiled) {
+                  if (typeof compiled === 'string') return; // Invalid state for updated compiler
+                  this.renderer.updateMaterial(matIntId, compiled);
               }
           }
       });
@@ -174,19 +175,21 @@ export class Ti3DEngine {
       for (const node of nodes) visit(node.id);
       
       // 2. Compile Shader (GPU)
-      const shader = compileShader(nodes, connections);
+      const compiled = compileShader(nodes, connections);
       
-      // Update Preview State
-      if (shader !== this.currentShaderSource) {
-          this.currentShaderSource = shader;
-          this.notifyUI();
-      }
+      if (typeof compiled === 'object') {
+          // Update Preview State (Use fragment shader source for now)
+          if (compiled.fs !== this.currentShaderSource) {
+              this.currentShaderSource = compiled.fs;
+              this.notifyUI();
+          }
 
-      // 3. Update Renderer Material
-      if (materialId) {
-          const matIntId = assetManager.getMaterialID(materialId);
-          if (matIntId) {
-              this.renderer.updateMaterial(matIntId, shader);
+          // 3. Update Renderer Material
+          if (materialId) {
+              const matIntId = assetManager.getMaterialID(materialId);
+              if (matIntId) {
+                  this.renderer.updateMaterial(matIntId, compiled);
+              }
           }
       }
   }

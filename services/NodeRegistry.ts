@@ -43,11 +43,18 @@ export const NodeRegistry: Record<string, NodeDef> = {
   'ShaderOutput': {
       type: 'ShaderOutput',
       category: 'Shader',
-      title: 'Frag Color',
-      inputs: [{ id: 'rgb', name: 'RGB', type: 'vec3' }],
+      title: 'Material Output',
+      inputs: [
+          { id: 'rgb', name: 'Base Color', type: 'vec3' },
+          { id: 'offset', name: 'Vertex Offset', type: 'vec3', optional: true }
+      ],
       outputs: [],
       execute: () => {}, 
-      glsl: (inVars, id) => `fragColor = vec4(${inVars[0] || 'vec3(1.0, 0.0, 1.0)'}, 1.0);`
+      glsl: (inVars, id) => {
+          // This node is special; the compiler handles the connections manually.
+          // But if referenced directly, we can return empty.
+          return '';
+      }
   },
 
   'ForLoop': {

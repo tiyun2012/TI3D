@@ -18,6 +18,32 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
         connections: []
     },
     {
+        name: 'Pulsing Sphere (3D)',
+        description: 'Demonstrates Vertex Displacement using Time and Normals.',
+        nodes: [
+            { id: 'out', type: 'ShaderOutput', position: { x: 800, y: 200 } },
+            { id: 'time', type: 'Time', position: { x: 50, y: 200 } },
+            { id: 'sin', type: 'Sine', position: { x: 250, y: 200 } },
+            { id: 'norm', type: 'WorldNormal', position: { x: 250, y: 50 } },
+            { id: 'mul', type: 'Vec3Scale', position: { x: 500, y: 150 } },
+            { id: 'scale', type: 'Float', position: { x: 250, y: 350 }, data: { value: '0.2' } },
+            
+            // Fragment Color
+            { id: 'color', type: 'Vec3', position: { x: 500, y: 50 }, data: { x: '1.0', y: '0.2', z: '0.2' } }
+        ],
+        connections: [
+            // Time -> Sine -> Scale by 0.2 -> result
+            { id: 'c1', fromNode: 'time', fromPin: 'out', toNode: 'sin', toPin: 'in' },
+            { id: 'c2', fromNode: 'sin', fromPin: 'out', toNode: 'mul', toPin: 's' },
+            // Direction = Normal
+            { id: 'c3', fromNode: 'norm', fromPin: 'norm', toNode: 'mul', toPin: 'a' },
+            // Output to Offset
+            { id: 'c4', fromNode: 'mul', fromPin: 'out', toNode: 'out', toPin: 'offset' },
+            // Color
+            { id: 'c5', fromNode: 'color', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
+        ]
+    },
+    {
         name: 'offsetVertices',
         description: 'Water Distortion effect using normal map displacement.',
         nodes: [

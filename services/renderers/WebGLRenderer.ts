@@ -6,7 +6,11 @@ import { SceneGraph } from '../SceneGraph';
 import { Mat4, Mat4Utils } from '../math';
 import { INITIAL_CAPACITY, MESH_TYPES } from '../constants';
 
-const VS_SOURCE = `#version 300 es
+const VS_TEMPLATE = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2DArray;
+
 layout(location=0) in vec3 a_position;
 layout(location=1) in vec3 a_normal;
 layout(location=8) in vec2 a_uv;
@@ -16,6 +20,8 @@ layout(location=7) in float a_isSelected;
 layout(location=9) in float a_texIndex;
 
 uniform mat4 u_viewProjection;
+uniform float u_time;
+uniform sampler2DArray u_textures;
 
 out vec3 v_normal;
 out vec3 v_worldPos;
@@ -25,19 +31,37 @@ out float v_isSelected;
 out vec2 v_uv;
 out float v_texIndex;
 
+// %VERTEX_LOGIC%
+
 void main() {
     mat4 model = a_model;
-    vec4 worldPos = model * vec4(a_position, 1.0);
-    gl_Position = u_viewProjection * worldPos;
+    vec4 localPos = vec4(a_position, 1.0);
     
+    // Pre-calculate context variables for the graph
+    // These names must match what NodeRegistry uses. 
+    // We assign directly to the varyings here to initialize them.
+    vec3 v_pos_graph = a_position; 
+    v_worldPos = (model * localPos).xyz;
     v_normal = mat3(model) * a_normal;
-    v_worldPos = worldPos.xyz;
-    // Extract translation from model matrix (column 3)
-    v_objectPos = vec3(model[3][0], model[3][1], model[3][2]);
+    v_uv = a_uv;
     v_color = a_color;
     v_isSelected = a_isSelected;
-    v_uv = a_uv;
     v_texIndex = a_texIndex;
+    
+    vec3 vertexOffset = vec3(0.0);
+    
+    // Injected Body
+    // %VERTEX_BODY%
+    
+    localPos.xyz += vertexOffset;
+
+    vec4 worldPos = model * localPos;
+    gl_Position = u_viewProjection * worldPos;
+    
+    // Update Varyings with final transformed data
+    v_normal = mat3(model) * a_normal; 
+    v_worldPos = worldPos.xyz;
+    v_objectPos = vec3(model[3][0], model[3][1], model[3][2]);
 }`;
 
 const FS_DEFAULT_SOURCE = `#version 300 es
@@ -70,7 +94,7 @@ void main() {
     vec3 ambient = vec3(0.3);
     
     vec3 finalAlbedo = v_color * texColor.rgb;
-    vec3 result = finalAlbedo * ambient + finalAlbedo * diff;
+    vec3 result = finalAlbedo * (ambient + diff); // Corrected lighting mix
     
     if (v_isSelected > 0.5) {
         result = mix(result, vec3(1.0, 1.0, 0.0), 0.3);
@@ -122,7 +146,9 @@ export class WebGLRenderer {
         gl.disable(gl.CULL_FACE); 
         gl.clearColor(0.1, 0.1, 0.1, 1.0);
 
-        this.defaultProgram = this.createProgram(gl, VS_SOURCE, FS_DEFAULT_SOURCE);
+        // Compile default shader with empty vertex logic
+        const defaultVS = VS_TEMPLATE.replace('// %VERTEX_LOGIC%', '').replace('// %VERTEX_BODY%', '');
+        this.defaultProgram = this.createProgram(gl, defaultVS, FS_DEFAULT_SOURCE);
         this.initTextureArray(gl);
         
         // Register Default Primitives
@@ -131,18 +157,55 @@ export class WebGLRenderer {
         this.registerMesh(MESH_TYPES['Plane'], this.createPlaneData());
     }
 
-    updateMaterial(materialId: number, fragmentSource: string) {
+    updateMaterial(materialId: number, shaderData: { vs: string, fs: string } | string) {
         if (!this.gl) return;
         
-        // If source is empty, delete custom program to revert to default
-        if (!fragmentSource) {
+        // If empty, delete
+        if (!shaderData) {
             const p = this.materialPrograms.get(materialId);
             if (p) this.gl.deleteProgram(p);
             this.materialPrograms.delete(materialId);
             return;
         }
 
-        const program = this.createProgram(this.gl, VS_SOURCE, fragmentSource);
+        let vsSource = '';
+        let fsSource = '';
+
+        if (typeof shaderData === 'string') {
+            // Legacy/Fallback for just Fragment shader
+            vsSource = VS_TEMPLATE.replace('// %VERTEX_LOGIC%', '').replace('// %VERTEX_BODY%', '');
+            fsSource = shaderData;
+        } else {
+            // Full Compilation
+            // The compiler returns the body logic. We need to split it if it contains functions vs body.
+            // But currently the compiler returns full formatted blocks.
+            // Let's assume the compiler returns code that fits into the template placeholders.
+            
+            // Actually, the compiler currently returns a full string with functions and body mixed.
+            // We need to inject the compiler's VS output into the template.
+            
+            // The compiler's `vs` string looks like:
+            // // --- Global Functions ---
+            // func() {}
+            // // --- Graph Body ---
+            // logic...
+            // vertexOffset = ...
+            
+            // We can treat the whole thing as body + functions, but functions can't be inside main().
+            // So we need to split it manually or rely on the compiler structure.
+            
+            // HACK: The compiler returns the whole block.
+            // We'll split by "// --- Graph Body (VS) ---"
+            
+            const parts = shaderData.vs.split('// --- Graph Body (VS) ---');
+            const functions = parts[0] || '';
+            const body = parts[1] || '';
+            
+            vsSource = VS_TEMPLATE.replace('// %VERTEX_LOGIC%', functions).replace('// %VERTEX_BODY%', body);
+            fsSource = shaderData.fs;
+        }
+
+        const program = this.createProgram(this.gl, vsSource, fsSource);
         if (program) {
             // Delete old if exists
             const old = this.materialPrograms.get(materialId);
