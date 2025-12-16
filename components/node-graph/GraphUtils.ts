@@ -32,8 +32,8 @@ export const GraphUtils = {
         
         // 2. Code Block (ForLoop/CustomExpression)
         if (node.type === 'ForLoop' || node.type === 'CustomExpression') {
-            // Label(14) + Gap(4) + TextArea(128) + Gap(4) + Footer(12) + MB(8)
-            extraHeight += 170;
+            // Fine-tuned height: Label + TextArea(128) + Footer + Margins
+            extraHeight += 155;
         }
 
         // 3. Shader Preview
