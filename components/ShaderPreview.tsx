@@ -5,9 +5,25 @@ import { engineInstance } from '../services/engine';
 const VERTEX_SHADER = `#version 300 es
 layout(location=0) in vec3 a_pos;
 layout(location=8) in vec2 a_uv;
+
+// Match the varyings expected by the main ShaderCompiler output
 out vec2 v_uv;
+out vec3 v_normal;
+out vec3 v_worldPos;
+out vec3 v_color;
+out float v_isSelected;
+out float v_texIndex;
+
 void main() {
     v_uv = a_uv;
+    
+    // Provide dummy values for the preview quad
+    v_normal = vec3(0.0, 0.0, 1.0);
+    v_worldPos = a_pos; // Use local pos as world pos for preview
+    v_color = vec3(1.0);
+    v_isSelected = 0.0;
+    v_texIndex = 0.0;
+
     gl_Position = vec4(a_pos, 1.0);
 }`;
 

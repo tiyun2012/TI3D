@@ -1,3 +1,4 @@
+
 // services/engine.ts
 
 import { Entity, ComponentType, GraphNode, GraphConnection, PerformanceMetrics } from '../types';
@@ -80,6 +81,15 @@ export class Ti3DEngine {
               const id = assetManager.getMeshID(asset.id);
               this.renderer.registerMesh(id, asset.geometry);
           }
+          // Restore material shaders if possible (needs asset data parsing on load)
+          if (asset.type === 'MATERIAL') {
+              // Re-compile shader for existing material assets
+              const source = compileShader(asset.data.nodes, asset.data.connections);
+              const matIntId = assetManager.getMaterialID(asset.id);
+              if (matIntId && source) {
+                  this.renderer.updateMaterial(matIntId, source);
+              }
+          }
       });
   }
   resize(width: number, height: number) { this.renderer.resize(width, height); }
@@ -129,7 +139,7 @@ export class Ti3DEngine {
       this.notifyUI();
   }
 
-  compileGraph(nodes: GraphNode[], connections: GraphConnection[]) {
+  compileGraph(nodes: GraphNode[], connections: GraphConnection[], materialId?: string) {
       // 1. Compile Logic (CPU)
       this.executionList = [];
       const nodeMap = new Map(nodes.map(n => [n.id, n]));
@@ -165,10 +175,19 @@ export class Ti3DEngine {
       
       // 2. Compile Shader (GPU)
       const shader = compileShader(nodes, connections);
+      
+      // Update Preview State
       if (shader !== this.currentShaderSource) {
           this.currentShaderSource = shader;
-          // Notify specifically for preview update (could be optimized)
           this.notifyUI();
+      }
+
+      // 3. Update Renderer Material
+      if (materialId) {
+          const matIntId = assetManager.getMaterialID(materialId);
+          if (matIntId) {
+              this.renderer.updateMaterial(matIntId, shader);
+          }
       }
   }
 

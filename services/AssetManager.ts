@@ -56,6 +56,7 @@ class AssetManagerService {
 
     getMeshID(uuid: string): number { return this.meshUuidToInt.get(uuid) || 0; }
     getMaterialID(uuid: string): number { return this.matUuidToInt.get(uuid) || 0; }
+    getMaterialUUID(intId: number): string | undefined { return this.matIntToUuid.get(intId); } // Added helper
     getPhysicsMaterialID(uuid: string): number { return this.physMatUuidToInt.get(uuid) || 0; }
     
     getPhysicsMaterialUUID(intId: number): string | undefined { return this.physMatIntToUuid.get(intId); }

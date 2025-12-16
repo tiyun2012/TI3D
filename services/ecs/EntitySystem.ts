@@ -4,6 +4,7 @@ import { MESH_NAMES, MESH_TYPES, ROTATION_ORDER_MAP, ROTATION_ORDER_ZY_MAP } fro
 import { SceneGraph } from '../SceneGraph';
 import { ComponentType, Entity, RotationOrder } from '../../types';
 import type { HistorySystem } from '../systems/HistorySystem';
+import { assetManager } from '../AssetManager';
 
 export class SoAEntitySystem {
     store = new ComponentStorage();
@@ -50,6 +51,7 @@ export class SoAEntitySystem {
         this.store.textureIndex[index] = 0;
         this.store.colorR[index] = 1; this.store.colorG[index] = 1; this.store.colorB[index] = 1;
         this.store.physicsMaterialIndex[index] = 0;
+        this.store.materialIndex[index] = 0;
         
         this.idToIndex.set(id, index);
         return id;
@@ -146,6 +148,15 @@ export class SoAEntitySystem {
                         store.colorR[index] = ((bigint >> 16) & 255) / 255;
                         store.colorG[index] = ((bigint >> 8) & 255) / 255;
                         store.colorB[index] = (bigint & 255) / 255;
+                    },
+                    get materialId() { 
+                        // Return string UUID or null if 0
+                        const id = store.materialIndex[index];
+                        return id === 0 ? '' : assetManager.getMaterialUUID(id) || '';
+                    },
+                    set materialId(v: string) {
+                        // Set integer ID from UUID
+                        store.materialIndex[index] = v ? assetManager.getMaterialID(v) : 0;
                     }
                 } as any,
 

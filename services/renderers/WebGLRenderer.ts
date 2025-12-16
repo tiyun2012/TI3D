@@ -37,7 +37,7 @@ void main() {
     v_texIndex = a_texIndex;
 }`;
 
-const FS_SOURCE = `#version 300 es
+const FS_DEFAULT_SOURCE = `#version 300 es
 precision mediump float;
 precision mediump sampler2DArray;
 
@@ -60,7 +60,6 @@ void main() {
     vec4 texColor = vec4(1.0, 1.0, 1.0, 1.0);
     
     // v_texIndex: 0=White, 1=Grid, 2=Noise, 3=Brick
-    // Explicit wrap modes in initTextureArray ensure this samples correctly
     texColor = texture(u_textures, vec3(v_uv, v_texIndex));
     
     float diff = max(dot(normal, lightDir), 0.0);
@@ -86,7 +85,10 @@ interface MeshBatch {
 
 export class WebGLRenderer {
     gl: WebGL2RenderingContext | null = null;
-    program: WebGLProgram | null = null;
+    
+    // Program Management
+    defaultProgram: WebGLProgram | null = null;
+    materialPrograms: Map<number, WebGLProgram> = new Map();
     
     meshes: Map<number, MeshBatch> = new Map();
     textureArray: WebGLTexture | null = null;
@@ -95,7 +97,9 @@ export class WebGLRenderer {
     triangleCount = 0;
     showGrid = true;
     
-    uniforms: Record<string, WebGLUniformLocation | null> = {};
+    // Render Buckets: Map<MaterialID, Array<EntityIndex>>
+    // Reused per frame to avoid allocation
+    private buckets: Map<number, number[]> = new Map();
 
     init(canvas: HTMLCanvasElement) {
         this.gl = canvas.getContext('webgl2', { 
@@ -114,24 +118,34 @@ export class WebGLRenderer {
         gl.disable(gl.CULL_FACE); 
         gl.clearColor(0.1, 0.1, 0.1, 1.0);
 
-        const vs = this.createShader(gl, gl.VERTEX_SHADER, VS_SOURCE);
-        const fs = this.createShader(gl, gl.FRAGMENT_SHADER, FS_SOURCE);
-        if (!vs || !fs) return;
-
-        this.program = this.createProgram(gl, vs, fs);
-        if (!this.program) return;
-
-        this.uniforms = {
-            u_viewProjection: gl.getUniformLocation(this.program, 'u_viewProjection'),
-            u_textures: gl.getUniformLocation(this.program, 'u_textures'),
-        };
-
+        this.defaultProgram = this.createProgram(gl, VS_SOURCE, FS_DEFAULT_SOURCE);
         this.initTextureArray(gl);
         
         // Register Default Primitives
         this.registerMesh(MESH_TYPES['Cube'], this.createCubeData());
         this.registerMesh(MESH_TYPES['Sphere'], this.createSphereData(24, 16));
         this.registerMesh(MESH_TYPES['Plane'], this.createPlaneData());
+    }
+
+    updateMaterial(materialId: number, fragmentSource: string) {
+        if (!this.gl) return;
+        
+        // If source is empty, delete custom program to revert to default
+        if (!fragmentSource) {
+            const p = this.materialPrograms.get(materialId);
+            if (p) this.gl.deleteProgram(p);
+            this.materialPrograms.delete(materialId);
+            return;
+        }
+
+        const program = this.createProgram(this.gl, VS_SOURCE, fragmentSource);
+        if (program) {
+            // Delete old if exists
+            const old = this.materialPrograms.get(materialId);
+            if (old) this.gl.deleteProgram(old);
+            
+            this.materialPrograms.set(materialId, program);
+        }
     }
 
     ensureCapacity(count: number) {
@@ -144,7 +158,6 @@ export class WebGLRenderer {
                 // Grow buffer (1.5x)
                 const newSize = Math.max(requiredSize, mesh.cpuBuffer.length * 1.5);
                 const newBuffer = new Float32Array(newSize);
-                // We don't need to copy old data as we overwrite it every frame
                 mesh.cpuBuffer = newBuffer;
                 
                 // Resize GPU buffer
@@ -231,7 +244,6 @@ export class WebGLRenderer {
         createBuffer(gl.ELEMENT_ARRAY_BUFFER, data.indices);
 
         // Instance Buffer Setup
-        // Initial capacity for CPU buffer
         const initialCapacity = INITIAL_CAPACITY * 21; 
         const instBuf = gl.createBuffer();
         const cpuBuffer = new Float32Array(initialCapacity);
@@ -311,24 +323,37 @@ export class WebGLRenderer {
         return { vertices: new Float32Array(v), normals: new Float32Array(n), uvs: new Float32Array(u), indices: new Uint16Array(idx) };
     }
 
-    createShader(gl: WebGL2RenderingContext, type: number, source: string) {
-        const shader = gl.createShader(type);
-        if (!shader) return null;
-        gl.shaderSource(shader, source);
-        gl.compileShader(shader);
-        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) { console.error(gl.getShaderInfoLog(shader)); return null; }
-        return shader;
-    }
+    createProgram(gl: WebGL2RenderingContext, vsSource: string, fsSource: string) {
+        const vs = gl.createShader(gl.VERTEX_SHADER);
+        if (!vs) return null;
+        gl.shaderSource(vs, vsSource);
+        gl.compileShader(vs);
+        if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) {
+            console.error("VS Log:", gl.getShaderInfoLog(vs));
+            return null;
+        }
 
-    createProgram(gl: WebGL2RenderingContext, vs: WebGLShader, fs: WebGLShader) {
+        const fs = gl.createShader(gl.FRAGMENT_SHADER);
+        if (!fs) return null;
+        gl.shaderSource(fs, fsSource);
+        gl.compileShader(fs);
+        if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
+            console.error("FS Log:", gl.getShaderInfoLog(fs));
+            return null;
+        }
+
         const p = gl.createProgram();
         if (!p) return null;
         gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+            console.error("Link Log:", gl.getProgramInfoLog(p));
+            return null;
+        }
         return p;
     }
 
     render(store: ComponentStorage, count: number, selectedIndices: Set<number>, viewProjection: Mat4, width: number, height: number) {
-        if (!this.gl || !this.program) return;
+        if (!this.gl || !this.defaultProgram) return;
         const gl = this.gl;
         
         if (gl.canvas.width !== width || gl.canvas.height !== height) {
@@ -338,67 +363,99 @@ export class WebGLRenderer {
         }
 
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-        gl.useProgram(this.program);
-        gl.uniformMatrix4fv(this.uniforms.u_viewProjection, false, viewProjection);
         
-        if (this.textureArray) {
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray);
-            gl.uniform1i(this.uniforms.u_textures, 0);
-        }
-
-        this.ensureCapacity(store.capacity);
-        this.drawCalls = 0; this.triangleCount = 0;
-
-        // Reset batch counts
-        this.meshes.forEach(mesh => mesh.instanceCount = 0);
-
-        // Single Pass Optimization: 
-        // Iterate entities once (O(N)) and distribute data to per-mesh CPU buffers
-        for (let index = 0; index < count; index++) {
-            if (!store.isActive[index]) continue;
-            
+        // --- 1. Bucket Sort Entities by Material ---
+        // Reuse map arrays to prevent GC
+        for (const arr of this.buckets.values()) arr.length = 0;
+        
+        for (let i = 0; i < count; i++) {
+            if (!store.isActive[i]) continue;
             // Check grid visibility
-            if (!this.showGrid && store.textureIndex[index] === 1) continue;
+            if (!this.showGrid && store.textureIndex[i] === 1) continue;
 
-            const type = store.meshType[index];
-            const mesh = this.meshes.get(type);
+            const matId = store.materialIndex[i];
+            // Use 0 as default key for no material
+            const key = matId || 0;
             
-            if (mesh) {
-                const ptr = mesh.instanceCount * 21;
-                const start = index * 16;
-                const buf = mesh.cpuBuffer;
-
-                // Unroll loop for speed or use set? Set is safer/cleaner.
-                buf.set(store.worldMatrix.subarray(start, start + 16), ptr);
-                
-                buf[ptr + 16] = store.colorR[index];
-                buf[ptr + 17] = store.colorG[index];
-                buf[ptr + 18] = store.colorB[index];
-                buf[ptr + 19] = selectedIndices.has(index) ? 1.0 : 0.0;
-                buf[ptr + 20] = store.textureIndex[index];
-                
-                mesh.instanceCount++;
-            }
+            if (!this.buckets.has(key)) this.buckets.set(key, []);
+            this.buckets.get(key)!.push(i);
         }
 
-        // Draw Batches
-        this.meshes.forEach(mesh => {
-            if (mesh.instanceCount > 0) {
-                gl.bindVertexArray(mesh.vao);
-                gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
-                
-                // Use bufferSubData to update only the used portion
-                // NOTE: For very large updates, bufferData(..., DYNAMIC_DRAW) (orphaning) might be faster on some drivers
-                // but bufferSubData is generally fine for uniform sized updates.
-                // We'll use bufferSubData for the active region.
-                gl.bufferSubData(gl.ARRAY_BUFFER, 0, mesh.cpuBuffer.subarray(0, mesh.instanceCount * 21));
-                
-                gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, mesh.instanceCount);
-                
-                this.drawCalls++;
-                this.triangleCount += (mesh.count / 3) * mesh.instanceCount;
+        // Ensure capacity
+        this.ensureCapacity(store.capacity);
+        this.drawCalls = 0; 
+        this.triangleCount = 0;
+
+        // --- 2. Render Each Material Group ---
+        this.buckets.forEach((indices, matId) => {
+            if (indices.length === 0) return;
+
+            // Pick Program
+            let program = this.defaultProgram!;
+            if (matId !== 0 && this.materialPrograms.has(matId)) {
+                program = this.materialPrograms.get(matId)!;
             }
+            
+            gl.useProgram(program);
+            
+            // Set Common Uniforms
+            const uVP = gl.getUniformLocation(program, 'u_viewProjection');
+            if (uVP) gl.uniformMatrix4fv(uVP, false, viewProjection);
+            
+            const uTime = gl.getUniformLocation(program, 'u_time');
+            if (uTime) gl.uniform1f(uTime, performance.now() / 1000);
+
+            const uRes = gl.getUniformLocation(program, 'u_resolution');
+            if (uRes) gl.uniform2f(uRes, width, height);
+
+            const uTex = gl.getUniformLocation(program, 'u_textures');
+            if (uTex) {
+                if (this.textureArray) {
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray);
+                    gl.uniform1i(uTex, 0);
+                }
+            }
+
+            // Reset mesh batch counts
+            this.meshes.forEach(mesh => mesh.instanceCount = 0);
+
+            // Fill Mesh Buffers for this Material
+            for (const index of indices) {
+                const type = store.meshType[index];
+                const mesh = this.meshes.get(type);
+                
+                if (mesh) {
+                    const ptr = mesh.instanceCount * 21;
+                    const start = index * 16;
+                    const buf = mesh.cpuBuffer;
+
+                    buf.set(store.worldMatrix.subarray(start, start + 16), ptr);
+                    
+                    buf[ptr + 16] = store.colorR[index];
+                    buf[ptr + 17] = store.colorG[index];
+                    buf[ptr + 18] = store.colorB[index];
+                    buf[ptr + 19] = selectedIndices.has(index) ? 1.0 : 0.0;
+                    buf[ptr + 20] = store.textureIndex[index];
+                    
+                    mesh.instanceCount++;
+                }
+            }
+
+            // Draw Batches for this Material
+            this.meshes.forEach(mesh => {
+                if (mesh.instanceCount > 0) {
+                    gl.bindVertexArray(mesh.vao);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
+                    
+                    gl.bufferSubData(gl.ARRAY_BUFFER, 0, mesh.cpuBuffer.subarray(0, mesh.instanceCount * 21));
+                    
+                    gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, mesh.instanceCount);
+                    
+                    this.drawCalls++;
+                    this.triangleCount += (mesh.count / 3) * mesh.instanceCount;
+                }
+            });
         });
 
         gl.bindVertexArray(null);

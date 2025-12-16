@@ -55,7 +55,7 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
             if (asset && asset.type === 'MATERIAL') {
                 setNodes(asset.data.nodes);
                 setConnections(asset.data.connections);
-                engineInstance.compileGraph(asset.data.nodes, asset.data.connections);
+                engineInstance.compileGraph(asset.data.nodes, asset.data.connections, materialId);
             }
         } else {
             setNodes([]);
@@ -76,7 +76,7 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
         setCompileStatus('COMPILING');
         // Small delay to show visual feedback
         setTimeout(() => {
-            engineInstance.compileGraph(nodes, connections);
+            engineInstance.compileGraph(nodes, connections, materialId);
             setCompileStatus('READY');
         }, 100);
     }, [nodes, connections, materialId]);
@@ -86,7 +86,8 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
         if (!materialId) return;
         setCompileStatus('COMPILING');
         const timeoutId = setTimeout(() => {
-            engineInstance.compileGraph(nodes, connections);
+            // Pass materialId to update the renderer live
+            engineInstance.compileGraph(nodes, connections, materialId);
             setCompileStatus('READY');
         }, 500); // Slightly longer debounce to reduce flicker
         return () => clearTimeout(timeoutId);

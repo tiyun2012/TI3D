@@ -107,7 +107,7 @@ const TexturePicker: React.FC<{ value: number, onChange: (v: number) => void }> 
 
     return (
         <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-text-secondary">Texture</span>
+            <span className="text-[10px] text-text-secondary">Default Texture</span>
             <div className="grid grid-cols-4 gap-2">
                 {textures.map(tex => (
                     <button 
@@ -145,6 +145,7 @@ const ComponentCard: React.FC<{
   const [open, setOpen] = useState(true);
   const editorCtx = useContext(EditorContext);
   const physicsMaterials = assetManager.getAssetsByType('PHYSICS_MATERIAL');
+  const materials = assetManager.getAssetsByType('MATERIAL'); // Get Shader Materials
 
   const handleAtomicChange = (field: string, value: any) => {
       if(onStartUpdate) onStartUpdate();
@@ -235,31 +236,57 @@ const ComponentCard: React.FC<{
                 </div>
              </div>
              
-             {/* Texture Picker */}
-             <TexturePicker 
-                value={component.textureIndex || 0} 
-                onChange={(v) => handleAtomicChange('textureIndex', v)}
-             />
-
+             {/* Material Picker */}
              <div className="flex items-center gap-2">
-                <span className="w-24 text-text-secondary">Color</span>
-                <div className="flex-1 flex gap-2">
-                    <input 
-                        type="color" 
-                        value={component.color} 
-                        onChange={(e) => handleAtomicChange('color', e.target.value)}
-                        className="w-8 h-6 rounded cursor-pointer bg-transparent"
-                        aria-label="Color Picker"
-                    />
-                    <input 
-                        type="text" 
-                        value={component.color} 
-                        onChange={(e) => handleAtomicChange('color', e.target.value)}
-                        className="flex-1 bg-input-bg rounded px-2 text-text-secondary outline-none focus:text-white" 
-                        aria-label="Color Hex"
-                    />
+                <span className="w-24 text-text-secondary">Material</span>
+                <div className="flex-1 flex items-center bg-input-bg rounded border border-transparent px-2 py-1">
+                   <Icon name="Palette" size={12} className="mr-2 text-pink-400"/>
+                   <select 
+                      className="flex-1 bg-transparent outline-none text-white"
+                      value={component.materialId || ""}
+                      onChange={(e) => handleAtomicChange('materialId', e.target.value)}
+                      aria-label="Material"
+                   >
+                      <option value="">Default (Standard)</option>
+                      {materials.map(m => (
+                          <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                   </select>
                 </div>
              </div>
+
+             {/* Texture Picker (Only active if no material selected) */}
+             {!component.materialId && (
+                 <>
+                    <div className="border-t border-white/5 my-1"></div>
+                    <TexturePicker 
+                        value={component.textureIndex || 0} 
+                        onChange={(v) => handleAtomicChange('textureIndex', v)}
+                    />
+                    
+                    <div className="flex items-center gap-2">
+                        <span className="w-24 text-text-secondary">Color Tint</span>
+                        <div className="flex-1 flex gap-2">
+                            <input 
+                                type="color" 
+                                value={component.color} 
+                                onChange={(e) => handleAtomicChange('color', e.target.value)}
+                                className="w-8 h-6 rounded cursor-pointer bg-transparent"
+                                aria-label="Color Picker"
+                            />
+                            <input 
+                                type="text" 
+                                value={component.color} 
+                                onChange={(e) => handleAtomicChange('color', e.target.value)}
+                                className="flex-1 bg-input-bg rounded px-2 text-text-secondary outline-none focus:text-white" 
+                                aria-label="Color Hex"
+                            />
+                        </div>
+                    </div>
+                 </>
+             )}
+
+             <div className="border-t border-white/5 my-1"></div>
              <div className="flex items-center gap-2">
                  <span className="w-24 text-text-secondary">Cast Shadows</span>
                  <input type="checkbox" defaultChecked aria-label="Cast Shadows" />

@@ -75,23 +75,42 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
 
     visit(outNode.id);
 
-    // Assembly
+    // Assembly - Matches WebGLRenderer VS outputs
     return `#version 300 es
     precision mediump float;
     precision mediump sampler2DArray;
     
     uniform float u_time;
     uniform vec2 u_resolution;
-    uniform sampler2DArray u_textures; // Needed if any node uses textures implicitly
+    uniform sampler2DArray u_textures;
     
+    // Varyings from Vertex Shader
+    in vec3 v_normal;
+    in vec3 v_worldPos;
+    in vec3 v_color;
+    in float v_isSelected;
     in vec2 v_uv;
-    out vec4 fragColor;
+    in float v_texIndex;
+
+    out vec4 outColor;
 
     // --- Global Functions ---
     ${globalFunctions.join('\n')}
 
     void main() {
+        vec4 fragColor;
         ${lines.join('\n        ')}
+        
+        // Apply selection highlight overlay logic from original renderer if needed, 
+        // or just output the result. 
+        // For now, we mix the generated color with selection state.
+        
+        vec3 finalColor = fragColor.rgb;
+        if (v_isSelected > 0.5) {
+            finalColor = mix(finalColor, vec3(1.0, 1.0, 0.0), 0.3);
+        }
+        
+        outColor = vec4(finalColor, fragColor.a);
     }
     `;
 };
