@@ -16,12 +16,30 @@ export const GraphUtils = {
 
         // Calculate dynamic height offsets for content between inputs and outputs
         let extraHeight = 0;
+        
+        // 1. Inputs Controls (Float/Vec3)
         if ((node.type === 'Float' || node.type === 'Vec3') && node.data) {
              const rowCount = Object.keys(node.data).length;
-             extraHeight += rowCount * 20 + (rowCount * 4) + LayoutConfig.GAP; 
+             const rowHeight = 20;
+             const rowMargin = 4;
+             const flexGap = 4; // gap-1
+             
+             // Height = Rows * (H + MB) + (Rows-1)*Gap + ContainerMB
+             extraHeight += rowCount * (rowHeight + rowMargin) + 
+                            (rowCount > 0 ? (rowCount - 1) * flexGap : 0) + 
+                            LayoutConfig.GAP;
         }
+        
+        // 2. Code Block (ForLoop/CustomExpression)
+        if (node.type === 'ForLoop' || node.type === 'CustomExpression') {
+            // Label(14) + Gap(4) + TextArea(128) + Gap(4) + Footer(12) + MB(8)
+            extraHeight += 170;
+        }
+
+        // 3. Shader Preview
         if (node.type === 'ShaderOutput') {
-             extraHeight += 200 + LayoutConfig.GAP;
+             // Height(200) + MT(8) + MB(4)
+             extraHeight += 200 + 8 + LayoutConfig.GAP;
         }
 
         let index = 0;
@@ -37,11 +55,15 @@ export const GraphUtils = {
         let yOffset = LayoutConfig.BORDER + LayoutConfig.HEADER_HEIGHT + LayoutConfig.PADDING_TOP + 
                        (index * (LayoutConfig.ITEM_HEIGHT + LayoutConfig.GAP)) + (LayoutConfig.ITEM_HEIGHT / 2);
         
+        // If it's an output pin, push it down by the extra content height
         if (type === 'output') {
             yOffset += extraHeight;
         }
         
-        const width = node.type === 'ShaderOutput' ? LayoutConfig.PREVIEW_NODE_WIDTH : LayoutConfig.NODE_WIDTH;
+        const width = (node.type === 'ShaderOutput' || node.type === 'CustomExpression' || node.type === 'ForLoop') 
+            ? (node.type === 'ShaderOutput' ? LayoutConfig.PREVIEW_NODE_WIDTH : LayoutConfig.CODE_NODE_WIDTH) 
+            : LayoutConfig.NODE_WIDTH;
+            
         const xOffset = type === 'output' ? width : 0;
         return { x: node.position.x + xOffset, y: node.position.y + yOffset };
     },
