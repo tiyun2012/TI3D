@@ -1,4 +1,3 @@
-
 // services/NodeRegistry.ts
 
 import type { Ti3DEngine } from './engine';
@@ -59,24 +58,40 @@ export const NodeRegistry: Record<string, NodeDef> = {
 
   'Split': {
       type: 'Split',
-      category: 'Shader Math',
-      title: 'Split',
-      inputs: [{ id: 'in', name: 'Vec2/3/4', type: 'any' }],
+      category: 'Vector',
+      title: 'Split (Vec3)',
+      inputs: [{ id: 'in', name: 'Vec3', type: 'vec3' }],
       outputs: [
           { id: 'x', name: 'X', type: 'float' },
           { id: 'y', name: 'Y', type: 'float' },
-          { id: 'z', name: 'Z', type: 'float' },
-          { id: 'w', name: 'W', type: 'float' }
+          { id: 'z', name: 'Z', type: 'float' }
       ],
       execute: (i) => ({ x: i[0]?.x||0, y: i[0]?.y||0, z: i[0]?.z||0 }),
       glsl: (inVars, id) => {
-          // Simplified for vec2/vec3 support. We rely on ShaderCompiler to append _x, _y etc. when connecting.
           const v = inVars[0] || 'vec3(0.0)';
           return `
           float ${id}_x = ${v}.x;
           float ${id}_y = ${v}.y;
           float ${id}_z = ${v}.z; 
-          float ${id}_w = 0.0; // dummy
+          `;
+      }
+  },
+
+  'SplitVec2': {
+      type: 'SplitVec2',
+      category: 'Vector',
+      title: 'Split (Vec2)',
+      inputs: [{ id: 'in', name: 'Vec2', type: 'vec2' }],
+      outputs: [
+          { id: 'x', name: 'X', type: 'float' },
+          { id: 'y', name: 'Y', type: 'float' }
+      ],
+      execute: (i) => ({ x: i[0]?.x||0, y: i[0]?.y||0 }),
+      glsl: (inVars, id) => {
+          const v = inVars[0] || 'vec2(0.0)';
+          return `
+          float ${id}_x = ${v}.x;
+          float ${id}_y = ${v}.y;
           `;
       }
   },
@@ -126,10 +141,22 @@ export const NodeRegistry: Record<string, NodeDef> = {
     execute: (_, data) => parseFloat(data?.value || '0'),
     glsl: (inVars, id, data) => {
         const val = parseFloat(data?.value || '0.0');
-        // Force decimal point for floats
         const str = val.toString();
         return `float ${id} = ${str.includes('.') ? str : str + '.0'};`;
     }
+  },
+
+  'Vec2': {
+    type: 'Vec2',
+    category: 'Input',
+    title: 'Vector2',
+    inputs: [
+        { id: 'x', name: 'X', type: 'float' },
+        { id: 'y', name: 'Y', type: 'float' }
+    ],
+    outputs: [{ id: 'out', name: 'Vec2', type: 'vec2' }],
+    execute: (inputs) => ({ x: inputs[0]||0, y: inputs[1]||0 }),
+    glsl: (inVars, id) => `vec2 ${id} = vec2(${inVars[0]||'0.0'}, ${inVars[1]||'0.0'});`
   },
 
   'Vec3': {
@@ -146,10 +173,86 @@ export const NodeRegistry: Record<string, NodeDef> = {
     glsl: (inVars, id) => `vec3 ${id} = vec3(${inVars[0]||'0.0'}, ${inVars[1]||'0.0'}, ${inVars[2]||'0.0'});`
   },
 
+  // --- VEC2 MATH ---
+  
+  'Vec2Add': {
+    type: 'Vec2Add', category: 'Vec2 Math', title: 'Add',
+    inputs: [{ id: 'a', name: 'A', type: 'vec2' }, { id: 'b', name: 'B', type: 'vec2' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'vec2' }],
+    execute: (i) => ({x:(i[0]?.x||0)+(i[1]?.x||0), y:(i[0]?.y||0)+(i[1]?.y||0)}),
+    glsl: (v, id) => `vec2 ${id} = ${v[0]||'vec2(0)'} + ${v[1]||'vec2(0)'};`
+  },
+  'Vec2Sub': {
+    type: 'Vec2Sub', category: 'Vec2 Math', title: 'Subtract',
+    inputs: [{ id: 'a', name: 'A', type: 'vec2' }, { id: 'b', name: 'B', type: 'vec2' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'vec2' }],
+    execute: (i) => ({x:(i[0]?.x||0)-(i[1]?.x||0), y:(i[0]?.y||0)-(i[1]?.y||0)}),
+    glsl: (v, id) => `vec2 ${id} = ${v[0]||'vec2(0)'} - ${v[1]||'vec2(0)'};`
+  },
+  'Vec2Mul': {
+    type: 'Vec2Mul', category: 'Vec2 Math', title: 'Multiply',
+    inputs: [{ id: 'a', name: 'A', type: 'vec2' }, { id: 'b', name: 'B', type: 'vec2' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'vec2' }],
+    execute: (i) => ({x:(i[0]?.x||0)*(i[1]?.x||0), y:(i[0]?.y||0)*(i[1]?.y||0)}),
+    glsl: (v, id) => `vec2 ${id} = ${v[0]||'vec2(0)'} * ${v[1]||'vec2(1)'};`
+  },
+  'Vec2Scale': {
+    type: 'Vec2Scale', category: 'Vec2 Math', title: 'Scale (Float)',
+    inputs: [{ id: 'a', name: 'Vec', type: 'vec2' }, { id: 's', name: 'Scale', type: 'float' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'vec2' }],
+    execute: (i) => ({x:(i[0]?.x||0)*i[1], y:(i[0]?.y||0)*i[1]}),
+    glsl: (v, id) => `vec2 ${id} = ${v[0]||'vec2(0)'} * ${v[1]||'1.0'};`
+  },
+  'Vec2Mod': {
+    type: 'Vec2Mod', category: 'Vec2 Math', title: 'Mod (Float)',
+    inputs: [{ id: 'a', name: 'Vec', type: 'vec2' }, { id: 's', name: 'Mod', type: 'float' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'vec2' }],
+    execute: (i) => ({x:(i[0]?.x||0)%i[1], y:(i[0]?.y||0)%i[1]}),
+    glsl: (v, id) => `vec2 ${id} = mod(${v[0]||'vec2(0)'}, ${v[1]||'1.0'});`
+  },
+  'Vec2Length': {
+    type: 'Vec2Length', category: 'Vec2 Math', title: 'Length',
+    inputs: [{ id: 'a', name: 'Vec', type: 'vec2' }],
+    outputs: [{ id: 'out', name: 'Len', type: 'float' }],
+    execute: (i) => Math.hypot(i[0]?.x||0, i[0]?.y||0),
+    glsl: (v, id) => `float ${id} = length(${v[0]||'vec2(0)'});`
+  },
+  'Vec2Sin': {
+    type: 'Vec2Sin', category: 'Vec2 Math', title: 'Sin (Vec2)',
+    inputs: [{ id: 'a', name: 'Vec', type: 'vec2' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'vec2' }],
+    execute: (i) => ({x: Math.sin(i[0]?.x||0), y: Math.sin(i[0]?.y||0)}),
+    glsl: (v, id) => `vec2 ${id} = sin(${v[0]||'vec2(0)'});`
+  },
+  'Vec2Cos': {
+    type: 'Vec2Cos', category: 'Vec2 Math', title: 'Cos (Vec2)',
+    inputs: [{ id: 'a', name: 'Vec', type: 'vec2' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'vec2' }],
+    execute: (i) => ({x: Math.cos(i[0]?.x||0), y: Math.cos(i[0]?.y||0)}),
+    glsl: (v, id) => `vec2 ${id} = cos(${v[0]||'vec2(0)'});`
+  },
+
+  // --- VEC3 MATH ---
+  
+  'Vec3Add': {
+    type: 'Vec3Add', category: 'Vec3 Math', title: 'Add',
+    inputs: [{ id: 'a', name: 'A', type: 'vec3' }, { id: 'b', name: 'B', type: 'vec3' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'vec3' }],
+    execute: (i) => ({x:(i[0]?.x||0)+(i[1]?.x||0), y:(i[0]?.y||0)+(i[1]?.y||0), z:(i[0]?.z||0)+(i[1]?.z||0)}),
+    glsl: (v, id) => `vec3 ${id} = ${v[0]||'vec3(0)'} + ${v[1]||'vec3(0)'};`
+  },
+  'Vec3Scale': {
+    type: 'Vec3Scale', category: 'Vec3 Math', title: 'Scale (Float)',
+    inputs: [{ id: 'a', name: 'Vec', type: 'vec3' }, { id: 's', name: 'Scale', type: 'float' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'vec3' }],
+    execute: (i) => ({x:(i[0]?.x||0)*i[1], y:(i[0]?.y||0)*i[1], z:(i[0]?.z||0)*i[1]}),
+    glsl: (v, id) => `vec3 ${id} = ${v[0]||'vec3(0)'} * ${v[1]||'1.0'};`
+  },
+
+  // --- SCALAR MATH ---
+
   'Sine': {
-    type: 'Sine',
-    category: 'Math',
-    title: 'Sine',
+    type: 'Sine', category: 'Math', title: 'Sine',
     inputs: [{ id: 'in', name: 'In', type: 'float' }],
     outputs: [{ id: 'out', name: 'Out', type: 'float' }],
     execute: (inputs) => Math.sin(inputs[0] || 0),
@@ -157,9 +260,7 @@ export const NodeRegistry: Record<string, NodeDef> = {
   },
 
   'Cosine': {
-    type: 'Cosine',
-    category: 'Math',
-    title: 'Cosine',
+    type: 'Cosine', category: 'Math', title: 'Cosine',
     inputs: [{ id: 'in', name: 'In', type: 'float' }],
     outputs: [{ id: 'out', name: 'Out', type: 'float' }],
     execute: (inputs) => Math.cos(inputs[0] || 0),
@@ -167,35 +268,55 @@ export const NodeRegistry: Record<string, NodeDef> = {
   },
 
   'Add': {
-    type: 'Add',
-    category: 'Math',
-    title: 'Add',
-    inputs: [
-        { id: 'a', name: 'A', type: 'float' },
-        { id: 'b', name: 'B', type: 'float' }
-    ],
+    type: 'Add', category: 'Math', title: 'Add (Float)',
+    inputs: [{ id: 'a', name: 'A', type: 'float' }, { id: 'b', name: 'B', type: 'float' }],
     outputs: [{ id: 'out', name: 'Out', type: 'float' }],
     execute: (inputs) => (inputs[0] || 0) + (inputs[1] || 0),
     glsl: (inVars, id) => `float ${id} = ${inVars[0] || '0.0'} + ${inVars[1] || '0.0'};`
   },
 
+  'Subtract': {
+    type: 'Subtract', category: 'Math', title: 'Subtract (Float)',
+    inputs: [{ id: 'a', name: 'A', type: 'float' }, { id: 'b', name: 'B', type: 'float' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+    execute: (inputs) => (inputs[0] || 0) - (inputs[1] || 0),
+    glsl: (inVars, id) => `float ${id} = ${inVars[0] || '0.0'} - ${inVars[1] || '0.0'};`
+  },
+
   'Multiply': {
-    type: 'Multiply',
-    category: 'Math',
-    title: 'Multiply',
-    inputs: [
-        { id: 'a', name: 'A', type: 'float' },
-        { id: 'b', name: 'B', type: 'float' }
-    ],
+    type: 'Multiply', category: 'Math', title: 'Multiply (Float)',
+    inputs: [{ id: 'a', name: 'A', type: 'float' }, { id: 'b', name: 'B', type: 'float' }],
     outputs: [{ id: 'out', name: 'Out', type: 'float' }],
     execute: (inputs) => (inputs[0] || 0) * (inputs[1] || 0),
     glsl: (inVars, id) => `float ${id} = ${inVars[0] || '0.0'} * ${inVars[1] || '1.0'};`
   },
 
+  'Divide': {
+    type: 'Divide', category: 'Math', title: 'Divide (Float)',
+    inputs: [{ id: 'a', name: 'A', type: 'float' }, { id: 'b', name: 'B', type: 'float' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+    execute: (inputs) => (inputs[0] || 0) / (inputs[1] || 1),
+    glsl: (inVars, id) => `float ${id} = ${inVars[0] || '0.0'} / ${inVars[1] || '1.0'};`
+  },
+
+  'Mod': {
+    type: 'Mod', category: 'Math', title: 'Mod (Float)',
+    inputs: [{ id: 'a', name: 'A', type: 'float' }, { id: 'b', name: 'B', type: 'float' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+    execute: (inputs) => (inputs[0] || 0) % (inputs[1] || 1),
+    glsl: (inVars, id) => `float ${id} = mod(${inVars[0] || '0.0'}, ${inVars[1] || '1.0'});`
+  },
+
+  'Pow': {
+    type: 'Pow', category: 'Math', title: 'Pow',
+    inputs: [{ id: 'a', name: 'Base', type: 'float' }, { id: 'b', name: 'Exp', type: 'float' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+    execute: (inputs) => Math.pow(inputs[0] || 0, inputs[1] || 1),
+    glsl: (inVars, id) => `float ${id} = pow(${inVars[0] || '0.0'}, ${inVars[1] || '1.0'});`
+  },
+
   'Abs': {
-      type: 'Abs',
-      category: 'Math',
-      title: 'Abs',
+      type: 'Abs', category: 'Math', title: 'Abs',
       inputs: [{ id: 'in', name: 'In', type: 'float' }],
       outputs: [{ id: 'out', name: 'Out', type: 'float' }],
       execute: (i) => Math.abs(i[0]||0),
@@ -203,33 +324,19 @@ export const NodeRegistry: Record<string, NodeDef> = {
   },
 
   'Clamp': {
-      type: 'Clamp',
-      category: 'Math',
-      title: 'Clamp',
-      inputs: [
-          { id: 'x', name: 'X', type: 'float' },
-          { id: 'min', name: 'Min', type: 'float' },
-          { id: 'max', name: 'Max', type: 'float' }
-      ],
+      type: 'Clamp', category: 'Math', title: 'Clamp',
+      inputs: [{ id: 'x', name: 'X', type: 'float' }, { id: 'min', name: 'Min', type: 'float' }, { id: 'max', name: 'Max', type: 'float' }],
       outputs: [{ id: 'out', name: 'Out', type: 'float' }],
       execute: (inputs) => Math.max(inputs[1]||0, Math.min(inputs[2]||1, inputs[0]||0)),
       glsl: (inVars, id) => `float ${id} = clamp(${inVars[0]||'0.0'}, ${inVars[1]||'0.0'}, ${inVars[2]||'1.0'});`
   },
 
   'SmoothStep': {
-      type: 'SmoothStep',
-      category: 'Math',
-      title: 'SmoothStep',
-      inputs: [
-          { id: 'e0', name: 'Edge0', type: 'float' },
-          { id: 'e1', name: 'Edge1', type: 'float' },
-          { id: 'x', name: 'X', type: 'float' }
-      ],
+      type: 'SmoothStep', category: 'Math', title: 'SmoothStep',
+      inputs: [{ id: 'e0', name: 'Edge0', type: 'float' }, { id: 'e1', name: 'Edge1', type: 'float' }, { id: 'x', name: 'X', type: 'float' }],
       outputs: [{ id: 'out', name: 'Out', type: 'float' }],
       execute: (inputs) => {
-          const e0 = inputs[0] || 0;
-          const e1 = inputs[1] || 1;
-          const x = inputs[2] || 0;
+          const e0 = inputs[0] || 0; const e1 = inputs[1] || 1; const x = inputs[2] || 0;
           const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
           return t * t * (3 - 2 * t);
       },
@@ -237,59 +344,54 @@ export const NodeRegistry: Record<string, NodeDef> = {
   },
 
   'Step': {
-      type: 'Step',
-      category: 'Math',
-      title: 'Step',
-      inputs: [
-          { id: 'edge', name: 'Edge', type: 'float' },
-          { id: 'x', name: 'X', type: 'float' }
-      ],
+      type: 'Step', category: 'Math', title: 'Step',
+      inputs: [{ id: 'edge', name: 'Edge', type: 'float' }, { id: 'x', name: 'X', type: 'float' }],
       outputs: [{ id: 'out', name: 'Out', type: 'float' }],
-      execute: (inputs) => {
-          const edge = inputs[0] || 0.5;
-          const x = inputs[1] || 0;
-          return x < edge ? 0.0 : 1.0;
-      },
+      execute: (inputs) => { const edge = inputs[0] || 0.5; const x = inputs[1] || 0; return x < edge ? 0.0 : 1.0; },
       glsl: (inVars, id) => `float ${id} = step(${inVars[0] || '0.5'}, ${inVars[1] || '0.0'});`
   },
 
   'Distance': {
-      type: 'Distance',
-      category: 'Vector Math',
-      title: 'Distance',
-      inputs: [
-          { id: 'a', name: 'A', type: 'vec3' },
-          { id: 'b', name: 'B', type: 'vec3' }
-      ],
+      type: 'Distance', category: 'Vector Math', title: 'Distance',
+      inputs: [{ id: 'a', name: 'A', type: 'vec3' }, { id: 'b', name: 'B', type: 'vec3' }],
       outputs: [{ id: 'out', name: 'Dist', type: 'float' }],
-      execute: (inputs) => {
-          const a = inputs[0] || {x:0,y:0,z:0};
-          const b = inputs[1] || {x:0,y:0,z:0};
-          return Math.sqrt(Math.pow(a.x-b.x, 2) + Math.pow(a.y-b.y, 2) + Math.pow(a.z-b.z, 2));
-      },
+      execute: (i) => Math.hypot(i[0].x-i[1].x, i[0].y-i[1].y, i[0].z-i[1].z),
       glsl: (inVars, id) => `float ${id} = distance(${inVars[0] || 'vec3(0.0)'}, ${inVars[1] || 'vec3(0.0)'});`
   },
 
   'Length': {
-      type: 'Length',
-      category: 'Vector Math',
-      title: 'Length',
+      type: 'Length', category: 'Vector Math', title: 'Length (Vec3)',
       inputs: [{ id: 'in', name: 'Vec', type: 'vec3' }],
       outputs: [{ id: 'out', name: 'Len', type: 'float' }],
-      execute: (inputs) => {
-          const v = inputs[0] || {x:0,y:0,z:0};
-          return Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
-      },
+      execute: (i) => Math.hypot(i[0].x, i[0].y, i[0].z),
       glsl: (inVars, id) => `float ${id} = length(${inVars[0] || 'vec3(0.0)'});`
   },
   
-  'WaveViewer': {
-      type: 'WaveViewer',
-      category: 'Debug',
-      title: 'Wave Viewer',
-      inputs: [{ id: 'in', name: 'In', type: 'float' }],
-      outputs: [],
-      execute: (inputs) => inputs[0] 
+  'WaterTurbulence': {
+      type: 'WaterTurbulence', category: 'Effects', title: 'Water Turbulence (Code)',
+      inputs: [{ id: 'uv', name: 'UV', type: 'vec3' }, { id: 'time', name: 'Time', type: 'float' }],
+      outputs: [{ id: 'rgb', name: 'Color', type: 'vec3' }],
+      execute: () => ({ x:0, y:0, z:1 }),
+      glsl: (inVars, id) => `
+        vec3 ${id}_uv = ${inVars[0] || 'vec3(v_uv, 0.0)'};
+        float ${id}_time = ${inVars[1] || 'u_time'} * 0.5 + 23.0;
+        
+        vec2 p = mod(${id}_uv.xy * 6.28318530718 * 2.0, 6.28318530718) - 250.0;
+        vec2 i = vec2(p);
+        float c = 1.0;
+        float inten = .005;
+
+        for (int n = 0; n < 5; n++) 
+        {
+            float t = ${id}_time * (1.0 - (3.5 / float(n+1)));
+            i = p + vec2(cos(t - i.x) + sin(t + i.y), sin(t - i.y) + cos(t + i.x));
+            c += 1.0/length(vec2(p.x / (sin(i.x+t)/inten),p.y / (cos(i.y+t)/inten)));
+        }
+        c /= 5.0;
+        c = 1.17-pow(c, 1.4);
+        vec3 ${id} = vec3(pow(abs(c), 8.0));
+        ${id} = clamp(${id} + vec3(0.0, 0.35, 0.5), 0.0, 1.0);
+      `
   },
 
   // --- ECS / QUERY NODES (CPU ONLY) ---

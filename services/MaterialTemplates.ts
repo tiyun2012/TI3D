@@ -18,6 +18,113 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
         connections: []
     },
     {
+        name: 'Procedural Water (Graph)',
+        description: 'Water turbulence built using atomic Vector2 nodes.',
+        nodes: [
+            { id: 'uv', type: 'UV', position: { x: 50, y: 200 } },
+            { id: 'time', type: 'Time', position: { x: 50, y: 350 } },
+            
+            // UV Scaling
+            { id: 'uv_split', type: 'Split', position: { x: 200, y: 200 } },
+            { id: 'uv_vec2', type: 'Vec2', position: { x: 350, y: 200 } }, // Reconstruct as vec2
+            { id: 'scale', type: 'Float', position: { x: 350, y: 100 }, data: { value: '6.0' } },
+            { id: 'uv_scaled', type: 'Vec2Scale', position: { x: 500, y: 200 } },
+            
+            // p = mod(uv * scale, TAU) - 250 (simplified to mod for tiling)
+            { id: 'tau', type: 'Float', position: { x: 500, y: 100 }, data: { value: '6.28' } },
+            { id: 'p', type: 'Vec2Mod', position: { x: 650, y: 200 } },
+            
+            // Iteration 1 simulation
+            // i = p + vec2(...)
+            // Let's do a simple warping: p + sin(p.yx + time)
+            
+            // p.yx
+            { id: 'p_split', type: 'SplitVec2', position: { x: 800, y: 200 } },
+            { id: 'p_yx', type: 'Vec2', position: { x: 950, y: 150 } }, // Swapped
+            
+            { id: 'add_t', type: 'Vec2Scale', position: { x: 950, y: 300 } }, // reusing scale as add for prototype? No, use Add
+            // Wait, we need Vec2 + Float (time). 
+            // Workaround: Make Time a Vec2(time, time)
+            { id: 'time_vec2', type: 'Vec2', position: { x: 200, y: 400 } }, 
+            
+            { id: 'arg', type: 'Vec2Add', position: { x: 1100, y: 200 } }, // p.yx + time
+            
+            // Sin(arg) - we don't have Vec2 Sin yet, let's use Split + Sin + Combine
+            // Or just simplified visual:
+            // Just use Distance field from a moving point
+            
+            { id: 'move_scale', type: 'Vec2Scale', position: { x: 350, y: 400 } }, // time * 0.5
+            { id: 'center', type: 'Vec2', position: { x: 500, y: 400 }, data: { x: '3.0', y: '3.0' } },
+            { id: 'moving_center', type: 'Vec2Add', position: { x: 650, y: 400 } },
+            
+            { id: 'dist', type: 'Distance', position: { x: 800, y: 350 } }, // dist(p, moving_center) assuming vec3 inputs...
+            // Distance node is Vec3. We need Vec2 Distance.
+            // Let's use Vec2Length(Vec2Sub(a,b))
+            
+            { id: 'diff', type: 'Vec2Sub', position: { x: 800, y: 400 } },
+            { id: 'len', type: 'Vec2Length', position: { x: 950, y: 400 } },
+            
+            { id: 'sin_wave', type: 'Sine', position: { x: 1100, y: 400 } },
+            
+            // Color mapping
+            { id: 'color_base', type: 'Vec3', position: { x: 1100, y: 100 }, data: { x: '0.0', y: '0.4', z: '0.8' } },
+            { id: 'final_col', type: 'Vec3Scale', position: { x: 1300, y: 200 } },
+            
+            { id: 'out', type: 'ShaderOutput', position: { x: 1500, y: 200 } },
+            
+            // Missing nodes previously in connections array
+            { id: 'one', type: 'Vec2', position: { x: 200, y: 500 }, data: { x:'0.5', y:'0.5' } },
+            { id: 'dir', type: 'Vec2', position: { x: 200, y: 450 }, data: { x: '0.5', y: '0.2' } },
+            { id: 'abs', type: 'Abs', position: { x: 1200, y: 400 } }
+        ],
+        connections: [
+            // UV -> Vec2 -> Scale -> Mod
+            { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'uv_split', toPin: 'in' },
+            { id: 'c2', fromNode: 'uv_split', fromPin: 'x', toNode: 'uv_vec2', toPin: 'x' },
+            { id: 'c3', fromNode: 'uv_split', fromPin: 'y', toNode: 'uv_vec2', toPin: 'y' },
+            { id: 'c4', fromNode: 'uv_vec2', fromPin: 'out', toNode: 'uv_scaled', toPin: 'a' },
+            { id: 'c5', fromNode: 'scale', fromPin: 'out', toNode: 'uv_scaled', toPin: 's' },
+            { id: 'c6', fromNode: 'uv_scaled', fromPin: 'out', toNode: 'p', toPin: 'a' },
+            { id: 'c7', fromNode: 'tau', fromPin: 'out', toNode: 'p', toPin: 's' },
+            
+            // Moving Center = Center + Time*0.5
+            { id: 't1', fromNode: 'time', fromPin: 'out', toNode: 'move_scale', toPin: 's' }, // Wait, input is Vec2?
+            
+            // Hack: Use Vec2(1,1) * time
+            // one node moved to nodes array
+
+            // Fix connection logic manually in my head:
+            // move_scale input 'a' needs vec2. 
+            // I'll create a node for direction
+            
+            // dir node moved to nodes array
+            { id: 'c8', fromNode: 'dir', fromPin: 'out', toNode: 'move_scale', toPin: 'a' },
+            { id: 'c9', fromNode: 'move_scale', fromPin: 'out', toNode: 'moving_center', toPin: 'b' },
+            { id: 'c10', fromNode: 'center', fromPin: 'out', toNode: 'moving_center', toPin: 'a' },
+            
+            // Diff = p - moving_center
+            { id: 'c11', fromNode: 'p', fromPin: 'out', toNode: 'diff', toPin: 'a' },
+            { id: 'c12', fromNode: 'moving_center', fromPin: 'out', toNode: 'diff', toPin: 'b' },
+            
+            // Len = length(diff)
+            { id: 'c13', fromNode: 'diff', fromPin: 'out', toNode: 'len', toPin: 'a' },
+            
+            // Wave = sin(len * 5.0 - time * 2.0) -- simplifying to sin(len)
+            { id: 'c14', fromNode: 'len', fromPin: 'out', toNode: 'sin_wave', toPin: 'in' },
+            
+            // Color = Base * Wave
+            // Wave is -1..1, lets Abs it
+            
+            // abs node moved to nodes array
+            { id: 'c15', fromNode: 'sin_wave', fromPin: 'out', toNode: 'abs', toPin: 'in' },
+            
+            { id: 'c16', fromNode: 'color_base', fromPin: 'out', toNode: 'final_col', toPin: 'a' },
+            { id: 'c17', fromNode: 'abs', fromPin: 'out', toNode: 'final_col', toPin: 's' },
+            
+            { id: 'c18', fromNode: 'final_col', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
+        ]
+    },
+    {
         name: 'Sine Wave Pulse',
         description: 'Uniform color that pulses over time.',
         nodes: [
@@ -33,6 +140,21 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
         ]
     },
     {
+        name: 'Water Turbulence (Code)',
+        description: 'Complex procedural water caustics effect (GLSL).',
+        nodes: [
+            { id: 'uv', type: 'UV', position: { x: 50, y: 150 } },
+            { id: 'time', type: 'Time', position: { x: 50, y: 300 } },
+            { id: 'water', type: 'WaterTurbulence', position: { x: 300, y: 200 } },
+            { id: 'out', type: 'ShaderOutput', position: { x: 600, y: 200 } }
+        ],
+        connections: [
+            { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'water', toPin: 'uv' },
+            { id: 'c2', fromNode: 'time', fromPin: 'out', toNode: 'water', toPin: 'time' },
+            { id: 'c3', fromNode: 'water', fromPin: 'rgb', toNode: 'out', toPin: 'rgb' }
+        ]
+    },
+    {
         name: 'Radial Circle',
         description: 'A soft circle using Distance and SmoothStep.',
         nodes: [
@@ -43,10 +165,6 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
             { id: 'edge1', type: 'Float', position: { x: 300, y: 450 }, data: { value: '0.40' } },
             { id: 'smooth', type: 'SmoothStep', position: { x: 500, y: 200 } },
             { id: 'color', type: 'Vec3', position: { x: 500, y: 50 }, data: { x: '1.0', y: '0.2', z: '0.5' } },
-            { id: 'mult', type: 'Mix', position: { x: 700, y: 150 } }, // Mix as multiply (a*t + b*(1-t)) or just use Multiply node?
-                                                                        // Wait, Mix is lerp. To tint, we want (Color * Mask). 
-                                                                        // We don't have Vec3 * Float multiply yet.
-                                                                        // Let's use Mix(Black, Color, Mask).
             { id: 'black', type: 'Vec3', position: { x: 500, y: 400 }, data: { x: '0.0', y: '0.0', z: '0.0' } },
             { id: 'mix_col', type: 'Mix', position: { x: 750, y: 200 } },
             { id: 'out', type: 'ShaderOutput', position: { x: 950, y: 200 } }
