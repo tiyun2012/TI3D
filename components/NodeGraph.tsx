@@ -143,7 +143,8 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
     const pathRefs = useRef<Map<string, SVGPathElement>>(new Map());
     const hoverPortRef = useRef<boolean>(false);
     
-    const activeListenersRef = useRef<{ move?: (ev: MouseEvent) => void; up?: (ev: MouseEvent) => void }>({});
+    // Improved Listener Management: Includes 'cleanup' to safely reset React state if interactions are interrupted
+    const activeListenersRef = useRef<{ move?: (ev: MouseEvent) => void; up?: (ev: MouseEvent) => void; cleanup?: () => void }>({});
 
     // --- Loading Logic ---
     useEffect(() => {
@@ -277,6 +278,8 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
     const cleanupListeners = useCallback(() => {
         if (activeListenersRef.current.move) window.removeEventListener('mousemove', activeListenersRef.current.move);
         if (activeListenersRef.current.up) window.removeEventListener('mouseup', activeListenersRef.current.up);
+        // Important: Execute custom cleanup to reset component state (e.g. stop dragging wires, clear selection box)
+        if (activeListenersRef.current.cleanup) activeListenersRef.current.cleanup();
         activeListenersRef.current = {};
     }, []);
 
@@ -312,12 +315,12 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
 
             // CTRL + RMB = Cut Tool
             if (e.ctrlKey) {
+                // Ensure previous interactions are cleared cleanly
                 cleanupListeners();
+                
                 const startX = e.clientX - rect.left;
                 const startY = e.clientY - rect.top;
                 
-                // Convert to World for intersection logic later, but for visual line we use container-space (which is world * zoom + pan)
-                // Actually easier to draw cut line in overlay (screen space)
                 setCutLine({ start: {x: startX, y: startY}, end: {x: startX, y: startY} });
 
                 const onMove = (ev: MouseEvent) => {
@@ -325,7 +328,8 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
                 };
 
                 const onUp = (ev: MouseEvent) => {
-                    cleanupListeners();
+                    cleanupListeners(); // This triggers state cleanup
+                    setCutLine(null); // Explicit clear for safety, though cleanup does it too
                     
                     // Perform Cut Logic
                     // 1. Convert Cut Line to World Space
@@ -354,18 +358,18 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
                         }
                         return !intersected; // Keep if not intersected
                     }));
-
-                    setCutLine(null);
                 };
 
-                activeListenersRef.current = { move: onMove, up: onUp };
+                // Define cleanup to reset state if interrupted
+                const cleanup = () => setCutLine(null);
+
+                activeListenersRef.current = { move: onMove, up: onUp, cleanup };
                 window.addEventListener('mousemove', onMove);
                 window.addEventListener('mouseup', onUp);
                 return;
             }
 
             // Normal RMB = Context Menu
-            // FIX: Use relative coordinates to avoid offsets when inside fixed containers with backdrop-filter
             setContextMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top, visible: true });
             setPendingConnection(null);
             return;
@@ -399,18 +403,21 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
                 cancelAnimationFrame(frameId);
                 cleanupListeners();
             };
+            
+            const cleanup = () => cancelAnimationFrame(frameId);
 
-            activeListenersRef.current = { move: onMove, up: onUp };
+            activeListenersRef.current = { move: onMove, up: onUp, cleanup };
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
         } else if (e.button === 0) {
             // --- Left Click = Selection Box ---
+            // If dragging node, handleNodeDragStart captures it before this via stopPropagation
             if (!e.shiftKey && !e.ctrlKey) {
                 setSelectedNodeIds(new Set());
             }
+            
+            cleanupListeners();
 
-            // Fix: Use offset from client + accounting for border (clientLeft/Top)
-            // This ensures 0,0 aligns with the inner content box where absolute children live
             const borderLeft = containerRef.current?.clientLeft || 0;
             const borderTop = containerRef.current?.clientTop || 0;
             const startX = e.clientX - rect.left - borderLeft;
@@ -445,7 +452,6 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
                      nodeRefs.current.forEach((el, id) => {
                          const node = nodeMap.get(id);
                          if (!node) return;
-                         // Check intersection of Node Rect with Selection Rect in World Space
                          const nx = node.position.x;
                          const ny = node.position.y;
                          const nw = el.offsetWidth;
@@ -465,7 +471,12 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
                 setSelectionBox(null);
             };
             
-            activeListenersRef.current = { move: onMove, up: onUp };
+            const cleanup = () => {
+                cancelAnimationFrame(frameId);
+                setSelectionBox(null);
+            };
+            
+            activeListenersRef.current = { move: onMove, up: onUp, cleanup };
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
         }
@@ -588,8 +599,10 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
                 return n;
             }));
         };
+        
+        const cleanup = () => cancelAnimationFrame(frameId);
 
-        activeListenersRef.current = { move: onMove, up: onUp };
+        activeListenersRef.current = { move: onMove, up: onUp, cleanup };
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup', onUp);
     }, [nodes, connections, cleanupListeners, selectedNodeIds, nodeMap]);
@@ -597,11 +610,18 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
     const handlePinDown = useCallback((e: React.MouseEvent, nodeId: string, pinId: string, type: 'input'|'output') => {
         e.stopPropagation();
         e.preventDefault();
+        
+        // FIX: Only allow Left Click for wiring to avoid accidental triggers
+        if (e.button !== 0) return;
+        
         cleanupListeners();
 
         const rect = containerRef.current?.getBoundingClientRect();
         if(!rect) return;
         
+        // Track start for threshold check
+        const startMouse = { x: e.clientX, y: e.clientY };
+
         const pos = GraphMath.screenToWorld(e.clientX, e.clientY, rect, transformRef.current);
         const dataType = getPortType(nodeId, pinId, type);
         
@@ -618,15 +638,21 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
             cleanupListeners();
             setConnecting(null);
             
+            // Calculate drag distance
+            const dist = Math.sqrt(Math.pow(ev.clientX - startMouse.x, 2) + Math.pow(ev.clientY - startMouse.y, 2));
+
             // Workflow: Drop on background triggers Context Menu
-            if (!hoverPortRef.current) {
+            // FIX: Added dist check to prevent accidental clicks causing menu to popup (threshold > 10px)
+            if (!hoverPortRef.current && dist > 10) {
                 // FIX: Use relative coordinates
                 setContextMenu({ x: ev.clientX - rect.left, y: ev.clientY - rect.top, visible: true });
                 setPendingConnection({ nodeId, pinId, type });
             }
         };
+        
+        const cleanup = () => setConnecting(null);
 
-        activeListenersRef.current = { move: onMove, up: onUp };
+        activeListenersRef.current = { move: onMove, up: onUp, cleanup };
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup', onUp);
     }, [cleanupListeners, getPortType]);
