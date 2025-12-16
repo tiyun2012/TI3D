@@ -63,10 +63,10 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
             { id: 'tint', type: 'Vec3', position: { x: 1900, y: 50 }, data: { x: '0.1', y: '0.5', z: '1.0' } },
             { id: 'final_col', type: 'Vec3Scale', position: { x: 2050, y: 150 } },
             
-            // --- CLAMP ---
+            // --- CLAMP (Use Vec3Clamp since output of final_col is Vec3) ---
             { id: 'clamp_min', type: 'Float', position: { x: 2050, y: 250 }, data: { value: '0.0' } },
             { id: 'clamp_max', type: 'Float', position: { x: 2050, y: 300 }, data: { value: '1.5' } }, // Allow slight HDR
-            { id: 'clamped', type: 'Clamp', position: { x: 2200, y: 150 } },
+            { id: 'clamped', type: 'Vec3Clamp', position: { x: 2200, y: 150 } },
 
             // --- OUT ---
             { id: 'out', type: 'ShaderOutput', position: { x: 2400, y: 150 } }
@@ -117,7 +117,8 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
             { id: 'f_3', fromNode: 'tint', fromPin: 'out', toNode: 'final_col', toPin: 'a' },
             { id: 'f_4', fromNode: 'sharp', fromPin: 'out', toNode: 'final_col', toPin: 's' },
             
-            { id: 'f_5', fromNode: 'final_col', fromPin: 'out', toNode: 'clamped', toPin: 'x' },
+            // Connect to Vec3Clamp (uses 'in' instead of 'x')
+            { id: 'f_5', fromNode: 'final_col', fromPin: 'out', toNode: 'clamped', toPin: 'in' },
             { id: 'f_6', fromNode: 'clamp_min', fromPin: 'out', toNode: 'clamped', toPin: 'min' },
             { id: 'f_7', fromNode: 'clamp_max', fromPin: 'out', toNode: 'clamped', toPin: 'max' },
             

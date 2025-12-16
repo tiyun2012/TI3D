@@ -25,6 +25,7 @@ interface ShaderPreviewProps {
 export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ minimal = false }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const requestRef = useRef<number>(0);
+    const programRef = useRef<WebGLProgram | null>(null);
     
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -53,15 +54,12 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ minimal = false })
         const uvBuf = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
         gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.STATIC_DRAW);
-        gl.enableVertexAttribArray(8); // Match main renderer layout location=8 for consistency
+        gl.enableVertexAttribArray(8); 
         gl.vertexAttribPointer(8, 2, gl.FLOAT, false, 0, 0);
 
-        let program: WebGLProgram | null = null;
         let compiledSource = '';
 
         const compile = (fragSource: string) => {
-            if (program) gl.deleteProgram(program);
-            
             const vs = gl.createShader(gl.VERTEX_SHADER)!;
             gl.shaderSource(vs, VERTEX_SHADER);
             gl.compileShader(vs);
@@ -71,16 +69,23 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ minimal = false })
             gl.compileShader(fs);
             
             if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
+                // If compilation fails, keep using the old program if it exists
                 // console.warn("Shader Preview Compile Error:", gl.getShaderInfoLog(fs));
-                // Keep old program or use fallback if valid
-                if (program) return; 
+                return; 
             }
 
             const p = gl.createProgram()!;
             gl.attachShader(p, vs);
             gl.attachShader(p, fs);
             gl.linkProgram(p);
-            program = p;
+
+            if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+                return;
+            }
+
+            // Safe swap: Only delete old program AFTER new one is ready
+            if (programRef.current) gl.deleteProgram(programRef.current);
+            programRef.current = p;
         };
 
         compile(FALLBACK_FRAGMENT);
@@ -92,25 +97,25 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ minimal = false })
                 compile(compiledSource);
             }
 
-            // Sync canvas size to display size
+            // Sync canvas size
             const displayWidth = canvas.clientWidth;
             const displayHeight = canvas.clientHeight;
             if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
                 canvas.width = displayWidth;
                 canvas.height = displayHeight;
+                gl.viewport(0, 0, canvas.width, canvas.height);
             }
 
-            gl.viewport(0, 0, canvas.width, canvas.height);
             gl.clearColor(0,0,0,1);
             gl.clear(gl.COLOR_BUFFER_BIT);
 
-            if (program) {
-                gl.useProgram(program);
+            if (programRef.current) {
+                gl.useProgram(programRef.current);
                 
-                const uTime = gl.getUniformLocation(program, 'u_time');
+                const uTime = gl.getUniformLocation(programRef.current, 'u_time');
                 if (uTime) gl.uniform1f(uTime, time / 1000);
                 
-                const uRes = gl.getUniformLocation(program, 'u_resolution');
+                const uRes = gl.getUniformLocation(programRef.current, 'u_resolution');
                 if (uRes) gl.uniform2f(uRes, canvas.width, canvas.height);
 
                 gl.bindVertexArray(vao);
@@ -127,7 +132,7 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({ minimal = false })
             gl.deleteVertexArray(vao);
             gl.deleteBuffer(pBuf);
             gl.deleteBuffer(uvBuf);
-            if (program) gl.deleteProgram(program);
+            if (programRef.current) gl.deleteProgram(programRef.current);
         };
     }, []);
 

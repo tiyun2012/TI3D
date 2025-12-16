@@ -1,3 +1,4 @@
+
 // services/NodeRegistry.ts
 
 import type { Ti3DEngine } from './engine';
@@ -247,6 +248,22 @@ export const NodeRegistry: Record<string, NodeDef> = {
     outputs: [{ id: 'out', name: 'Out', type: 'vec3' }],
     execute: (i) => ({x:(i[0]?.x||0)*i[1], y:(i[0]?.y||0)*i[1], z:(i[0]?.z||0)*i[1]}),
     glsl: (v, id) => `vec3 ${id} = ${v[0]||'vec3(0)'} * ${v[1]||'1.0'};`
+  },
+  'Vec3Clamp': {
+    type: 'Vec3Clamp', category: 'Vec3 Math', title: 'Clamp (Vec3)',
+    inputs: [{ id: 'in', name: 'In', type: 'vec3' }, { id: 'min', name: 'Min', type: 'float' }, { id: 'max', name: 'Max', type: 'float' }],
+    outputs: [{ id: 'out', name: 'Out', type: 'vec3' }],
+    execute: (inputs) => {
+        const v = inputs[0] || {x:0,y:0,z:0};
+        const min = inputs[1] || 0.0;
+        const max = inputs[2] || 1.0;
+        return {
+            x: Math.max(min, Math.min(max, v.x)),
+            y: Math.max(min, Math.min(max, v.y)),
+            z: Math.max(min, Math.min(max, v.z))
+        };
+    },
+    glsl: (v, id) => `vec3 ${id} = clamp(${v[0]||'vec3(0)'}, ${v[1]||'0.0'}, ${v[2]||'1.0'});`
   },
 
   // --- SCALAR MATH ---
