@@ -81,7 +81,7 @@ const GameWrapper = () => (
 
 const GraphWrapper = () => {
     const ctx = useContext(EditorContext);
-    return <NodeGraph materialId={ctx?.editingMaterialId} />;
+    return <NodeGraph assetId={ctx?.editingAssetId} />;
 };
 
 const ConsoleWrapper = () => (
@@ -285,7 +285,7 @@ const App: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [gizmoConfig, setGizmoConfig] = useState<GizmoConfiguration>(DEFAULT_GIZMO_CONFIG);
   const [uiConfig, setUiConfig] = useState<UIConfiguration>(DEFAULT_UI_CONFIG);
-  const [editingMaterialId, setEditingMaterialId] = useState<string | null>(null);
+  const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
 
   const refreshState = useCallback(() => {
     setEntities(engineInstance.ecs.getAllProxies(engineInstance.sceneGraph));
@@ -334,8 +334,8 @@ const App: React.FC = () => {
       setGizmoConfig,
       uiConfig,
       setUiConfig,
-      editingMaterialId,
-      setEditingMaterialId
+      editingAssetId,
+      setEditingAssetId
     }}>
         <WindowManager>
             <EditorLayout />

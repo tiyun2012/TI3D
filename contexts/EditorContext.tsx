@@ -40,8 +40,8 @@ export interface EditorContextType {
   setUiConfig: (config: UIConfiguration) => void;
   
   // Asset Editing
-  editingMaterialId: string | null;
-  setEditingMaterialId: (id: string | null) => void;
+  editingAssetId: string | null;
+  setEditingAssetId: (id: string | null) => void;
 }
 
 export const EditorContext = React.createContext<EditorContextType | null>(null);

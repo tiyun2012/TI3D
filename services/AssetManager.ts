@@ -1,5 +1,5 @@
 
-import { StaticMeshAsset, MaterialAsset, PhysicsMaterialAsset, GraphNode, GraphConnection, Asset } from '../types';
+import { StaticMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, GraphNode, GraphConnection, Asset } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 
 class AssetManagerService {
@@ -23,6 +23,7 @@ class AssetManagerService {
         this.registerDefaultAssets();
         this.createMaterial('Standard', MATERIAL_TEMPLATES[1]);
         this.createDefaultPhysicsMaterials();
+        this.createScript('Rotate Object');
     }
 
     registerAsset(asset: Asset): number {
@@ -100,7 +101,36 @@ class AssetManagerService {
         return asset;
     }
 
-    duplicateMaterial(sourceId: string): Asset | null {
+    createScript(name: string): ScriptAsset {
+        const id = crypto.randomUUID();
+        // Default Logic Graph: Rotate All Entities
+        const nodes: GraphNode[] = [
+            { id: 'query', type: 'AllEntities', position: { x: 50, y: 100 } },
+            { id: 'time', type: 'Time', position: { x: 50, y: 300 } },
+            { id: 'speed', type: 'Float', position: { x: 250, y: 350 }, data: { value: '0.5' } },
+            { id: 'mul', type: 'Multiply', position: { x: 450, y: 300 } },
+            { id: 'rot', type: 'Vec3', position: { x: 650, y: 300 }, data: { x: '0', y: '0', z: '0' } },
+            { id: 'transform', type: 'BatchApplyTransform', position: { x: 900, y: 100 } }
+        ];
+        const connections: GraphConnection[] = [
+            { id: 'c1', fromNode: 'query', fromPin: 'out', toNode: 'transform', toPin: 'entities' },
+            { id: 'c2', fromNode: 'time', fromPin: 'out', toNode: 'mul', toPin: 'a' },
+            { id: 'c3', fromNode: 'speed', fromPin: 'out', toNode: 'mul', toPin: 'b' },
+            { id: 'c4', fromNode: 'mul', fromPin: 'out', toNode: 'rot', toPin: 'y' },
+            { id: 'c5', fromNode: 'rot', fromPin: 'out', toNode: 'transform', toPin: 'rot' }
+        ];
+
+        const asset: ScriptAsset = {
+            id,
+            name,
+            type: 'SCRIPT',
+            data: { nodes, connections }
+        };
+        this.registerAsset(asset);
+        return asset;
+    }
+
+    duplicateAsset(sourceId: string): Asset | null {
         const source = this.assets.get(sourceId);
         if (!source) return null;
 
@@ -111,6 +141,10 @@ class AssetManagerService {
         } else if (source.type === 'PHYSICS_MATERIAL') {
             const newMat = this.createPhysicsMaterial(`${source.name} (Clone)`, JSON.parse(JSON.stringify(source.data)));
             return newMat;
+        } else if (source.type === 'SCRIPT') {
+            const newScript = this.createScript(`${source.name} (Clone)`);
+            newScript.data = JSON.parse(JSON.stringify(source.data));
+            return newScript;
         }
         return null;
     }
@@ -120,6 +154,14 @@ class AssetManagerService {
         if (asset && asset.type === 'MATERIAL') {
             asset.data = { nodes, connections, glsl };
             console.log(`[AssetManager] Saved Material: ${asset.name}`);
+        }
+    }
+
+    saveScript(id: string, nodes: GraphNode[], connections: GraphConnection[]) {
+        const asset = this.assets.get(id);
+        if (asset && asset.type === 'SCRIPT') {
+            asset.data = { nodes, connections };
+            console.log(`[AssetManager] Saved Script: ${asset.name}`);
         }
     }
     

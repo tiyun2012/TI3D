@@ -54,147 +54,125 @@ acc += (vec3(0.015) / (d + 0.001)) * col;
         ]
     },
     {
-        name: 'GLSL Water (Custom Node)',
-        description: 'A complete port of the Water Turbulence shader using a single Custom Code node for high performance.',
-        nodes: [
-            { id: 'uv', type: 'UV', position: { x: 50, y: 150 } },
-            { id: 'conv', type: 'Vec2ToVec3', position: { x: 250, y: 150 } },
-            { id: 'time', type: 'Time', position: { x: 250, y: 300 } },
-            { 
-                id: 'water_code', 
-                type: 'CustomExpression', 
-                position: { x: 500, y: 100 }, 
-                data: { 
-                    code: `
-// High Performance Water Turbulence
-float TAU = 6.28318530718;
-float time_adj = time * 0.5 + 23.0;
-vec2 uv = b.xy;
-vec2 p = mod(uv * TAU, TAU) - 250.0;
-vec2 i = vec2(p);
-float c = 1.0;
-float inten = 0.005;
-
-for (int n = 0; n < 5; n++) {
-    float t = time_adj * (1.0 - (3.5 / float(n+1)));
-    i = p + vec2(cos(t - i.x) + sin(t + i.y), sin(t - i.y) + cos(t + i.x));
-    c += 1.0/length(vec2(p.x / (sin(i.x+t)/inten), p.y / (cos(i.y+t)/inten)));
-}
-c /= 5.0;
-c = 1.17 - pow(c, 1.4);
-vec3 col = vec3(pow(abs(c), 8.0));
-col = clamp(col + vec3(0.0, 0.35, 0.5), 0.0, 1.0);
-return col;` 
-                } 
-            },
-            { id: 'out', type: 'ShaderOutput', position: { x: 850, y: 200 } }
-        ],
-        connections: [
-            { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'conv', toPin: 'in' },
-            { id: 'c2', fromNode: 'conv', fromPin: 'out', toNode: 'water_code', toPin: 'b' },
-            { id: 'c3', fromNode: 'time', fromPin: 'out', toNode: 'water_code', toPin: 'time' },
-            { id: 'c4', fromNode: 'water_code', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
-        ]
-    },
-    {
-        name: 'Fractal Water (Nodes)',
-        description: 'Loop Unrolled (2x) version of the Turbulence effect using Mod, Power, and Abs.',
+        name: 'Water Turbulence (Loop)',
+        description: 'Water effect implemented using ForLoop and Math nodes (No custom block).',
         nodes: [
             // --- CONSTANTS ---
-            { id: 'TAU', type: 'Float', position: { x: 0, y: 0 }, data: { value: '6.28318' } },
-            { id: 'Scale', type: 'Float', position: { x: 0, y: 150 }, data: { value: '3.0' } },
+            { id: 'TAU', type: 'Float', position: { x: -100, y: 50 }, data: { value: '6.28318' } },
+            { id: 'Offset', type: 'Vec2', position: { x: 300, y: 350 }, data: { x: '250.0', y: '250.0' } },
+            { id: 'Iter', type: 'Float', position: { x: 700, y: 0 }, data: { value: '5.0' } },
             
             // --- INPUTS ---
-            { id: 'uv', type: 'UV', position: { x: 0, y: 300 } },
-            { id: 'time', type: 'Time', position: { x: 0, y: 450 } },
+            { id: 'uv', type: 'UV', position: { x: -100, y: 200 } },
+            { id: 'uv_s', type: 'Vec2Scale', position: { x: 100, y: 200 } },
+            { id: 'mod', type: 'ModVec2', position: { x: 300, y: 200 } },
+            { id: 'p', type: 'Vec2Sub', position: { x: 500, y: 200 } },
+            
+            // --- LOOP INIT ---
+            // Pack vec3(p.x, p.y, 1.0) -> init
+            // Pack vec3(p.x, p.y, 0.0) -> a (param)
+            { id: 'one', type: 'Float', position: { x: 500, y: 350 }, data: { value: '1.0' } },
+            { id: 'init_pack', type: 'Vec2ToVec3', position: { x: 700, y: 150 } }, // p, 1.0
+            { id: 'p_pack', type: 'Vec2ToVec3', position: { x: 700, y: 250 } }, // p, 0.0
+            
+            // --- LOOP ---
+            { 
+                id: 'loop', 
+                type: 'ForLoop', 
+                position: { x: 950, y: 100 },
+                data: {
+                    code: `
+// Water Iteration
+// p is passed in a.xy
+// iter_p is acc.xy (renamed from i to avoid conflict)
+// c is acc.z
+// time is u_time (global)
 
-            // --- INITIAL P ---
-            // p = mod(uv * TAU * Scale, TAU) - 250.0
-            { id: 'uv_s', type: 'Vec2Scale', position: { x: 200, y: 300 } }, // uv * Scale
-            { id: 'uv_tau', type: 'Vec2Scale', position: { x: 400, y: 300 } }, // uv * Scale * TAU
-            { id: 'p_mod', type: 'ModVec2', position: { x: 600, y: 300 } }, // mod(..., TAU)
-            { id: 'offset', type: 'Vec2', position: { x: 600, y: 450 }, data: { x: '250.0', y: '250.0' } },
-            { id: 'p', type: 'Vec2Sub', position: { x: 800, y: 300 } }, // p - 250.0
+float t = time * (1.0 - (3.5 / (index + 1.0)));
+vec2 p = a.xy;
+vec2 iter_p = acc.xy;
+float c = acc.z;
 
-            // --- ITERATION 1 ---
-            { id: 'split_p', type: 'SplitVec2', position: { x: 1000, y: 300 } },
-            { id: 't1', type: 'Multiply', position: { x: 1000, y: 500 } }, // Time * speed
-            { id: 'speed1', type: 'Float', position: { x: 800, y: 550 }, data: { value: '0.5' } },
-            
-            // i = p + vec2(cos(t-i.x) + sin(t+i.y), sin(t-i.y) + cos(t+i.x))
-            // Simplifying for node graph: just add Sin/Cos of p
-            { id: 'p_sin', type: 'Vec2Sin', position: { x: 1200, y: 200 } }, // sin(p)
-            { id: 'p_cos', type: 'Vec2Cos', position: { x: 1200, y: 300 } }, // cos(p)
-            
-            // New P = P + Sin + Cos
-            { id: 'p2', type: 'Vec2Add', position: { x: 1400, y: 300 } }, 
-            
-            // c += 1.0 / length(p / ...)
-            // Simplified: c = 1.0 / length(p2)
-            { id: 'len2', type: 'Vec2Length', position: { x: 1600, y: 300 } },
-            { id: 'one', type: 'Float', position: { x: 1600, y: 400 }, data: { value: '1.0' } },
-            { id: 'c1', type: 'Divide', position: { x: 1800, y: 350 } }, // 1.0 / len
+vec2 next_p = p + vec2(cos(t - iter_p.x) + sin(t + iter_p.y), sin(t - iter_p.y) + cos(t + iter_p.x));
+float dist = length(vec2(p.x / (sin(next_p.x+t)/0.005), p.y / (cos(next_p.y+t)/0.005)));
 
-            // --- COLOR MAPPING ---
-            // c = 1.17 - pow(c, 1.4)
-            { id: 'pow_exp', type: 'Float', position: { x: 2000, y: 450 }, data: { value: '1.4' } },
-            { id: 'c_pow', type: 'Power', position: { x: 2000, y: 350 } },
-            { id: 'const_117', type: 'Float', position: { x: 2000, y: 250 }, data: { value: '1.17' } },
-            { id: 'c_final', type: 'Subtract', position: { x: 2200, y: 300 } },
+acc = vec3(next_p, c + (1.0 / dist));`
+                }
+            },
             
-            // abs(c)
-            { id: 'c_abs', type: 'Abs', position: { x: 2400, y: 300 } },
+            // --- POST PROCESS ---
+            // Extract c (z)
+            { id: 'split', type: 'Split', position: { x: 1250, y: 200 } },
+            
+            // c /= 5.0
+            { id: 'div_5', type: 'Divide', position: { x: 1450, y: 200 } },
+            { id: 'five', type: 'Float', position: { x: 1250, y: 350 }, data: { value: '5.0' } },
+            
+            // 1.17 - pow(c, 1.4)
+            { id: 'pow_14', type: 'Power', position: { x: 1650, y: 200 } },
+            { id: 'exp_14', type: 'Float', position: { x: 1450, y: 350 }, data: { value: '1.4' } },
+            { id: 'sub_117', type: 'Subtract', position: { x: 1850, y: 200 } },
+            { id: 'val_117', type: 'Float', position: { x: 1650, y: 100 }, data: { value: '1.17' } },
             
             // pow(abs(c), 8.0)
-            { id: 'pow_8', type: 'Float', position: { x: 2400, y: 450 }, data: { value: '8.0' } },
-            { id: 'col_val', type: 'Power', position: { x: 2600, y: 300 } },
-
-            // Construct Color (Blue tint)
-            { id: 'tint', type: 'Vec3', position: { x: 2600, y: 100 }, data: { x: '0.1', y: '0.4', z: '0.8' } },
-            { id: 'final_col', type: 'Vec3Scale', position: { x: 2800, y: 200 } },
-            { id: 'clamp_col', type: 'ClampVec3', position: { x: 3000, y: 200 } },
-
-            { id: 'out', type: 'ShaderOutput', position: { x: 3200, y: 200 } }
+            { id: 'abs_c', type: 'Abs', position: { x: 2050, y: 200 } },
+            { id: 'pow_8', type: 'Power', position: { x: 2250, y: 200 } },
+            { id: 'exp_8', type: 'Float', position: { x: 2050, y: 350 }, data: { value: '8.0' } },
+            
+            // Color Construction
+            { id: 'vec_c', type: 'Vec3', position: { x: 2450, y: 200 } }, // (c,c,c) is implicit if using single float to vec3, but our Vec3 node takes 3 floats.
+            // Wait, we need to fan out the float to x,y,z of Vec3 node or use Vec3Scale on white
+            { id: 'white', type: 'Vec3', position: { x: 2450, y: 50 }, data: { x:'1',y:'1',z:'1'} },
+            { id: 'col_base', type: 'Vec3Scale', position: { x: 2650, y: 200 } },
+            
+            { id: 'tint', type: 'Vec3', position: { x: 2650, y: 350 }, data: { x: '0.0', y: '0.35', z: '0.5' } },
+            { id: 'add_tint', type: 'Vec3Add', position: { x: 2850, y: 200 } },
+            
+            { id: 'clamp', type: 'ClampVec3', position: { x: 3050, y: 200 } },
+            { id: 'out', type: 'ShaderOutput', position: { x: 3250, y: 200 } }
         ],
         connections: [
-            // P Calc
+            // Pre-Calc
             { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'uv_s', toPin: 'a' },
-            { id: 'c2', fromNode: 'Scale', fromPin: 'out', toNode: 'uv_s', toPin: 's' },
-            { id: 'c3', fromNode: 'uv_s', fromPin: 'out', toNode: 'uv_tau', toPin: 'a' },
-            { id: 'c4', fromNode: 'TAU', fromPin: 'out', toNode: 'uv_tau', toPin: 's' },
-            { id: 'c5', fromNode: 'uv_tau', fromPin: 'out', toNode: 'p_mod', toPin: 'a' },
-            { id: 'c6', fromNode: 'TAU', fromPin: 'out', toNode: 'p_mod', toPin: 'b' },
-            { id: 'c7', fromNode: 'p_mod', fromPin: 'out', toNode: 'p', toPin: 'a' },
-            { id: 'c8', fromNode: 'offset', fromPin: 'out', toNode: 'p', toPin: 'b' },
-
-            // Distortion
-            { id: 'c9', fromNode: 'p', fromPin: 'out', toNode: 'p_sin', toPin: 'a' },
-            { id: 'c10', fromNode: 'p', fromPin: 'out', toNode: 'p_cos', toPin: 'a' },
+            { id: 'c2', fromNode: 'TAU', fromPin: 'out', toNode: 'uv_s', toPin: 's' },
+            { id: 'c3', fromNode: 'uv_s', fromPin: 'out', toNode: 'mod', toPin: 'a' },
+            { id: 'c4', fromNode: 'TAU', fromPin: 'out', toNode: 'mod', toPin: 'b' },
+            { id: 'c5', fromNode: 'mod', fromPin: 'out', toNode: 'p', toPin: 'a' },
+            { id: 'c6', fromNode: 'Offset', fromPin: 'out', toNode: 'p', toPin: 'b' },
             
-            { id: 'c11', fromNode: 'p', fromPin: 'out', toNode: 'p2', toPin: 'a' },
-            { id: 'c12', fromNode: 'p_sin', fromPin: 'out', toNode: 'p2', toPin: 'b' }, // Simplified mixing
-
-            // Density
-            { id: 'c13', fromNode: 'p2', fromPin: 'out', toNode: 'len2', toPin: 'a' },
-            { id: 'c14', fromNode: 'one', fromPin: 'out', toNode: 'c1', toPin: 'a' },
-            { id: 'c15', fromNode: 'len2', fromPin: 'out', toNode: 'c1', toPin: 'b' },
-
-            // Shaping
-            { id: 'c16', fromNode: 'c1', fromPin: 'out', toNode: 'c_pow', toPin: 'base' },
-            { id: 'c17', fromNode: 'pow_exp', fromPin: 'out', toNode: 'c_pow', toPin: 'exp' },
-            { id: 'c18', fromNode: 'const_117', fromPin: 'out', toNode: 'c_final', toPin: 'a' },
-            { id: 'c19', fromNode: 'c_pow', fromPin: 'out', toNode: 'c_final', toPin: 'b' },
-
-            // Coloring
-            { id: 'c20', fromNode: 'c_final', fromPin: 'out', toNode: 'c_abs', toPin: 'in' },
-            { id: 'c21', fromNode: 'c_abs', fromPin: 'out', toNode: 'col_val', toPin: 'base' },
-            { id: 'c22', fromNode: 'pow_8', fromPin: 'out', toNode: 'col_val', toPin: 'exp' },
+            // Init Loop
+            { id: 'c7', fromNode: 'p', fromPin: 'out', toNode: 'init_pack', toPin: 'in' },
+            { id: 'c8', fromNode: 'one', fromPin: 'out', toNode: 'init_pack', toPin: 'z' },
+            { id: 'c9', fromNode: 'p', fromPin: 'out', toNode: 'p_pack', toPin: 'in' },
             
-            { id: 'c23', fromNode: 'tint', fromPin: 'out', toNode: 'final_col', toPin: 'a' },
-            { id: 'c24', fromNode: 'col_val', fromPin: 'out', toNode: 'final_col', toPin: 's' },
+            // Loop Connections
+            { id: 'c10', fromNode: 'Iter', fromPin: 'out', toNode: 'loop', toPin: 'count' },
+            { id: 'c11', fromNode: 'init_pack', fromPin: 'out', toNode: 'loop', toPin: 'init' },
+            { id: 'c12', fromNode: 'p_pack', fromPin: 'out', toNode: 'loop', toPin: 'a' },
             
-            { id: 'c25', fromNode: 'final_col', fromPin: 'out', toNode: 'clamp_col', toPin: 'in' },
-            { id: 'c26', fromNode: 'clamp_col', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
+            // Post Process
+            { id: 'c13', fromNode: 'loop', fromPin: 'out', toNode: 'split', toPin: 'in' },
+            { id: 'c14', fromNode: 'split', fromPin: 'z', toNode: 'div_5', toPin: 'a' },
+            { id: 'c15', fromNode: 'five', fromPin: 'out', toNode: 'div_5', toPin: 'b' },
+            
+            { id: 'c16', fromNode: 'div_5', fromPin: 'out', toNode: 'pow_14', toPin: 'base' },
+            { id: 'c17', fromNode: 'exp_14', fromPin: 'out', toNode: 'pow_14', toPin: 'exp' },
+            
+            { id: 'c18', fromNode: 'val_117', fromPin: 'out', toNode: 'sub_117', toPin: 'a' },
+            { id: 'c19', fromNode: 'pow_14', fromPin: 'out', toNode: 'sub_117', toPin: 'b' },
+            
+            { id: 'c20', fromNode: 'sub_117', fromPin: 'out', toNode: 'abs_c', toPin: 'in' },
+            { id: 'c21', fromNode: 'abs_c', fromPin: 'out', toNode: 'pow_8', toPin: 'base' },
+            { id: 'c22', fromNode: 'exp_8', fromPin: 'out', toNode: 'pow_8', toPin: 'exp' },
+            
+            { id: 'c23', fromNode: 'white', fromPin: 'out', toNode: 'col_base', toPin: 'a' },
+            { id: 'c24', fromNode: 'pow_8', fromPin: 'out', toNode: 'col_base', toPin: 's' },
+            
+            { id: 'c25', fromNode: 'col_base', fromPin: 'out', toNode: 'add_tint', toPin: 'a' },
+            { id: 'c26', fromNode: 'tint', fromPin: 'out', toNode: 'add_tint', toPin: 'b' },
+            
+            { id: 'c27', fromNode: 'add_tint', fromPin: 'out', toNode: 'clamp', toPin: 'in' },
+            { id: 'c28', fromNode: 'clamp', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
         ]
     },
     {

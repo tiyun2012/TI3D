@@ -9,10 +9,10 @@ import { engineInstance } from '../services/engine';
 
 export const ProjectPanel: React.FC = () => {
     const [tab, setTab] = useState<'PROJECT' | 'CONSOLE'>('PROJECT');
-    const [filter, setFilter] = useState<'ALL' | 'MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL'>('ALL');
+    const [filter, setFilter] = useState<'ALL' | 'MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'SCRIPT'>('ALL');
     const [search, setSearch] = useState('');
     const [scale, setScale] = useState(40);
-    const { setEditingMaterialId, setSelectedIds, setSelectionType } = useContext(EditorContext)!;
+    const { setEditingAssetId, setSelectedIds, setSelectionType } = useContext(EditorContext)!;
     const wm = useContext(WindowManagerContext);
     
     // UI State
@@ -46,8 +46,8 @@ export const ProjectPanel: React.FC = () => {
 
     const handleDoubleClick = (assetId: string) => {
         const asset = assetManager.getAsset(assetId);
-        if (asset && asset.type === 'MATERIAL') {
-            setEditingMaterialId(assetId);
+        if (asset && (asset.type === 'MATERIAL' || asset.type === 'SCRIPT')) {
+            setEditingAssetId(assetId);
             wm?.openWindow('graph');
         }
     };
@@ -72,8 +72,13 @@ export const ProjectPanel: React.FC = () => {
         setRefresh(r => r + 1);
     };
 
+    const createScript = () => {
+        assetManager.createScript(`New Script ${Math.floor(Math.random() * 1000)}`);
+        setRefresh(r => r + 1);
+    };
+
     const duplicateAsset = (id: string) => {
-        assetManager.duplicateMaterial(id);
+        assetManager.duplicateAsset(id);
         setRefresh(r => r + 1);
     };
 
@@ -126,7 +131,9 @@ export const ProjectPanel: React.FC = () => {
                                         </div>
                                     ))}
                                     <div className="border-t border-white/10 my-1"></div>
-                                    <div className="px-3 py-1 text-[9px] text-text-secondary uppercase font-bold tracking-wider opacity-50">Physics</div>
+                                    <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => createScript()}>
+                                        Logic Script
+                                    </div>
                                     <div 
                                         className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer"
                                         onClick={() => createPhysicsMaterial()}
@@ -163,9 +170,11 @@ export const ProjectPanel: React.FC = () => {
                 <div className="bg-panel flex items-center gap-2 px-3 py-1.5 text-xs border-b border-black/10 overflow-x-auto">
                     <button onClick={() => setFilter('ALL')} className={`hover:text-white whitespace-nowrap ${filter === 'ALL' ? 'text-white font-bold' : 'text-text-secondary'}`}>All</button>
                     <span className="text-white/10">|</span>
-                    <button onClick={() => setFilter('MESH')} className={`hover:text-white whitespace-nowrap ${filter === 'MESH' ? 'text-white font-bold' : 'text-text-secondary'}`}>Meshes</button>
+                    <button onClick={() => setFilter('SCRIPT')} className={`hover:text-white whitespace-nowrap ${filter === 'SCRIPT' ? 'text-white font-bold' : 'text-text-secondary'}`}>Scripts</button>
                     <span className="text-white/10">|</span>
                     <button onClick={() => setFilter('MATERIAL')} className={`hover:text-white whitespace-nowrap ${filter === 'MATERIAL' ? 'text-white font-bold' : 'text-text-secondary'}`}>Materials</button>
+                    <span className="text-white/10">|</span>
+                    <button onClick={() => setFilter('MESH')} className={`hover:text-white whitespace-nowrap ${filter === 'MESH' ? 'text-white font-bold' : 'text-text-secondary'}`}>Meshes</button>
                     <span className="text-white/10">|</span>
                     <button onClick={() => setFilter('PHYSICS_MATERIAL')} className={`hover:text-white whitespace-nowrap ${filter === 'PHYSICS_MATERIAL' ? 'text-white font-bold' : 'text-text-secondary'}`}>Physics</button>
                 </div>
@@ -178,6 +187,14 @@ export const ProjectPanel: React.FC = () => {
                         {filteredAssets.map((asset) => {
                             const isMat = asset.type === 'MATERIAL';
                             const isPhys = asset.type === 'PHYSICS_MATERIAL';
+                            const isScript = asset.type === 'SCRIPT';
+                            
+                            let iconName = 'Box';
+                            let color = 'text-accent';
+                            if (isMat) { iconName = 'Palette'; color = 'text-pink-500'; }
+                            else if (isPhys) { iconName = 'Activity'; color = 'text-green-500'; }
+                            else if (isScript) { iconName = 'FileCode'; color = 'text-yellow-500'; }
+
                             return (
                                 <div 
                                     key={asset.id} 
@@ -193,9 +210,9 @@ export const ProjectPanel: React.FC = () => {
                                         style={{ width: scale, height: scale }}
                                     >
                                         <Icon 
-                                            name={isMat ? 'Palette' : (isPhys ? 'Activity' : 'Box')} 
+                                            name={iconName as any} 
                                             size={scale * 0.6} 
-                                            className={`${isMat ? 'text-pink-500' : (isPhys ? 'text-green-500' : 'text-accent')} drop-shadow-md transition-transform group-hover:scale-110`} 
+                                            className={`${color} drop-shadow-md transition-transform group-hover:scale-110`} 
                                         />
                                     </div>
                                     <span className="text-[10px] text-text-secondary text-center w-full break-words leading-tight group-hover:text-white select-none">
@@ -228,7 +245,9 @@ export const ProjectPanel: React.FC = () => {
                     style={{ left: contextMenu.x, top: contextMenu.y }}
                     onClick={(e) => e.stopPropagation()} 
                 >
-                    {(assetManager.getAsset(contextMenu.assetId)?.type === 'MATERIAL' || assetManager.getAsset(contextMenu.assetId)?.type === 'PHYSICS_MATERIAL') && (
+                    {(assetManager.getAsset(contextMenu.assetId)?.type === 'MATERIAL' || 
+                      assetManager.getAsset(contextMenu.assetId)?.type === 'PHYSICS_MATERIAL' || 
+                      assetManager.getAsset(contextMenu.assetId)?.type === 'SCRIPT') && (
                         <>
                             {assetManager.getAsset(contextMenu.assetId)?.type === 'MATERIAL' && (
                                 <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" 

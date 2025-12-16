@@ -70,8 +70,8 @@ export const NodeRegistry: Record<string, NodeDef> = {
               functions: `
                 vec3 ${funcName}(int count, vec3 init, vec3 a, vec3 b, float time) {
                     vec3 acc = init;
-                    for(int i=0; i<count; i++) {
-                        float index = float(i);
+                    for(int _iter=0; _iter<count; _iter++) {
+                        float index = float(_iter);
                         // Available: acc, index, a, b, time
                         ${userCode}
                     }
@@ -104,7 +104,7 @@ export const NodeRegistry: Record<string, NodeDef> = {
           const funcName = `${id}_func`;
           return {
               functions: `
-                vec3 ${funcName}(float a, vec3 b, vec3 c, float time) {
+                vec3 ${funcName}(float a, vec3 b, vec3 arg_c, float time) {
                     ${userCode}
                 }
               `,
@@ -482,26 +482,30 @@ export const NodeRegistry: Record<string, NodeDef> = {
       inputs: [{ id: 'uv', name: 'UV', type: 'vec2' }, { id: 'time', name: 'Time', type: 'float' }],
       outputs: [{ id: 'rgb', name: 'Color', type: 'vec3' }],
       execute: () => ({ x:0, y:0, z:1 }),
-      glsl: (inVars, id) => `
-        vec2 ${id}_uv = ${inVars[0] || 'v_uv'};
-        float ${id}_time = ${inVars[1] || 'u_time'} * 0.5 + 23.0;
+      glsl: (inVars, id) => {
+        const uv = inVars[0] || 'v_uv';
+        const time = inVars[1] || 'u_time';
+        return `
+        vec2 ${id}_uv = ${uv};
+        float ${id}_time = ${time} * 0.5 + 23.0;
         
-        vec2 p = mod(${id}_uv.xy * 6.28318530718, 6.28318530718) - 250.0;
-        vec2 i = vec2(p);
-        float c = 1.0;
-        float inten = .005;
+        vec2 ${id}_p = mod(${id}_uv.xy * 6.28318530718, 6.28318530718) - 250.0;
+        vec2 ${id}_i = vec2(${id}_p);
+        float ${id}_c = 1.0;
+        float ${id}_inten = .005;
 
         for (int n = 0; n < 5; n++) 
         {
             float t = ${id}_time * (1.0 - (3.5 / float(n+1)));
-            i = p + vec2(cos(t - i.x) + sin(t + i.y), sin(t - i.y) + cos(t + i.x));
-            c += 1.0/length(vec2(p.x / (sin(i.x+t)/inten),p.y / (cos(i.y+t)/inten)));
+            ${id}_i = ${id}_p + vec2(cos(t - ${id}_i.x) + sin(t + ${id}_i.y), sin(t - ${id}_i.y) + cos(t + ${id}_i.x));
+            ${id}_c += 1.0/length(vec2(${id}_p.x / (sin(${id}_i.x+t)/${id}_inten),${id}_p.y / (cos(${id}_i.y+t)/${id}_inten)));
         }
-        c /= 5.0;
-        c = 1.17-pow(c, 1.4);
-        vec3 ${id} = vec3(pow(abs(c), 8.0));
+        ${id}_c /= 5.0;
+        ${id}_c = 1.17-pow(${id}_c, 1.4);
+        vec3 ${id} = vec3(pow(abs(${id}_c), 8.0));
         ${id} = clamp(${id} + vec3(0.0, 0.35, 0.5), 0.0, 1.0);
-      `
+        `;
+      }
   },
 
   // --- ECS / QUERY NODES (CPU ONLY) ---

@@ -97,4 +97,14 @@ export interface PhysicsMaterialAsset {
     };
 }
 
-export type Asset = StaticMeshAsset | MaterialAsset | PhysicsMaterialAsset;
+export interface ScriptAsset {
+    id: string;
+    name: string;
+    type: 'SCRIPT';
+    data: {
+        nodes: GraphNode[];
+        connections: GraphConnection[];
+    };
+}
+
+export type Asset = StaticMeshAsset | MaterialAsset | PhysicsMaterialAsset | ScriptAsset;

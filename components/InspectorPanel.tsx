@@ -6,6 +6,7 @@ import { assetManager } from '../services/AssetManager';
 import { Icon } from './Icon';
 import { ROTATION_ORDERS } from '../services/constants';
 import { EditorContext } from '../contexts/EditorContext';
+import { Select } from './ui/Select';
 
 interface InspectorPanelProps {
   object: Entity | Asset | null; // Can inspect Entity or Asset
@@ -182,28 +183,20 @@ const ComponentCard: React.FC<{
                     <div className="text-[10px] uppercase text-text-secondary font-semibold tracking-wider ml-1">Rotation</div>
                     <div className="flex gap-2">
                         {/* Space Selector */}
-                        <div className="flex items-center gap-1">
-                            <span className="text-[9px] text-text-secondary">Space</span>
-                            <select 
-                                className="bg-input-bg text-white text-[10px] rounded border border-transparent focus:border-accent outline-none px-1"
+                        <div className="flex items-center gap-1 min-w-[70px]">
+                            <Select
                                 value={editorCtx?.transformSpace || 'Gimbal'}
-                                onChange={(e) => editorCtx?.setTransformSpace(e.target.value as TransformSpace)}
-                            >
-                                <option value="Gimbal">Gimbal</option>
-                                <option value="Local">Local</option>
-                                <option value="World">World</option>
-                            </select>
+                                options={['Gimbal', 'Local', 'World'].map(v => ({ label: v, value: v }))}
+                                onChange={(v) => editorCtx?.setTransformSpace(v as TransformSpace)}
+                            />
                         </div>
                         {/* Order Selector */}
-                        <div className="flex items-center gap-1">
-                            <span className="text-[9px] text-text-secondary">Order</span>
-                            <select 
-                                className="bg-input-bg text-white text-[10px] rounded border border-transparent focus:border-accent outline-none px-1"
+                        <div className="flex items-center gap-1 min-w-[50px]">
+                            <Select
                                 value={component.rotationOrder}
-                                onChange={(e) => handleAtomicChange('rotationOrder', e.target.value)}
-                            >
-                                {ROTATION_ORDERS.map(o => <option key={o} value={o}>{o}</option>)}
-                            </select>
+                                options={ROTATION_ORDERS.map(o => ({ label: o, value: o }))}
+                                onChange={(v) => handleAtomicChange('rotationOrder', v)}
+                            />
                         </div>
                     </div>
                  </div>
@@ -221,37 +214,29 @@ const ComponentCard: React.FC<{
           <>
              <div className="flex items-center gap-2">
                 <span className="w-24 text-text-secondary">Mesh Filter</span>
-                <div className="flex-1 flex items-center bg-input-bg rounded border border-transparent px-2 py-1">
-                   <Icon name="Box" size={12} className="mr-2 text-blue-400"/>
-                   <select 
-                      className="flex-1 bg-transparent outline-none text-white"
+                <div className="flex-1">
+                   <Select
+                      icon="Box"
                       value={component.meshType}
-                      onChange={(e) => handleAtomicChange('meshType', e.target.value)}
-                      aria-label="Mesh Type"
-                   >
-                      <option value="Cube">Cube</option>
-                      <option value="Sphere">Sphere</option>
-                      <option value="Plane">Plane</option>
-                   </select>
+                      options={['Cube', 'Sphere', 'Plane'].map(v => ({ label: v, value: v }))}
+                      onChange={(v) => handleAtomicChange('meshType', v)}
+                   />
                 </div>
              </div>
              
              {/* Material Picker */}
              <div className="flex items-center gap-2">
                 <span className="w-24 text-text-secondary">Material</span>
-                <div className="flex-1 flex items-center bg-input-bg rounded border border-transparent px-2 py-1">
-                   <Icon name="Palette" size={12} className="mr-2 text-pink-400"/>
-                   <select 
-                      className="flex-1 bg-transparent outline-none text-white"
+                <div className="flex-1">
+                   <Select 
+                      icon="Palette"
                       value={component.materialId || ""}
-                      onChange={(e) => handleAtomicChange('materialId', e.target.value)}
-                      aria-label="Material"
-                   >
-                      <option value="">Default (Standard)</option>
-                      {materials.map(m => (
-                          <option key={m.id} value={m.id}>{m.name}</option>
-                      ))}
-                   </select>
+                      options={[
+                          { label: 'Default (Standard)', value: "" },
+                          ...materials.map(m => ({ label: m.name, value: m.id }))
+                      ]}
+                      onChange={(v) => handleAtomicChange('materialId', v)}
+                   />
                 </div>
              </div>
 
@@ -302,14 +287,13 @@ const ComponentCard: React.FC<{
            <>
             <div className="flex items-center gap-2">
                <span className="w-24 text-text-secondary">Type</span>
-               <select 
-                  className="flex-1 bg-input-bg rounded p-1 outline-none border border-transparent focus:border-accent text-white"
-                  aria-label="Light Type"
-                >
-                   <option>Directional</option>
-                   <option>Point</option>
-                   <option>Spot</option>
-               </select>
+               <div className="flex-1">
+                   <Select
+                      value="Directional"
+                      options={['Directional', 'Point', 'Spot'].map(v => ({ label: v, value: v }))}
+                      onChange={() => {}}
+                   />
+               </div>
             </div>
             <div className="flex items-center gap-2">
                <span className="w-24 text-text-secondary">Color</span>
@@ -356,17 +340,16 @@ const ComponentCard: React.FC<{
             {/* Physics Material Selection */}
             <div className="flex items-center gap-2 mt-2">
                <span className="w-24 text-text-secondary">Material</span>
-               <select 
-                  className="flex-1 bg-input-bg rounded p-1 outline-none border border-transparent focus:border-accent text-white text-xs"
-                  value={component.physicsMaterialId || 0}
-                  onChange={(e) => handleAtomicChange('physicsMaterialId', parseInt(e.target.value))}
-                  aria-label="Physics Material"
-               >
-                   <option value={0}>None</option>
-                   {physicsMaterials.map(mat => (
-                       <option key={mat.id} value={assetManager.getPhysicsMaterialID(mat.id)}>{mat.name}</option>
-                   ))}
-               </select>
+               <div className="flex-1">
+                   <Select 
+                      value={component.physicsMaterialId || 0}
+                      options={[
+                          { label: 'None', value: 0 },
+                          ...physicsMaterials.map(mat => ({ label: mat.name, value: assetManager.getPhysicsMaterialID(mat.id) }))
+                      ]}
+                      onChange={(v) => handleAtomicChange('physicsMaterialId', v)}
+                   />
+               </div>
             </div>
           </>
         )}

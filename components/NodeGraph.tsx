@@ -14,10 +14,10 @@ import { NodeItem } from './node-graph/NodeItem';
 import { ConnectionLine } from './node-graph/ConnectionLine';
 
 interface NodeGraphProps {
-    materialId?: string | null;
+    assetId?: string | null;
 }
 
-export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
+export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
     const [nodes, setNodes] = useState<GraphNode[]>([]);
     const [connections, setConnections] = useState<GraphConnection[]>([]);
     
@@ -50,48 +50,73 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
 
     // --- Loading Logic ---
     useEffect(() => {
-        if (materialId) {
-            const asset = assetManager.getAsset(materialId);
-            if (asset && asset.type === 'MATERIAL') {
+        if (assetId) {
+            const asset = assetManager.getAsset(assetId);
+            if (asset && (asset.type === 'MATERIAL' || asset.type === 'SCRIPT')) {
                 setNodes(asset.data.nodes);
                 setConnections(asset.data.connections);
-                engineInstance.compileGraph(asset.data.nodes, asset.data.connections, materialId);
+                // Initial compile on load
+                if (asset.type === 'MATERIAL') {
+                    engineInstance.compileGraph(asset.data.nodes, asset.data.connections, assetId);
+                } else {
+                    engineInstance.compileGraph(asset.data.nodes, asset.data.connections); // Logic only
+                }
             }
         } else {
             setNodes([]);
             setConnections([]);
         }
-    }, [materialId]);
+    }, [assetId]);
 
     const handleSave = () => {
-        if (materialId) {
-            const glsl = engineInstance.currentShaderSource;
-            assetManager.saveMaterial(materialId, nodes, connections, glsl);
-            alert(`Saved Material!`);
+        if (assetId) {
+            const asset = assetManager.getAsset(assetId);
+            if (asset?.type === 'MATERIAL') {
+                const glsl = engineInstance.currentShaderSource;
+                assetManager.saveMaterial(assetId, nodes, connections, glsl);
+                alert(`Saved Material!`);
+            } else if (asset?.type === 'SCRIPT') {
+                assetManager.saveScript(assetId, nodes, connections);
+                alert(`Saved Script!`);
+            }
         }
     };
 
     const triggerCompile = useCallback(() => {
-        if (!materialId) return;
+        if (!assetId) return;
+        const asset = assetManager.getAsset(assetId);
+        if (!asset) return;
+
         setCompileStatus('COMPILING');
         // Small delay to show visual feedback
         setTimeout(() => {
-            engineInstance.compileGraph(nodes, connections, materialId);
+            if (asset.type === 'MATERIAL') {
+                engineInstance.compileGraph(nodes, connections, assetId);
+            } else {
+                engineInstance.compileGraph(nodes, connections); // Logic
+            }
             setCompileStatus('READY');
         }, 100);
-    }, [nodes, connections, materialId]);
+    }, [nodes, connections, assetId]);
 
     // OPTIMIZATION: Debounce graph compilation
     useEffect(() => {
-        if (!materialId) return;
+        if (!assetId) return;
+        const asset = assetManager.getAsset(assetId);
+        if (!asset) return;
+
         setCompileStatus('COMPILING');
         const timeoutId = setTimeout(() => {
-            // Pass materialId to update the renderer live
-            engineInstance.compileGraph(nodes, connections, materialId);
+            if (asset.type === 'MATERIAL') {
+                engineInstance.compileGraph(nodes, connections, assetId);
+            } else {
+                // For scripts, we compile logic which updates execution list instantly
+                engineInstance.compileGraph(nodes, connections);
+            }
             setCompileStatus('READY');
         }, 500); // Slightly longer debounce to reduce flicker
         return () => clearTimeout(timeoutId);
-    }, [nodes, connections, materialId]);
+    }, [nodes, connections, assetId]);
 
     // OPTIMIZATION: Fast Node Lookup Map
     const nodeMap = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes]);
@@ -613,14 +638,14 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
         });
     }, [connections, nodeMap]);
 
-    if (!materialId) {
+    if (!assetId) {
         return (
             <div className="w-full h-full flex flex-col items-center justify-center bg-[#151515] text-text-secondary select-none">
                 <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-4">
                     <Icon name="Workflow" size={32} className="opacity-50" />
                 </div>
-                <div className="text-sm font-medium">No Material Selected</div>
-                <div className="text-xs opacity-50 mt-1">Double click a material in the Project Panel to edit.</div>
+                <div className="text-sm font-medium">No Asset Selected</div>
+                <div className="text-xs opacity-50 mt-1">Double click a material or script in the Project Panel to edit.</div>
             </div>
         );
     }
@@ -650,7 +675,7 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
                 <button 
                     onClick={handleSave} 
                     className="bg-accent/80 hover:bg-accent text-white px-3 py-1 rounded text-xs flex items-center gap-2 shadow-lg"
-                    title="Save Material"
+                    title="Save Asset"
                 >
                     <Icon name="Save" size={12} />
                     <span>Save</span>
@@ -685,9 +710,9 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ materialId }) => {
                 </div>
             </div>
             
-            {materialId && (
+            {assetId && (
                 <div className="absolute top-2 right-2 z-50 px-2 py-1 bg-black/50 text-white/50 text-[10px] rounded border border-white/5 pointer-events-none">
-                    Editing: {assetManager.getAsset(materialId)?.name}
+                    Editing: {assetManager.getAsset(assetId)?.name}
                 </div>
             )}
 
