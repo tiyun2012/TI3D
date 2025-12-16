@@ -78,14 +78,14 @@ const FS_DEFAULT_SOURCE = `#version 300 es
 precision mediump float;
 precision mediump sampler2DArray;
 
-in vec3 v_normal;
-in vec3 v_worldPos;
-in vec3 v_objectPos;
-in vec3 v_color;
-in float v_isSelected;
-in vec2 v_uv;
-in float v_texIndex;
-in float v_effectIndex;
+in highp vec3 v_normal;
+in highp vec3 v_worldPos;
+in highp vec3 v_objectPos;
+in highp vec3 v_color;
+in highp float v_isSelected;
+in highp vec2 v_uv;
+in highp float v_texIndex;
+in highp float v_effectIndex;
 
 uniform sampler2DArray u_textures;
 

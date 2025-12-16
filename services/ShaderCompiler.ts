@@ -113,14 +113,14 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     uniform sampler2DArray u_textures;
     
     // Varyings
-    in vec3 v_normal;
-    in vec3 v_worldPos;
-    in vec3 v_objectPos;
-    in vec3 v_color;
-    in float v_isSelected;
-    in vec2 v_uv;
-    in float v_texIndex;
-    in float v_effectIndex;
+    in highp vec3 v_normal;
+    in highp vec3 v_worldPos;
+    in highp vec3 v_objectPos;
+    in highp vec3 v_color;
+    in highp float v_isSelected;
+    in highp vec2 v_uv;
+    in highp float v_texIndex;
+    in highp float v_effectIndex;
 
     // MRT Outputs
     layout(location=0) out vec4 outColor;

@@ -307,8 +307,88 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
 
-        // RMB = Context or Cut
-        if (e.button === 2) { 
+        setContextMenu(null);
+
+        // --- 1. ZOOM (Alt + Right Click) ---
+        if (e.altKey && e.button === 2) {
+            e.preventDefault();
+            e.stopPropagation();
+            cleanupListeners();
+
+            const startMouseX = e.clientX;
+            const startMouseY = e.clientY;
+            const startK = transformRef.current.k;
+            const startT = { ...transformRef.current };
+            
+            // Pivot point in world space (under mouse)
+            const pivotX = (e.clientX - rect.left - startT.x) / startK;
+            const pivotY = (e.clientY - rect.top - startT.y) / startK;
+
+            let frameId = 0;
+
+            const onMove = (ev: MouseEvent) => {
+                cancelAnimationFrame(frameId);
+                frameId = requestAnimationFrame(() => {
+                    const dx = ev.clientX - startMouseX;
+                    const dy = ev.clientY - startMouseY;
+                    
+                    // Drag Right/Up to Zoom In
+                    const delta = dx - dy;
+                    const zoomFactor = Math.exp(delta * 0.005);
+                    const newK = Math.min(Math.max(startK * zoomFactor, 0.2), 3.0);
+
+                    // Re-calculate Translation to keep pivot stable around mouse
+                    const newX = (e.clientX - rect.left) - (pivotX * newK);
+                    const newY = (e.clientY - rect.top) - (pivotY * newK);
+
+                    transformRef.current = { x: newX, y: newY, k: newK };
+                    updateViewportStyle();
+                });
+            };
+
+            const onUp = () => { cancelAnimationFrame(frameId); cleanupListeners(); };
+            const cleanup = () => cancelAnimationFrame(frameId);
+
+            activeListenersRef.current = { move: onMove, up: onUp, cleanup };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+            return;
+        }
+
+        // --- 2. PAN (Middle Click OR Alt + Left Click) ---
+        if (e.button === 1 || (e.altKey && e.button === 0)) {
+            e.preventDefault();
+            e.stopPropagation();
+            cleanupListeners();
+
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const startTrans = { ...transformRef.current };
+            let frameId = 0;
+
+            const onMove = (ev: MouseEvent) => {
+                cancelAnimationFrame(frameId);
+                frameId = requestAnimationFrame(() => {
+                    const dx = ev.clientX - startX;
+                    const dy = ev.clientY - startY;
+                    transformRef.current.x = startTrans.x + dx;
+                    transformRef.current.y = startTrans.y + dy;
+                    updateViewportStyle();
+                });
+            };
+
+            const onUp = () => { cancelAnimationFrame(frameId); cleanupListeners(); };
+            const cleanup = () => cancelAnimationFrame(frameId);
+
+            activeListenersRef.current = { move: onMove, up: onUp, cleanup };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+            return;
+        }
+
+        // --- 3. CONTEXT / CUT (Right Click) ---
+        // Only if Alt is NOT pressed
+        if (e.button === 2 && !e.altKey) { 
             e.preventDefault();
             e.stopPropagation();
 
@@ -371,37 +451,9 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
             return;
         }
         
-        setContextMenu(null);
-
-        // MMB / Alt = Pan
-        if (e.button === 1 || (e.button === 0 && e.altKey)) {
-            e.preventDefault();
-            cleanupListeners();
-
-            const startX = e.clientX;
-            const startY = e.clientY;
-            const startTrans = { ...transformRef.current };
-            let frameId = 0;
-
-            const onMove = (ev: MouseEvent) => {
-                cancelAnimationFrame(frameId);
-                frameId = requestAnimationFrame(() => {
-                    const dx = ev.clientX - startX;
-                    const dy = ev.clientY - startY;
-                    transformRef.current.x = startTrans.x + dx;
-                    transformRef.current.y = startTrans.y + dy;
-                    updateViewportStyle();
-                });
-            };
-
-            const onUp = () => { cancelAnimationFrame(frameId); cleanupListeners(); };
-            const cleanup = () => cancelAnimationFrame(frameId);
-
-            activeListenersRef.current = { move: onMove, up: onUp, cleanup };
-            window.addEventListener('mousemove', onMove);
-            window.addEventListener('mouseup', onUp);
-        } else if (e.button === 0) {
-            // Box Select
+        // --- 4. BOX SELECT (Left Click) ---
+        // Only if Alt is NOT pressed
+        if (e.button === 0 && !e.altKey) {
             if (!e.shiftKey && !e.ctrlKey) {
                 setSelectedNodeIds(new Set());
             }
@@ -454,8 +506,11 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
     }, [cleanupListeners, updateViewportStyle, selectedNodeIds, nodeMap, connections, nodes, pushSnapshot]);
 
     const handleNodeDragStart = useCallback((e: React.MouseEvent, node: GraphNode) => {
+        // ALLOW BUBBLING IF ALT PRESSED (For Camera Navigation)
+        if (e.altKey) return; 
+
         e.stopPropagation();
-        if (e.button !== 0 || e.altKey) return;
+        if (e.button !== 0) return;
         
         cleanupListeners();
 
@@ -504,6 +559,9 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
     }, [nodes, connections, cleanupListeners, selectedNodeIds, pushSnapshot]);
 
     const handlePinDown = useCallback((e: React.MouseEvent, nodeId: string, pinId: string, type: 'input'|'output') => {
+        // ALLOW BUBBLING IF ALT PRESSED (For Camera Navigation)
+        if (e.altKey) return;
+
         e.stopPropagation(); e.preventDefault();
         if (e.button !== 0) return;
         
@@ -704,9 +762,9 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
                 
                 {/* Help hint */}
                 <div className="flex items-center gap-2 ml-4 text-[10px] text-text-secondary opacity-50">
-                    <span>Ctrl+Z Undo</span>
-                    <span>Ctrl+C/V Copy Paste</span>
-                    <span>Del Delete</span>
+                    <span>Pan: Alt+LMB / MMB</span>
+                    <span>Zoom: Alt+RMB / Wheel</span>
+                    <span>Copy: Ctrl+C</span>
                 </div>
             </div>
             
