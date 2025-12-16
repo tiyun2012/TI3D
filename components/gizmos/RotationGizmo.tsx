@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect, useContext, useMemo } from 'react';
+import React, { useState, useEffect, useContext, useMemo, useRef } from 'react';
 import { Entity, ComponentType, Vector3, RotationOrder } from '../../types';
 import { engineInstance } from '../../services/engine';
 import { GizmoBasis, GizmoMath, GIZMO_COLORS, Axis } from './GizmoUtils';
@@ -14,14 +13,13 @@ interface Props {
     containerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-// --- Geometry Cache ---
+// --- Geometry Cache (Unchanged) ---
 const TORUS_CACHE = new Map<string, { vertices: Vector3[], indices: number[][] }>();
-
 const getCachedTorus = (radius: number, tubeRadius: number) => {
     const key = `${radius.toFixed(3)}-${tubeRadius.toFixed(3)}`;
     if (TORUS_CACHE.has(key)) return TORUS_CACHE.get(key)!;
     
-    const segments = 64; // Smoother
+    const segments = 64; 
     const tubeSegments = 8;
     const vertices: Vector3[] = [];
     const indices: number[][] = [];
@@ -77,49 +75,68 @@ const axisAngleToMat4 = (axis: Vector3, angle: number) => {
     return out;
 };
 
+// --- Data interfaces for Ref/State separation ---
+interface DragContext {
+    axis: Axis;
+    startRotation: Vector3;
+    startAngle: number;
+    axisVector: Vector3;
+    u: Vector3;
+    v: Vector3;
+}
+
+interface VisualState {
+    axis: Axis;
+    currentAngle: number;
+    startAngle: number;
+    u: Vector3;
+    v: Vector3;
+}
+
 export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport, containerRef }) => {
     const { gizmoConfig, transformSpace } = useContext(EditorContext)!;
     const [hoverAxis, setHoverAxis] = useState<Axis | null>(null);
     
-    const [dragState, setDragState] = useState<{
-        axis: Axis;
-        startRotation: Vector3;
-        startAngle: number;
-        currentAngle: number;
-        axisVector: Vector3;
-        u: Vector3;
-        v: Vector3;
-    } | null>(null);
+    // 1. Lifecycle Control
+    const [isDragging, setIsDragging] = useState(false);
+    
+    // 2. Visual State (Purely for React Rendering, not for Logic)
+    const [visualState, setVisualState] = useState<VisualState | null>(null);
+
+    // 3. Logic State (Refs for stable event handling)
+    const dragRef = useRef<DragContext | null>(null);
+    const stateRef = useRef({ 
+        vpMatrix, 
+        invViewProj: new Float32Array(16), 
+        viewport,
+        basis 
+    });
 
     const { origin, scale } = basis;
-    
-    const project = useMemo(() => 
-        (v: Vector3) => GizmoMath.project(v, vpMatrix, viewport.width, viewport.height),
-        [vpMatrix, viewport.width, viewport.height]
-    );
-    
+
+    // --- Memoized Helpers ---
     const invViewProj = useMemo(() => {
         const inv = new Float32Array(16);
         Mat4Utils.invert(vpMatrix, inv);
         return inv;
     }, [vpMatrix]);
 
-    const pCenter = useMemo(() => project(origin), [origin, project]);
+    // Keep Ref updated
+    stateRef.current = { vpMatrix, invViewProj, viewport, basis };
+    
+    const project = (v: Vector3) => GizmoMath.project(v, vpMatrix, viewport.width, viewport.height);
+    const pCenter = project(origin);
 
-    // --- RING HIERARCHY CALCULATION ---
+    // --- RING HIERARCHY ---
     const { ringMatrices } = useMemo(() => {
         const ringMats: Record<string, Float32Array> = {};
         
-        // 1. World Space: Identity axes
         if (transformSpace === 'World') {
             const id = Mat4Utils.create();
-            ringMats['X'] = id;
-            ringMats['Y'] = id;
-            ringMats['Z'] = id;
+            ringMats['X'] = id; ringMats['Y'] = id; ringMats['Z'] = id;
             return { ringMatrices: ringMats };
         }
 
-        // 2. Local Space: Use Object's World Rotation for all rings
         const parentId = engineInstance.sceneGraph.getParentId(entity.id);
         const worldMatrix = engineInstance.sceneGraph.getWorldMatrix(entity.id);
         
@@ -127,21 +144,18 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             const mat = Mat4Utils.create();
             if (worldMatrix) {
                 Mat4Utils.copy(mat, worldMatrix);
-                mat[12]=0; mat[13]=0; mat[14]=0; // Zero translation
-                // Normalize
+                mat[12]=0; mat[13]=0; mat[14]=0; 
                 for(let c=0; c<3; c++) {
                    const idx = c*4;
                    const l = Math.hypot(mat[idx], mat[idx+1], mat[idx+2]);
                    if(l>0) { mat[idx]/=l; mat[idx+1]/=l; mat[idx+2]/=l; }
                 }
             }
-            ringMats['X'] = mat;
-            ringMats['Y'] = mat;
-            ringMats['Z'] = mat;
+            ringMats['X'] = mat; ringMats['Y'] = mat; ringMats['Z'] = mat;
             return { ringMatrices: ringMats };
         }
 
-        // 3. Gimbal Space: Construct Hierarchy based on Euler Order
+        // Gimbal Logic
         const transform = entity.components[ComponentType.TRANSFORM];
         const rot = transform.rotation;
         const order = (transform.rotationOrder || 'XYZ') as RotationOrder;
@@ -167,31 +181,22 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
 
         const euler = { x: rot.x, y: rot.y, z: rot.z };
         const axes = order.split('') as ('X'|'Y'|'Z')[];
-        
         let accum = Mat4Utils.create();
         Mat4Utils.copy(accum, baseMat);
-
-        // Reverse Order for Hierarchy (Outer -> Inner)
-        // For intrinsic euler, the 'first' applied rotation in the list (e.g. X in XYZ) 
-        // is the most local, deepest child in the hierarchy.
-        // We need to render the rings corresponding to these axes.
         const reversedAxes = [...axes].reverse();
 
         reversedAxes.forEach((axisChar) => {
             const mat = new Float32Array(16);
             Mat4Utils.copy(mat, accum);
             ringMats[axisChar] = mat;
-
             const angle = euler[axisChar.toLowerCase() as 'x'|'y'|'z'];
             const rotM = getRotMat(axisChar, angle);
-            
             const nextAccum = Mat4Utils.create();
             Mat4Utils.multiply(accum, rotM, nextAccum);
             accum = nextAccum;
         });
 
         return { ringMatrices: ringMats };
-
     }, [entity.id, entity.components, engineInstance.sceneGraph, transformSpace]);
 
     const getRingBasis = (axis: Axis) => {
@@ -212,26 +217,30 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         const basisY = { x: mat[4], y: mat[5], z: mat[6] };
         const basisZ = { x: mat[8], y: mat[9], z: mat[10] };
 
-        // For X-Ring, axis is X, plane is YZ
         if (axis === 'X') return { axis: basisX, u: basisY, v: basisZ };
-        // For Y-Ring, axis is Y, plane is XZ (but normal is Y)
         if (axis === 'Y') return { axis: basisY, u: basisZ, v: basisX };
-        // For Z-Ring, axis is Z, plane is XY
         return { axis: basisZ, u: basisX, v: basisY };
     };
 
-    const getAngleOnPlane = (
+    // --- Helper Logic (Refactored to be pure) ---
+    const calculateAngle = (
         mouseX: number, mouseY: number, 
-        center: Vector3, normal: Vector3, 
+        center: Vector3, 
+        // Use stateRef values passed in
+        currentInvViewProj: Float32Array,
+        currentCamPos: Vector3,
+        currentViewport: {width:number, height:number},
         u: Vector3, v: Vector3
     ) => {
         if (!containerRef.current) return 0;
         const rect = containerRef.current.getBoundingClientRect();
         const ray = GizmoMath.screenToRay(
             mouseX - rect.left, mouseY - rect.top, 
-            viewport.width, viewport.height, 
-            invViewProj, basis.cameraPosition
+            currentViewport.width, currentViewport.height, 
+            currentInvViewProj, currentCamPos
         );
+        // Plane normal is the cross of u and v (which is the axis)
+        const normal = GizmoMath.normalize(GizmoMath.cross(u, v));
         const hit = GizmoMath.rayPlaneIntersection(ray.origin, ray.direction, center, normal);
         if (!hit) return 0;
         const localVec = GizmoMath.normalize(GizmoMath.sub(hit, center));
@@ -240,16 +249,27 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         return Math.atan2(sin, cos);
     };
 
+    // --- Stable Event Listener ---
     useEffect(() => {
+        if (!isDragging) return;
+
         const handleGlobalMouseMove = (e: MouseEvent) => {
-            if (!dragState || !containerRef.current) return;
+            const dragData = dragRef.current;
+            if (!dragData || !containerRef.current) return;
             
-            const currentMouseAngle = getAngleOnPlane(
+            // 1. Get Fresh Data from Ref
+            const { invViewProj: currInvVp, basis: currBasis, viewport: currVp } = stateRef.current;
+
+            // 2. Calculate New Angle
+            const currentMouseAngle = calculateAngle(
                 e.clientX, e.clientY, 
-                origin, dragState.axisVector, dragState.u, dragState.v
+                currBasis.origin, 
+                currInvVp, currBasis.cameraPosition, currVp,
+                dragData.u, dragData.v
             );
 
-            let totalDelta = currentMouseAngle - dragState.startAngle;
+            let totalDelta = currentMouseAngle - dragData.startAngle;
+            // Normalize -PI to PI
             while (totalDelta <= -Math.PI) totalDelta += Math.PI * 2;
             while (totalDelta > Math.PI) totalDelta -= Math.PI * 2;
 
@@ -258,56 +278,85 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
                 totalDelta = Math.round(totalDelta / snap) * snap;
             }
 
-            // --- Apply Rotation ---
+            // 3. Update ECS
             const transform = entity.components[ComponentType.TRANSFORM];
             
-            if (dragState.axis === 'X') transform.rotation.x = dragState.startRotation.x + totalDelta;
-            else if (dragState.axis === 'Y') transform.rotation.y = dragState.startRotation.y + totalDelta;
-            else if (dragState.axis === 'Z') transform.rotation.z = dragState.startRotation.z + totalDelta;
+            if (dragData.axis === 'X') transform.rotation.x = dragData.startRotation.x + totalDelta;
+            else if (dragData.axis === 'Y') transform.rotation.y = dragData.startRotation.y + totalDelta;
+            else if (dragData.axis === 'Z') transform.rotation.z = dragData.startRotation.z + totalDelta;
             
+            // 4. Force Update (Fixes Trail/Sync)
             engineInstance.notifyUI();
+            engineInstance.tick(0); // Sync 3D view immediately
             
-            setDragState(prev => prev ? { ...prev, currentAngle: totalDelta } : null);
+            // 5. Update Visuals (Separated from logic loop)
+            setVisualState({
+                axis: dragData.axis,
+                currentAngle: totalDelta,
+                startAngle: dragData.startAngle,
+                u: dragData.u,
+                v: dragData.v
+            });
         };
         
         const handleGlobalMouseUp = () => {
-            if (dragState) {
-                engineInstance.pushUndoState();
-                setDragState(null);
-            }
+            setIsDragging(false);
+            setVisualState(null);
+            dragRef.current = null;
+            engineInstance.pushUndoState();
+            engineInstance.notifyUI();
         };
         
-        if (dragState) {
-            window.addEventListener('mousemove', handleGlobalMouseMove);
-            window.addEventListener('mouseup', handleGlobalMouseUp);
-        }
+        window.addEventListener('mousemove', handleGlobalMouseMove);
+        window.addEventListener('mouseup', handleGlobalMouseUp);
+
         return () => {
             window.removeEventListener('mousemove', handleGlobalMouseMove);
             window.removeEventListener('mouseup', handleGlobalMouseUp);
         };
-    }, [dragState, basis, origin, invViewProj, viewport, transformSpace, entity]);
-    
+    }, [isDragging, entity, containerRef]); // Stable dependencies
+
     const startDrag = (e: React.MouseEvent, axis: Axis) => {
-        // Priority Fix: Allow Alt+LMB to pass through for Camera Orbit
         if (e.altKey) return;
 
         e.stopPropagation(); e.preventDefault();
-        const { axis: axisVec, u, v } = getRingBasis(axis);
-        const startAngle = getAngleOnPlane(e.clientX, e.clientY, origin, axisVec, u, v);
+        
+        const { u, v } = getRingBasis(axis);
+        // Use current refs for initial calculation
+        const { invViewProj: currInvVp, basis: currBasis, viewport: currVp } = stateRef.current;
+        
+        const startAngle = calculateAngle(
+            e.clientX, e.clientY, 
+            origin, 
+            currInvVp, currBasis.cameraPosition, currVp,
+            u, v
+        );
+        
         const transform = entity.components[ComponentType.TRANSFORM];
 
-        setDragState({
+        // Store Logic Data
+        dragRef.current = {
             axis,
             startRotation: { ...transform.rotation },
             startAngle,
+            axisVector: getRingBasis(axis).axis, // Recalculate or use cached
+            u, v
+        };
+
+        // Initialize Visuals
+        setVisualState({
+            axis,
             currentAngle: 0,
-            axisVector: axisVec,
+            startAngle,
             u, v
         });
+
+        setIsDragging(true);
     };
-    
+
+    // --- Rendering Helpers (Same as before, using visualState) ---
+
     const renderVolumetricMesh = (vertices: Vector3[], indices: number[][], fillStyle: string, opacity: number = 1.0) => {
-         // Explicitly type projected to prevent unknown property access error
          const projected: { x: number; y: number; z: number; w: number }[] = vertices.map(v => {
             const p = project(v) as { x: number, y: number, z: number, w: number };
             return { x: p.x, y: p.y, z: p.z, w: p.w };
@@ -315,24 +364,13 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         
         const faces = indices.map(idx => {
             let avgZ = 0;
-            idx.forEach(i => { 
-                const p = projected[i];
-                if(p) avgZ += p.z; 
-            });
+            idx.forEach(i => { if(projected[i]) avgZ += projected[i].z; });
             avgZ /= idx.length;
-            
-            const p0 = vertices[idx[0]];
-            const p1 = vertices[idx[1]];
-            const p2 = vertices[idx[2]];
-            
-            if (!p0 || !p1 || !p2) {
-                return { indices: idx, depth: avgZ, normal: {x:0,y:0,z:1}, visible: false };
-            }
-            
+            const p0 = vertices[idx[0]]; const p1 = vertices[idx[1]]; const p2 = vertices[idx[2]];
+            if (!p0 || !p1 || !p2) return { indices: idx, depth: avgZ, normal: {x:0,y:0,z:1}, visible: false };
             const v1 = GizmoMath.sub(p1, p0);
             const v2 = GizmoMath.sub(p2, p0);
             const normal = GizmoMath.normalize(GizmoMath.cross(v1, v2));
-            
             const viewDir = GizmoMath.normalize(GizmoMath.sub(basis.cameraPosition, origin));
             return { indices: idx, depth: avgZ, normal, visible: GizmoMath.dot(normal, viewDir) > 0 };
         });
@@ -346,8 +384,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             intensity = 0.3 + intensity * 0.7;
             const shadeOpacity = Math.max(0, 1.0 - intensity);
             const pts = face.indices.map(idx => {
-                const p = projected[idx];
-                return p ? `${p.x},${p.y}` : "0,0";
+                const p = projected[idx]; return p ? `${p.x},${p.y}` : "0,0";
             }).join(' ');
             return (
                 <g key={i} className="pointer-events-none">
@@ -360,78 +397,43 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
 
     const renderDecorations = (radius: number, u: Vector3, v: Vector3, color: string, opacity: number) => {
         if (!gizmoConfig.rotationShowDecorations) return null;
-
         const tickCount = 12;
-        // Increased size for visibility
         const tickSize = scale * 0.08; 
         const ticks = [];
-
         for (let i = 0; i < tickCount; i++) {
             const theta = (i / tickCount) * Math.PI * 2;
-            const cos = Math.cos(theta);
-            const sin = Math.sin(theta);
-
-            // Position on ring
+            const cos = Math.cos(theta); const sin = Math.sin(theta);
             const px = origin.x + (u.x * cos + v.x * sin) * radius;
             const py = origin.y + (u.y * cos + v.y * sin) * radius;
             const pz = origin.z + (u.z * cos + v.z * sin) * radius;
-
-            // Rhombus shape oriented along tangent
-            const localVerts = [
-                { u: 0, v: tickSize },      
-                { u: tickSize*0.6, v: 0 },  
-                { u: 0, v: -tickSize },     
-                { u: -tickSize*0.6, v: 0 }  
-            ];
-
+            const localVerts = [{ u: 0, v: tickSize }, { u: tickSize*0.6, v: 0 }, { u: 0, v: -tickSize }, { u: -tickSize*0.6, v: 0 }];
             const worldVerts = localVerts.map(lv => {
-                const rU = lv.u * cos - lv.v * sin; 
-                const rV = lv.u * sin + lv.v * cos; 
-                return {
-                    x: px + u.x * rU + v.x * rV,
-                    y: py + u.y * rU + v.y * rV,
-                    z: pz + u.z * rU + v.z * rV
-                };
+                const rU = lv.u * cos - lv.v * sin; const rV = lv.u * sin + lv.v * cos; 
+                return { x: px + u.x * rU + v.x * rV, y: py + u.y * rU + v.y * rV, z: pz + u.z * rU + v.z * rV };
             });
-
             const pNormal = GizmoMath.normalize({ x: px-origin.x, y: py-origin.y, z: pz-origin.z });
             const viewDir = GizmoMath.normalize(GizmoMath.sub(basis.cameraPosition, {x:px,y:py,z:pz}));
-            
-            // Slightly relaxed culling to ensure side ticks are visible
             if (GizmoMath.dot(pNormal, viewDir) < -0.2) continue;
-
             const projected = worldVerts.map(project);
             const pts = projected.map(p => `${p.x},${p.y}`).join(' ');
-
-            ticks.push(
-                <polygon 
-                    key={i} 
-                    points={pts} 
-                    fill={color} 
-                    fillOpacity={1.0} // Solid opacity for decorations
-                    stroke="black" // Stroke for contrast
-                    strokeWidth={0.5}
-                    className="pointer-events-none" 
-                />
-            );
+            ticks.push(<polygon key={i} points={pts} fill={color} fillOpacity={1.0} stroke="black" strokeWidth={0.5} className="pointer-events-none" />);
         }
         return <g>{ticks}</g>;
     };
 
     const renderTorusRing = (axis: Axis, color: string) => {
         const { axis: axisVec, u, v } = getRingBasis(axis);
-
         let visibility = 1.0;
         
-        const isActive = dragState?.axis === axis;
+        // Use visualState for rendering activity
+        const isActive = visualState?.axis === axis;
         const isHover = hoverAxis === axis;
-        const isOtherDragging = dragState && dragState.axis !== axis;
+        const isOtherDragging = visualState && visualState.axis !== axis;
         
         if (isOtherDragging) visibility *= 0.3;
 
         const opacity = visibility * (isActive ? 1.0 : (isHover ? 0.9 : 0.7));
         const finalColor = isActive ? gizmoConfig.axisPressColor : (isHover ? gizmoConfig.axisHoverColor : color);
-        
         const ringScale = axis === 'VIEW' ? (gizmoConfig.rotationScreenRingScale || 1.25) : 1.0;
         const radius = scale * gizmoConfig.rotationRingSize * ringScale;
         const tubeRadius = scale * 0.015 * gizmoConfig.rotationRingTubeScale * (isActive || isHover ? 2.0 : 1.0);
@@ -462,7 +464,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         return (
             <g
                 onMouseDown={(e) => !isOtherDragging && startDrag(e, axis)}
-                onMouseEnter={() => !dragState && setHoverAxis(axis)}
+                onMouseEnter={() => !visualState && setHoverAxis(axis)}
                 onMouseLeave={() => setHoverAxis(null)}
                 className={isOtherDragging ? "pointer-events-none" : "cursor-pointer"}
             >
@@ -473,14 +475,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
                         <stop offset="100%" stopColor={color} stopOpacity={0.4} />
                     </linearGradient>
                 </defs>
-                <polyline 
-                    points={hitPoints} 
-                    fill="none" 
-                    stroke={color}
-                    strokeOpacity={0.0001} 
-                    strokeWidth={20} 
-                    strokeLinecap="round"
-                />
+                <polyline points={hitPoints} fill="none" stroke={color} strokeOpacity={0.0001} strokeWidth={20} strokeLinecap="round" />
                 <g>{renderVolumetricMesh(worldVertices, geo.indices, fillStyle, opacity)}</g>
                 {renderDecorations(radius, u, v, finalColor, opacity)}
             </g>
@@ -494,39 +489,30 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         return [...axes].reverse();
     }, [entity.components[ComponentType.TRANSFORM].rotationOrder]);
 
-    const getColor = (axis: string) => {
-        if(axis === 'X') return GIZMO_COLORS.X;
-        if(axis === 'Y') return GIZMO_COLORS.Y;
-        return GIZMO_COLORS.Z;
-    };
+    const getColor = (axis: string) => (axis === 'X' ? GIZMO_COLORS.X : axis === 'Y' ? GIZMO_COLORS.Y : GIZMO_COLORS.Z);
 
     return (
         <g>
             <circle cx={pCenter.x} cy={pCenter.y} r={scale * gizmoConfig.rotationRingSize * 0.8} fill="black" fillOpacity="0.05" className="pointer-events-none" />
             
             {renderTorusRing('VIEW', GIZMO_COLORS.Gray)}
-
-            {renderOrder.map(axis => (
-                <React.Fragment key={axis}>
-                    {renderTorusRing(axis as Axis, getColor(axis))}
-                </React.Fragment>
-            ))}
+            {renderOrder.map(axis => <React.Fragment key={axis}>{renderTorusRing(axis as Axis, getColor(axis))}</React.Fragment>)}
             
-            {dragState && dragState.axis !== 'VIEW' && (
+            {visualState && visualState.axis !== 'VIEW' && (
                 <g pointerEvents="none" opacity={0.4}>
                     {(() => {
                         const radius = scale * gizmoConfig.rotationRingSize;
-                        const color = getColor(dragState.axis as string);
-                        const segments = Math.max(8, Math.floor(Math.abs(dragState.currentAngle) * 16 / (2 * Math.PI)));
+                        const color = getColor(visualState.axis as string);
+                        const segments = Math.max(8, Math.floor(Math.abs(visualState.currentAngle) * 16 / (2 * Math.PI)));
                         let pts = `${pCenter.x},${pCenter.y} `;
                         for (let i = 0; i <= segments; i++) {
                             const t = i / segments;
-                            const angle = dragState.currentAngle * t;
-                            const theta = dragState.startAngle + angle;
+                            const angle = visualState.currentAngle * t;
+                            const theta = visualState.startAngle + angle;
                             const worldPt = {
-                                x: origin.x + (dragState.u.x * Math.cos(theta) + dragState.v.x * Math.sin(theta)) * radius,
-                                y: origin.y + (dragState.u.y * Math.cos(theta) + dragState.v.y * Math.sin(theta)) * radius,
-                                z: origin.z + (dragState.u.z * Math.cos(theta) + dragState.v.z * Math.sin(theta)) * radius
+                                x: origin.x + (visualState.u.x * Math.cos(theta) + visualState.v.x * Math.sin(theta)) * radius,
+                                y: origin.y + (visualState.u.y * Math.cos(theta) + visualState.v.y * Math.sin(theta)) * radius,
+                                z: origin.z + (visualState.u.z * Math.cos(theta) + visualState.v.z * Math.sin(theta)) * radius
                             };
                             const p = project(worldPt);
                             pts += `${p.x},${p.y} `;
@@ -536,11 +522,11 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
                 </g>
             )}
             
-            {dragState && (
+            {visualState && (
                 <g pointerEvents="none">
                     <rect x={pCenter.x - 30} y={pCenter.y - scale * gizmoConfig.rotationRingSize - 35} width={60} height={20} fill="rgba(0,0,0,0.8)" rx={4} />
                     <text x={pCenter.x} y={pCenter.y - scale * gizmoConfig.rotationRingSize - 21} fill="white" textAnchor="middle" fontSize="11" fontWeight="bold">
-                        {(dragState.currentAngle * (180/Math.PI)).toFixed(0)}°
+                        {(visualState.currentAngle * (180/Math.PI)).toFixed(0)}°
                     </text>
                 </g>
             )}
