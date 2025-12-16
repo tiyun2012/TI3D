@@ -18,6 +18,84 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
         connections: []
     },
     {
+        name: 'For Loop',
+        description: 'Demonstrates the GLSL ForLoop node to create a rotating pattern.',
+        nodes: [
+            { id: 'uv', type: 'UV', position: { x: 50, y: 200 } },
+            { id: 'uv_vec3', type: 'Vec2ToVec3', position: { x: 250, y: 200 } },
+            { id: 'count', type: 'Float', position: { x: 300, y: 50 }, data: { value: '10' } },
+            { 
+                id: 'loop', 
+                type: 'ForLoop', 
+                position: { x: 500, y: 150 },
+                data: {
+                    code: `
+// Rotating Lights Pattern
+float theta = (index / 10.0) * 6.283 + time;
+vec2 offset = vec2(cos(theta), sin(theta)) * 0.3;
+float d = length(a.xy - 0.5 - offset);
+
+// Color variation based on index
+vec3 col = 0.5 + 0.5 * cos(vec3(0,2,4) + index);
+
+// Accumulate light (1/d falloff)
+acc += (vec3(0.015) / (d + 0.001)) * col;
+                    `
+                }
+            },
+            { id: 'out', type: 'ShaderOutput', position: { x: 850, y: 200 } }
+        ],
+        connections: [
+            { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'uv_vec3', toPin: 'in' },
+            { id: 'c2', fromNode: 'count', fromPin: 'out', toNode: 'loop', toPin: 'count' },
+            { id: 'c3', fromNode: 'uv_vec3', fromPin: 'out', toNode: 'loop', toPin: 'a' },
+            { id: 'c4', fromNode: 'loop', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
+        ]
+    },
+    {
+        name: 'GLSL Water (Custom Node)',
+        description: 'A complete port of the Water Turbulence shader using a single Custom Code node for high performance.',
+        nodes: [
+            { id: 'uv', type: 'UV', position: { x: 50, y: 150 } },
+            { id: 'conv', type: 'Vec2ToVec3', position: { x: 250, y: 150 } },
+            { id: 'time', type: 'Time', position: { x: 250, y: 300 } },
+            { 
+                id: 'water_code', 
+                type: 'CustomExpression', 
+                position: { x: 500, y: 100 }, 
+                data: { 
+                    code: `
+// High Performance Water Turbulence
+float TAU = 6.28318530718;
+float time_adj = time * 0.5 + 23.0;
+vec2 uv = b.xy;
+vec2 p = mod(uv * TAU, TAU) - 250.0;
+vec2 i = vec2(p);
+float c = 1.0;
+float inten = 0.005;
+
+for (int n = 0; n < 5; n++) {
+    float t = time_adj * (1.0 - (3.5 / float(n+1)));
+    i = p + vec2(cos(t - i.x) + sin(t + i.y), sin(t - i.y) + cos(t + i.x));
+    c += 1.0/length(vec2(p.x / (sin(i.x+t)/inten), p.y / (cos(i.y+t)/inten)));
+}
+c /= 5.0;
+c = 1.17 - pow(c, 1.4);
+vec3 col = vec3(pow(abs(c), 8.0));
+col = clamp(col + vec3(0.0, 0.35, 0.5), 0.0, 1.0);
+return col;` 
+                } 
+            },
+            { id: 'out', type: 'ShaderOutput', position: { x: 850, y: 200 } }
+        ],
+        connections: [
+            { id: 'c1', fromNode: 'uv', fromPin: 'uv', toNode: 'conv', toPin: 'in' },
+            { id: 'c2', fromNode: 'conv', fromPin: 'out', toNode: 'water_code', toPin: 'b' },
+            { id: 'c3', fromNode: 'time', fromPin: 'out', toNode: 'water_code', toPin: 'time' },
+            { id: 'c4', fromNode: 'water_code', fromPin: 'out', toNode: 'out', toPin: 'rgb' }
+        ]
+    },
+    {
         name: 'Fractal Water (Nodes)',
         description: 'Loop Unrolled (2x) version of the Turbulence effect using Mod, Power, and Abs.',
         nodes: [

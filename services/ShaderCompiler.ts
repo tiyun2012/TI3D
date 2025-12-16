@@ -10,6 +10,7 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     }
 
     const lines: string[] = [];
+    const globalFunctions: string[] = [];
     const visited = new Set<string>();
     const varMap = new Map<string, string>(); // Map nodeId -> glslVariableName
 
@@ -55,8 +56,17 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
         const varName = `v_${nodeId.replace(/-/g, '_')}`;
         
         // Generate line of code
-        const code = def.glsl(inputVars as string[], varName, node.data);
-        lines.push(code);
+        const result = def.glsl(inputVars as string[], varName, node.data);
+        
+        if (typeof result === 'string') {
+            lines.push(result);
+        } else {
+            // It's a complex node with global functions
+            if (result.functions) {
+                globalFunctions.push(result.functions);
+            }
+            lines.push(result.body);
+        }
         
         varMap.set(nodeId, varName);
         visited.add(nodeId);
@@ -71,9 +81,13 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     
     uniform float u_time;
     uniform vec2 u_resolution;
+    uniform sampler2DArray u_textures; // Needed if any node uses textures implicitly
     
     in vec2 v_uv;
     out vec4 fragColor;
+
+    // --- Global Functions ---
+    ${globalFunctions.join('\n')}
 
     void main() {
         ${lines.join('\n        ')}

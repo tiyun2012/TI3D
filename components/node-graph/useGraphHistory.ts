@@ -1,5 +1,5 @@
 
-import { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
 import { GraphNode, GraphConnection } from '../../types';
 
 interface HistoryState {

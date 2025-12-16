@@ -21,7 +21,8 @@ export interface NodeDef {
   inputs: PortDef[];
   outputs: PortDef[];
   execute: (inputs: any[], data: any, engine: Ti3DEngine) => any;
-  glsl?: (inputs: string[], id: string, data: any) => string;
+  // Updated signature: can return a string (body only) or an object with global functions
+  glsl?: (inputs: string[], id: string, data: any) => string | { functions: string; body: string };
 }
 
 const TYPE_COLORS: Record<DataType, string> = {
@@ -49,10 +50,43 @@ export const NodeRegistry: Record<string, NodeDef> = {
       glsl: (inVars, id) => `fragColor = vec4(${inVars[0] || 'vec3(1.0, 0.0, 1.0)'}, 1.0);`
   },
 
+  'ForLoop': {
+      type: 'ForLoop',
+      category: 'Advanced',
+      title: 'For Loop (GLSL)',
+      inputs: [
+          { id: 'count', name: 'Iterations', type: 'float' },
+          { id: 'init', name: 'Init (acc)', type: 'vec3' },
+          { id: 'a', name: 'Param A', type: 'vec3', optional: true },
+          { id: 'b', name: 'Param B', type: 'vec3', optional: true }
+      ],
+      outputs: [{ id: 'out', name: 'Result', type: 'vec3' }],
+      execute: () => ({ x: 0, y: 0, z: 0 }), // CPU not supported
+      glsl: (inVars, id, data) => {
+          const userCode = data?.code || 'acc += a + vec3(sin(index + time));';
+          // Define function globally, call it in main
+          const funcName = `${id}_func`;
+          return {
+              functions: `
+                vec3 ${funcName}(int count, vec3 init, vec3 a, vec3 b, float time) {
+                    vec3 acc = init;
+                    for(int i=0; i<count; i++) {
+                        float index = float(i);
+                        // Available: acc, index, a, b, time
+                        ${userCode}
+                    }
+                    return acc;
+                }
+              `,
+              body: `vec3 ${id} = ${funcName}(int(${inVars[0]||'10'}), vec3(${inVars[1]||'0.0'}), vec3(${inVars[2]||'0.0'}), vec3(${inVars[3]||'0.0'}), u_time);`
+          };
+      }
+  },
+
   'CustomExpression': {
       type: 'CustomExpression',
       category: 'Advanced',
-      title: 'Custom Loop / Code',
+      title: 'Custom Code',
       inputs: [
           { id: 'a', name: 'A (float)', type: 'float' },
           { id: 'b', name: 'B (vec3)', type: 'vec3' },
@@ -60,25 +94,22 @@ export const NodeRegistry: Record<string, NodeDef> = {
           { id: 'time', name: 'Time', type: 'float' }
       ],
       outputs: [{ id: 'out', name: 'Result (vec3)', type: 'vec3' }],
-      execute: () => ({ x: 0, y: 0, z: 0 }), // CPU Execution not supported for raw GLSL
+      execute: () => ({ x: 0, y: 0, z: 0 }), 
       glsl: (inVars, id, data) => {
-          // Default Loop Code if empty
           const userCode = data?.code || `
             vec3 result = vec3(0.0);
-            for(int i=0; i<3; i++) {
-                result += b * sin(a * float(i) + time);
-            }
+            result = b * sin(a + time);
             return result;
           `;
-          
-          // Wrap in an IIFE-like closure for GLSL to prevent variable leaking
-          // We define a helper function unique to this node instance
-          return `
-            vec3 ${id}_func(float a, vec3 b, vec3 c, float time) {
-                ${userCode}
-            }
-            vec3 ${id} = ${id}_func(${inVars[0]||'0.0'}, ${inVars[1]||'vec3(0.0)'}, ${inVars[2]||'vec3(0.0)'}, ${inVars[3]||'0.0'});
-          `;
+          const funcName = `${id}_func`;
+          return {
+              functions: `
+                vec3 ${funcName}(float a, vec3 b, vec3 c, float time) {
+                    ${userCode}
+                }
+              `,
+              body: `vec3 ${id} = ${funcName}(${inVars[0]||'0.0'}, ${inVars[1]||'vec3(0.0)'}, ${inVars[2]||'vec3(0.0)'}, ${inVars[3]||'0.0'});`
+          };
       }
   },
 
@@ -129,6 +160,21 @@ export const NodeRegistry: Record<string, NodeDef> = {
           float ${id}_x = ${v}.x;
           float ${id}_y = ${v}.y;
           `;
+      }
+  },
+  
+  'Vec2ToVec3': {
+      type: 'Vec2ToVec3',
+      category: 'Vector',
+      title: 'Vec2 -> Vec3',
+      inputs: [
+          { id: 'in', name: 'XY (Vec2)', type: 'vec2' },
+          { id: 'z', name: 'Z (Float)', type: 'float', optional: true }
+      ],
+      outputs: [{ id: 'out', name: 'Vec3', type: 'vec3' }],
+      execute: (i) => ({ x: i[0]?.x||0, y: i[0]?.y||0, z: i[1]||0 }),
+      glsl: (inVars, id) => {
+          return `vec3 ${id} = vec3(${inVars[0] || 'vec2(0.0)'}, ${inVars[1] || '0.0'});`;
       }
   },
 
@@ -272,6 +318,20 @@ export const NodeRegistry: Record<string, NodeDef> = {
     outputs: [{ id: 'out', name: 'Dist', type: 'float' }],
     execute: (i) => Math.hypot(i[0].x-i[1].x, i[0].y-i[1].y),
     glsl: (inVars, id) => `float ${id} = distance(${inVars[0] || 'vec2(0.0)'}, ${inVars[1] || 'vec2(0.0)'});`
+  },
+  'Vec2Sin': {
+      type: 'Vec2Sin', category: 'Vec2 Math', title: 'Sine (Vec2)',
+      inputs: [{ id: 'in', name: 'In', type: 'vec2' }],
+      outputs: [{ id: 'out', name: 'Out', type: 'vec2' }],
+      execute: (i) => ({ x: Math.sin(i[0]?.x||0), y: Math.sin(i[0]?.y||0) }),
+      glsl: (v, id) => `vec2 ${id} = sin(${v[0] || 'vec2(0.0)'});`
+  },
+  'Vec2Cos': {
+      type: 'Vec2Cos', category: 'Vec2 Math', title: 'Cosine (Vec2)',
+      inputs: [{ id: 'in', name: 'In', type: 'vec2' }],
+      outputs: [{ id: 'out', name: 'Out', type: 'vec2' }],
+      execute: (i) => ({ x: Math.cos(i[0]?.x||0), y: Math.cos(i[0]?.y||0) }),
+      glsl: (v, id) => `vec2 ${id} = cos(${v[0] || 'vec2(0.0)'});`
   },
   'ModVec2': {
       type: 'ModVec2',
