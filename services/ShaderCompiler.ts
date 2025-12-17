@@ -1,4 +1,6 @@
 
+// services/ShaderCompiler.ts
+
 import { GraphNode, GraphConnection } from '../types';
 import { NodeRegistry } from './NodeRegistry';
 
@@ -144,8 +146,8 @@ ${vsFinalAssignment}`;
         }
         
         outColor = vec4(finalColor, 1.0);
-        // Write Effect Index to Data Buffer to satisfy MRT requirements
-        outData = vec4(v_effectIndex, 0.0, 0.0, 1.0);
+        // Write Effect Index to Data Buffer to satisfy MRT requirements (Normalized to 0..1 for safety)
+        outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0);
     }
     `;
 

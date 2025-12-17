@@ -1,5 +1,7 @@
 
-import { StaticMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, GraphNode, GraphConnection, Asset } from '../types';
+// services/AssetManager.ts
+
+import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, GraphNode, GraphConnection, Asset } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 
 class AssetManagerService {
@@ -23,13 +25,14 @@ class AssetManagerService {
         this.registerDefaultAssets();
         this.createMaterial('Standard', MATERIAL_TEMPLATES[1]);
         this.createDefaultPhysicsMaterials();
-        this.createScript('Rotate Object');
+        this.createScript('New Visual Script');
+        this.createRig('Locomotion IK Logic');
     }
 
     registerAsset(asset: Asset): number {
         this.assets.set(asset.id, asset);
         
-        if (asset.type === 'MESH') {
+        if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
             if (this.meshUuidToInt.has(asset.id)) return this.meshUuidToInt.get(asset.id)!;
             const intId = this.nextMeshIntId++;
             this.meshIntToUuid.set(intId, asset.id);
@@ -57,9 +60,8 @@ class AssetManagerService {
 
     getMeshID(uuid: string): number { return this.meshUuidToInt.get(uuid) || 0; }
     getMaterialID(uuid: string): number { return this.matUuidToInt.get(uuid) || 0; }
-    getMaterialUUID(intId: number): string | undefined { return this.matIntToUuid.get(intId); } // Added helper
+    getMaterialUUID(intId: number): string | undefined { return this.matIntToUuid.get(intId); } 
     getPhysicsMaterialID(uuid: string): number { return this.physMatUuidToInt.get(uuid) || 0; }
-    
     getPhysicsMaterialUUID(intId: number): string | undefined { return this.physMatIntToUuid.get(intId); }
 
     getAllAssets() {
@@ -103,21 +105,16 @@ class AssetManagerService {
 
     createScript(name: string): ScriptAsset {
         const id = crypto.randomUUID();
-        // Default Logic Graph: Rotate All Entities
         const nodes: GraphNode[] = [
-            { id: 'query', type: 'AllEntities', position: { x: 50, y: 100 } },
-            { id: 'time', type: 'Time', position: { x: 50, y: 300 } },
-            { id: 'speed', type: 'Float', position: { x: 250, y: 350 }, data: { value: '0.5' } },
-            { id: 'mul', type: 'Multiply', position: { x: 450, y: 300 } },
-            { id: 'rot', type: 'Vec3', position: { x: 650, y: 300 }, data: { x: '0', y: '0', z: '0' } },
-            { id: 'transform', type: 'BatchApplyTransform', position: { x: 900, y: 100 } }
+            { id: 'time', type: 'Time', position: { x: 50, y: 150 } },
+            { id: 'sin', type: 'Sine', position: { x: 250, y: 150 } },
+            { id: 'mul', type: 'Multiply', position: { x: 450, y: 150 } },
+            { id: 'val', type: 'Float', position: { x: 250, y: 250 }, data: { value: '2.0' } }
         ];
         const connections: GraphConnection[] = [
-            { id: 'c1', fromNode: 'query', fromPin: 'out', toNode: 'transform', toPin: 'entities' },
-            { id: 'c2', fromNode: 'time', fromPin: 'out', toNode: 'mul', toPin: 'a' },
-            { id: 'c3', fromNode: 'speed', fromPin: 'out', toNode: 'mul', toPin: 'b' },
-            { id: 'c4', fromNode: 'mul', fromPin: 'out', toNode: 'rot', toPin: 'y' },
-            { id: 'c5', fromNode: 'rot', fromPin: 'out', toNode: 'transform', toPin: 'rot' }
+            { id: 'c1', fromNode: 'time', fromPin: 'out', toNode: 'sin', toPin: 'in' },
+            { id: 'c2', fromNode: 'sin', fromPin: 'out', toNode: 'mul', toPin: 'a' },
+            { id: 'c3', fromNode: 'val', fromPin: 'out', toNode: 'mul', toPin: 'b' }
         ];
 
         const asset: ScriptAsset = {
@@ -128,6 +125,177 @@ class AssetManagerService {
         };
         this.registerAsset(asset);
         return asset;
+    }
+
+    createRig(name: string): RigAsset {
+        const id = crypto.randomUUID();
+        
+        const nodes: GraphNode[] = [
+            // Logic Section
+            { id: 'time', type: 'Time', position: { x: 50, y: 50 } },
+            { id: 'speed', type: 'Float', position: { x: 50, y: 150 }, data: { value: '3.0' } },
+            { id: 'mul_t', type: 'Multiply', position: { x: 250, y: 100 } },
+            { id: 'sin', type: 'Sine', position: { x: 400, y: 100 } },
+            { id: 'zero', type: 'Float', position: { x: 400, y: 200 }, data: { value: '0.0' } },
+            { id: 'gt', type: 'GreaterThan', position: { x: 550, y: 150 } },
+
+            // Rig Flow
+            { id: 'in', type: 'RigInput', position: { x: 50, y: 400 } },
+            { id: 'branch', type: 'Branch', position: { x: 750, y: 300 } },
+            
+            // True Path (Apply IK)
+            { id: 'target', type: 'Vec3', position: { x: 750, y: 500 }, data: { x: '0.2', y: '0.5', z: '0.0' } },
+            { id: 'ik', type: 'TwoBoneIK', position: { x: 950, y: 450 }, data: { root: 'Thigh_L', mid: 'Calf_L', eff: 'Foot_L' } },
+            
+            { id: 'out', type: 'RigOutput', position: { x: 1200, y: 350 } }
+        ];
+
+        const connections: GraphConnection[] = [
+            { id: 'l1', fromNode: 'time', fromPin: 'out', toNode: 'mul_t', toPin: 'a' },
+            { id: 'l2', fromNode: 'speed', fromPin: 'out', toNode: 'mul_t', toPin: 'b' },
+            { id: 'l3', fromNode: 'mul_t', fromPin: 'out', toNode: 'sin', toPin: 'in' },
+            { id: 'l4', fromNode: 'sin', fromPin: 'out', toNode: 'gt', toPin: 'a' },
+            { id: 'l5', fromNode: 'zero', fromPin: 'out', toNode: 'gt', toPin: 'b' },
+            { id: 'f1', fromNode: 'gt', fromPin: 'out', toNode: 'branch', toPin: 'condition' },
+            { id: 'f2', fromNode: 'in', fromPin: 'pose', toNode: 'branch', toPin: 'false' },
+            { id: 'f3', fromNode: 'in', fromPin: 'pose', toNode: 'ik', toPin: 'pose' },
+            { id: 'f4', fromNode: 'target', fromPin: 'out', toNode: 'ik', toPin: 'target' },
+            { id: 'f5', fromNode: 'ik', fromPin: 'outPose', toNode: 'branch', toPin: 'true' },
+            { id: 'f6', fromNode: 'branch', fromPin: 'out', toNode: 'out', toPin: 'pose' }
+        ];
+
+        const asset: RigAsset = {
+            id,
+            name,
+            type: 'RIG',
+            data: { nodes, connections }
+        };
+        this.registerAsset(asset);
+        return asset;
+    }
+
+    // --- Real File Import ---
+    importFile(fileName: string, content: string | ArrayBuffer, type: 'MESH' | 'SKELETAL_MESH'): Asset {
+        const id = crypto.randomUUID();
+        const name = fileName.split('.')[0] || 'Imported_Mesh';
+        
+        let geometry = { v: [] as number[], n: [] as number[], u: [] as number[], idx: [] as number[] };
+
+        if (fileName.toLowerCase().endsWith('.obj') && typeof content === 'string') {
+            geometry = this.parseOBJ(content);
+        } else {
+            console.warn("Only .OBJ text import is fully implemented in this demo. Using fallback shape.");
+            geometry = this.generateCylinder(24);
+        }
+
+        if (type === 'SKELETAL_MESH') {
+            const asset: SkeletalMeshAsset = {
+                id, name, type: 'SKELETAL_MESH',
+                geometry: {
+                    vertices: new Float32Array(geometry.v),
+                    normals: new Float32Array(geometry.n),
+                    uvs: new Float32Array(geometry.u),
+                    indices: new Uint16Array(geometry.idx),
+                    jointIndices: new Float32Array((geometry.v.length / 3) * 4).fill(0),
+                    jointWeights: new Float32Array((geometry.v.length / 3) * 4).fill(0).map((_, i) => i % 4 === 0 ? 1 : 0)
+                },
+                skeleton: {
+                    bones: [
+                        { name: 'Root', parentIndex: -1, bindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]) }
+                    ]
+                }
+            };
+            this.registerAsset(asset);
+            return asset;
+        } else {
+            const asset: StaticMeshAsset = {
+                id, name, type: 'MESH',
+                geometry: {
+                    vertices: new Float32Array(geometry.v),
+                    normals: new Float32Array(geometry.n),
+                    uvs: new Float32Array(geometry.u),
+                    indices: new Uint16Array(geometry.idx)
+                }
+            };
+            this.registerAsset(asset);
+            return asset;
+        }
+    }
+
+    // --- Mock Import (Fallback) ---
+    importAssetMock(fileName: string, type: 'MESH' | 'SKELETAL_MESH'): Asset {
+        // Fallback to internal generator
+        return this.importFile(fileName, "", type);
+    }
+
+    // --- Simple OBJ Parser ---
+    private parseOBJ(text: string) {
+        const positions: number[] = [];
+        const normals: number[] = [];
+        const uvs: number[] = [];
+        
+        const finalV: number[] = [];
+        const finalN: number[] = [];
+        const finalU: number[] = [];
+        const finalIdx: number[] = [];
+        
+        // Cache to reuse vertices (index mapping: "v/vt/vn" -> newIndex)
+        const cache = new Map<string, number>();
+        let nextIdx = 0;
+
+        const lines = text.split('\n');
+        for (const line of lines) {
+            const parts = line.trim().split(/\s+/);
+            if (parts.length === 0) continue;
+            
+            const type = parts[0];
+            
+            if (type === 'v') {
+                positions.push(parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3]));
+            } else if (type === 'vn') {
+                normals.push(parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3]));
+            } else if (type === 'vt') {
+                uvs.push(parseFloat(parts[1]), parseFloat(parts[2]));
+            } else if (type === 'f') {
+                // Triangulate fan (p1, p2, p3, p4...) -> (p1, p2, p3), (p1, p3, p4)
+                const polyVerts = parts.slice(1);
+                for (let i = 1; i < polyVerts.length - 1; i++) {
+                    const faceIndicesString = [polyVerts[0], polyVerts[i], polyVerts[i+1]];
+                    
+                    for (const str of faceIndicesString) {
+                        if (cache.has(str)) {
+                            finalIdx.push(cache.get(str)!);
+                        } else {
+                            // Parse "v/vt/vn"
+                            const inds = str.split('/');
+                            const vIdx = (parseInt(inds[0]) - 1) * 3;
+                            const vtIdx = inds[1] ? (parseInt(inds[1]) - 1) * 2 : -1;
+                            const vnIdx = inds[2] ? (parseInt(inds[2]) - 1) * 3 : -1;
+                            
+                            finalV.push(positions[vIdx], positions[vIdx+1], positions[vIdx+2]);
+                            
+                            if (vnIdx >= 0) {
+                                finalN.push(normals[vnIdx], normals[vnIdx+1], normals[vnIdx+2]);
+                            } else {
+                                finalN.push(0, 1, 0); // Default normal
+                            }
+                            
+                            if (vtIdx >= 0) {
+                                finalU.push(uvs[vtIdx], uvs[vtIdx+1]);
+                            } else {
+                                finalU.push(0, 0);
+                            }
+                            
+                            cache.set(str, nextIdx);
+                            finalIdx.push(nextIdx);
+                            nextIdx++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        return { v: finalV, n: finalN, u: finalU, idx: finalIdx };
     }
 
     duplicateAsset(sourceId: string): Asset | null {
@@ -145,6 +313,10 @@ class AssetManagerService {
             const newScript = this.createScript(`${source.name} (Clone)`);
             newScript.data = JSON.parse(JSON.stringify(source.data));
             return newScript;
+        } else if (source.type === 'RIG') {
+            const newRig = this.createRig(`${source.name} (Clone)`);
+            newRig.data = JSON.parse(JSON.stringify(source.data));
+            return newRig;
         }
         return null;
     }
@@ -159,9 +331,9 @@ class AssetManagerService {
 
     saveScript(id: string, nodes: GraphNode[], connections: GraphConnection[]) {
         const asset = this.assets.get(id);
-        if (asset && asset.type === 'SCRIPT') {
+        if (asset && (asset.type === 'SCRIPT' || asset.type === 'RIG')) {
             asset.data = { nodes, connections };
-            console.log(`[AssetManager] Saved Script: ${asset.name}`);
+            console.log(`[AssetManager] Saved Graph Asset: ${asset.name}`);
         }
     }
     
@@ -180,16 +352,8 @@ class AssetManagerService {
     }
 
     private registerDefaultAssets() {
-        // Primitives registration (omitted for brevity, same as before)
         this.registerAsset(this.createPrimitive('Cylinder', (segs) => {
-            const v=[], n=[], u=[], idx=[];
-            const segments = 24; const radius = 0.5; const height = 1.0; const halfH = height/2;
-            for(let i=0; i<=segments; i++) {
-                const theta = (i/segments) * Math.PI * 2; const x = Math.cos(theta) * radius; const z = Math.sin(theta) * radius;
-                v.push(x, halfH, z); n.push(x, 0, z); u.push(i/segments, 0); v.push(x, -halfH, z); n.push(x, 0, z); u.push(i/segments, 1);
-            }
-            for(let i=0; i<segments; i++) { const base = i*2; idx.push(base, base+1, base+2, base+1, base+3, base+2); }
-            return { v, n, u, idx };
+            return this.generateCylinder(segs);
         }));
         this.registerAsset(this.createPrimitive('Cone', () => {
             const v=[], n=[], u=[], idx=[];
@@ -223,10 +387,21 @@ class AssetManagerService {
         this.registerAsset(this.createPrimitive('Cube', () => {
             const v = [ -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,0.5,0.5, -0.5,0.5,0.5, 0.5,-0.5,-0.5, -0.5,-0.5,-0.5, -0.5,0.5,-0.5, 0.5,0.5,-0.5, -0.5,0.5,0.5, 0.5,0.5,0.5, 0.5,0.5,-0.5, -0.5,0.5,-0.5, -0.5,-0.5,-0.5, 0.5,-0.5,-0.5, 0.5,-0.5,0.5, -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,-0.5,-0.5, 0.5,0.5,-0.5, 0.5,0.5,0.5, -0.5,-0.5,-0.5, -0.5,-0.5,0.5, -0.5,0.5,0.5, -0.5,0.5,-0.5 ];
             const n = [ 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0 ];
-            const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
+            const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
             const idx = [ 0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11, 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23 ];
             return { v, n, u, idx };
         }));
+    }
+
+    private generateCylinder(segments: number) {
+        const v=[], n=[], u=[], idx=[];
+        const radius = 0.5; const height = 1.0; const halfH = height/2;
+        for(let i=0; i<=segments; i++) {
+            const theta = (i/segments) * Math.PI * 2; const x = Math.cos(theta) * radius; const z = Math.sin(theta) * radius;
+            v.push(x, halfH, z); n.push(x, 0, z); u.push(i/segments, 0); v.push(x, -halfH, z); n.push(x, 0, z); u.push(i/segments, 1);
+        }
+        for(let i=0; i<segments; i++) { const base = i*2; idx.push(base, base+1, base+2, base+1, base+3, base+2); }
+        return { v, n, u, idx };
     }
 
     private createPrimitive(name: string, generator: (segs: number) => any): StaticMeshAsset {

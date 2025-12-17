@@ -4,6 +4,7 @@ import { GraphNode } from '../../types';
 import { NodeRegistry, getTypeColor } from '../../services/NodeRegistry';
 import { LayoutConfig } from './GraphConfig';
 import { ShaderPreview } from '../ShaderPreview';
+import { assetManager } from '../../services/AssetManager';
 
 interface NodeItemProps {
     node: GraphNode;
@@ -30,6 +31,7 @@ export const NodeItem = memo(({
     const isShaderOutput = node.type === 'ShaderOutput';
     const isCustomCode = node.type === 'CustomExpression';
     const isForLoop = node.type === 'ForLoop';
+    const isStaticMesh = node.type === 'StaticMesh';
     
     const borderStyle = selected ? 'ring-1 ring-accent border-accent' : 'border-white/10';
 
@@ -143,6 +145,23 @@ export const NodeItem = memo(({
                                         />
                                     </div>
                                 ))}
+                            </div>
+                        )}
+
+                        {isStaticMesh && (
+                            <div style={{ marginBottom: LayoutConfig.GAP }} className="px-1">
+                                <span className="text-[9px] text-gray-500 uppercase mb-1 block">Asset</span>
+                                <select
+                                    className="w-full bg-black/40 text-[10px] text-white px-1 rounded border border-white/10 h-5 focus:border-accent outline-none"
+                                    value={node.data?.assetId || ''}
+                                    onChange={(e) => onDataChange(node.id, 'assetId', e.target.value)}
+                                    onMouseDown={e => e.stopPropagation()}
+                                >
+                                    <option value="">Select Mesh...</option>
+                                    {assetManager.getAssetsByType('MESH').map(m => (
+                                        <option key={m.id} value={m.id}>{m.name}</option>
+                                    ))}
+                                </select>
                             </div>
                         )}
                         

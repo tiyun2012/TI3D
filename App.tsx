@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import { engineInstance } from './services/engine';
-import { Entity, ToolType, TransformSpace, SelectionType } from './types';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode } from './types';
 import { EditorContext, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG } from './contexts/EditorContext';
 import { assetManager } from './services/AssetManager';
 
@@ -11,11 +11,11 @@ import { HierarchyPanel } from './components/HierarchyPanel';
 import { InspectorPanel } from './components/InspectorPanel';
 import { SceneView } from './components/SceneView';
 import { ProjectPanel } from './components/ProjectPanel';
-import { NodeGraph } from './components/NodeGraph';
 import { Icon } from './components/Icon';
 import { PreferencesModal } from './components/PreferencesModal';
 import { WindowManager, WindowManagerContext } from './components/WindowManager';
 import { DEFAULT_GIZMO_CONFIG, GizmoConfiguration } from './components/gizmos/GizmoUtils';
+import { GeometrySpreadsheet } from './components/GeometrySpreadsheet';
 
 // --- Widget Wrappers ---
 
@@ -80,18 +80,6 @@ const SceneWrapper = () => {
 };
 
 const ProjectWrapper = () => <ProjectPanel />;
-
-const GameWrapper = () => (
-  <div className="flex items-center justify-center h-full text-text-secondary flex-col gap-2 bg-[#101010]">
-    <Icon name="Gamepad2" size={48} className="opacity-20" />
-    <span className="text-xs">Game View requires an Active Camera</span>
-  </div>
-);
-
-const GraphWrapper = () => {
-    const ctx = useContext(EditorContext);
-    return <NodeGraph assetId={ctx?.editingAssetId} />;
-};
 
 const ConsoleWrapper = () => (
     <div className="h-full flex flex-col font-mono text-xs bg-black/40">
@@ -164,8 +152,8 @@ const EditorLayout: React.FC = () => {
             width: 500, height: 250, initialPosition: { x: 80, y: window.innerHeight - 270 }
         });
         wm.registerWindow({
-            id: 'graph', title: 'Visual Script', icon: 'Workflow', content: <GraphWrapper />, 
-            width: 800, height: 500, initialPosition: { x: (window.innerWidth - 800)/2, y: (window.innerHeight - 500)/2 }
+            id: 'spreadsheet', title: 'Geometry Spreadsheet', icon: 'Table', content: <GeometrySpreadsheet />, 
+            width: 550, height: 400, initialPosition: { x: 450, y: window.innerHeight - 450 }
         });
         wm.registerWindow({
             id: 'preferences', title: 'Preferences', icon: 'Settings', content: <PreferencesModal onClose={() => wm.closeWindow('preferences')} />, 
@@ -239,11 +227,11 @@ const EditorLayout: React.FC = () => {
                                     <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('project'); setActiveMenu(null); }}>
                                         <Icon name="FolderOpen" size={12} /> Project
                                     </div>
-                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('graph'); setActiveMenu(null); }}>
-                                        <Icon name="Workflow" size={12} /> Node Graph
-                                    </div>
                                     <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('console'); setActiveMenu(null); }}>
                                         <Icon name="Terminal" size={12} /> Console
+                                    </div>
+                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('spreadsheet'); setActiveMenu(null); }}>
+                                        <Icon name="Table" size={12} /> Spreadsheet
                                     </div>
                                     <div className="border-t border-white/5 my-1"></div>
                                     <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { wm?.toggleWindow('preferences'); setActiveMenu(null); }}>Preferences...</div>
@@ -290,13 +278,13 @@ const App: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [selectionType, setSelectionType] = useState<SelectionType>('ENTITY');
+  const [inspectedNode, setInspectedNode] = useState<GraphNode | null>(null);
   const [tool, setTool] = useState<ToolType>('SELECT');
   const [transformSpace, setTransformSpace] = useState<TransformSpace>('Gimbal');
   const [isPlaying, setIsPlaying] = useState(false);
   const [gizmoConfig, setGizmoConfig] = useState<GizmoConfiguration>(DEFAULT_GIZMO_CONFIG);
   const [uiConfig, setUiConfig] = useState<UIConfiguration>(DEFAULT_UI_CONFIG);
   const [gridConfig, setGridConfig] = useState<GridConfiguration>(DEFAULT_GRID_CONFIG);
-  const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
 
   const refreshState = useCallback(() => {
     setEntities(engineInstance.ecs.getAllProxies(engineInstance.sceneGraph));
@@ -338,6 +326,8 @@ const App: React.FC = () => {
       setSelectedAssetIds,
       selectionType,
       setSelectionType,
+      inspectedNode,
+      setInspectedNode,
       tool,
       setTool,
       transformSpace,
@@ -348,9 +338,7 @@ const App: React.FC = () => {
       uiConfig,
       setUiConfig,
       gridConfig,
-      setGridConfig,
-      editingAssetId,
-      setEditingAssetId
+      setGridConfig
     }}>
         <WindowManager>
             <EditorLayout />

@@ -1,190 +1,239 @@
 
-// services/engine.ts
-
-import { Entity, ComponentType, GraphNode, GraphConnection, PerformanceMetrics } from '../types';
-import { SceneGraph } from './SceneGraph';
-import { Mat4, Mat4Utils, RayUtils, Vec3Utils, TMP_MAT4_1, TMP_MAT4_2 } from './math';
-import { NodeRegistry, NodeDef } from './NodeRegistry';
-import { DebugRenderer } from './renderers/DebugRenderer';
-import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { SoAEntitySystem } from './ecs/EntitySystem';
+import { SceneGraph } from './SceneGraph';
+import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
+import { DebugRenderer } from './renderers/DebugRenderer';
 import { PhysicsSystem } from './systems/PhysicsSystem';
 import { HistorySystem } from './systems/HistorySystem';
-import { compileShader } from './ShaderCompiler';
 import { assetManager } from './AssetManager';
-import { MESH_TYPES, VIEW_MODES, COMPONENT_MASKS } from './constants';
+import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType } from '../types';
+import { compileShader } from './ShaderCompiler';
+import { NodeRegistry } from './NodeRegistry';
 import { GridConfiguration } from '../contexts/EditorContext';
+import { Mat4Utils } from './math';
 
-interface ExecutionStep {
-    id: string;
-    def: NodeDef;
-    inputs: Array<{ nodeId: string, pinId: string } | null>;
-    data: any;
-}
-
-export class Ti3DEngine {
-  ecs: SoAEntitySystem;
-  sceneGraph: SceneGraph;
-  renderer: WebGLRenderer;
-  debugRenderer: DebugRenderer; 
-  physics: PhysicsSystem;
-  history: HistorySystem;
-  
-  isPlaying: boolean = false;
-  selectedIds: Set<string> = new Set();
-  
-  // OPTIMIZATION: Map string IDs to Dense Indices for rendering
-  selectedIndices: Set<number> = new Set();
-
-  private listeners: (() => void)[] = [];
-
-  // Logic Graph State
-  private executionList: ExecutionStep[] = [];
-  private nodeResults = new Map<string, any>(); 
-  
-  // Shader Graph State
-  currentShaderSource: string = '';
-  
-  // View State
-  renderMode: number = 0; // 0=Lit, 1=Normals
-
-  // Performance
-  metrics: PerformanceMetrics = { fps: 60, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0 };
-  private lastFrameTime = 0;
-  private frameCount = 0;
-  private lastFpsTime = 0;
-
-  constructor() {
-    this.ecs = new SoAEntitySystem();
-    this.sceneGraph = new SceneGraph();
-    this.sceneGraph.setContext(this.ecs); 
+export class EngineService {
+    ecs: SoAEntitySystem;
+    sceneGraph: SceneGraph;
+    renderer: WebGLRenderer;
+    debugRenderer: DebugRenderer;
+    physicsSystem: PhysicsSystem;
+    historySystem: HistorySystem;
     
-    this.renderer = new WebGLRenderer();
-    this.debugRenderer = new DebugRenderer();
-    this.physics = new PhysicsSystem();
-    this.history = new HistorySystem();
+    metrics: PerformanceMetrics = {
+        fps: 0, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0
+    };
     
-    this.initDemoScene();
-    this.pushUndoState();
-  }
-  
-  pushUndoState() { this.history.pushState(this.ecs); }
-  undo() { if(this.history.undo(this.ecs, this.sceneGraph)) this.notifyUI(); }
-  redo() { if(this.history.redo(this.ecs, this.sceneGraph)) this.notifyUI(); }
+    isPlaying = false;
+    renderMode = 0;
+    currentShaderSource = '';
+    
+    private canvas: HTMLCanvasElement | null = null;
+    private listeners: (() => void)[] = [];
+    private selectedIds: string[] = [];
+    
+    // Graph Execution
+    private executionList: { id: string, def: any, inputs: any[], data: any }[] = [];
 
-  saveScene(): string { return this.ecs.serialize(); }
-  loadScene(json: string) { this.ecs.deserialize(json, this.sceneGraph); this.notifyUI(); }
+    // Helper fields to store camera state from SceneView
+    private _vpMatrix: Float32Array = new Float32Array(16);
+    private _camPos: {x:number, y:number, z:number} = {x:0, y:0, z:0};
+    private _width = 1;
+    private _height = 1;
 
-  initGL(canvas: HTMLCanvasElement) { 
-      this.renderer.init(canvas); 
-      if (this.renderer.gl) this.debugRenderer.init(this.renderer.gl);
-      
-      // Register dynamic assets from AssetManager into Renderer
-      assetManager.getAllAssets().forEach(asset => {
-          if (asset.type === 'MESH') {
-              const id = assetManager.getMeshID(asset.id);
-              this.renderer.registerMesh(id, asset.geometry);
-          }
-          // Restore material shaders if possible (needs asset data parsing on load)
-          if (asset.type === 'MATERIAL') {
-              // Re-compile shader for existing material assets
-              const compiled = compileShader(asset.data.nodes, asset.data.connections);
-              const matIntId = assetManager.getMaterialID(asset.id);
-              if (matIntId && compiled) {
-                  if (typeof compiled === 'string') return; // Invalid state for updated compiler
-                  this.renderer.updateMaterial(matIntId, compiled);
-              }
-          }
-      });
-  }
-  resize(width: number, height: number) { this.renderer.resize(width, height); }
+    constructor() {
+        this.ecs = new SoAEntitySystem();
+        this.sceneGraph = new SceneGraph();
+        this.renderer = new WebGLRenderer();
+        this.debugRenderer = new DebugRenderer();
+        this.physicsSystem = new PhysicsSystem();
+        this.historySystem = new HistorySystem();
+        
+        this.sceneGraph.setContext(this.ecs);
+    }
 
-  setSelected(ids: string[]) {
-      // Optimization: Avoid update if selection hasn't changed
-      if (ids.length === this.selectedIds.size) {
-          let same = true;
-          for (const id of ids) if (!this.selectedIds.has(id)) { same = false; break; }
-          if (same) return;
-      }
+    initGL(canvas: HTMLCanvasElement) {
+        this.canvas = canvas;
+        this.renderer.init(canvas);
+        this.debugRenderer.init(this.renderer.gl!);
+    }
 
-      this.selectedIds = new Set(ids);
-      // OPTIMIZATION: Pre-calculate indices for the render loop
-      this.selectedIndices.clear();
-      ids.forEach(id => {
-          const idx = this.ecs.idToIndex.get(id);
-          if (idx !== undefined) this.selectedIndices.add(idx);
-      });
-      this.notifyUI();
-  }
-  
-  toggleGrid() {
-      this.renderer.showGrid = !this.renderer.showGrid;
-      this.notifyUI();
-  }
-  
-  setGridConfig(config: GridConfiguration) {
-      this.renderer.showGrid = config.visible;
-      this.renderer.gridOpacity = config.opacity;
-      this.renderer.gridSize = config.size;
-      this.renderer.gridFadeDistance = config.fadeDistance;
-      this.renderer.gridExcludePP = config.excludeFromPostProcess;
-      
-      // Convert Hex to Vec3
-      const hex = config.color.replace('#', '');
-      const r = parseInt(hex.substring(0, 2), 16) / 255;
-      const g = parseInt(hex.substring(2, 4), 16) / 255;
-      const b = parseInt(hex.substring(4, 6), 16) / 255;
-      this.renderer.gridColor = [r, g, b];
-      
-      this.notifyUI();
-  }
-  
-  cycleRenderMode() {
-      // Cycle through available modes defined in constants
-      const nextMode = (this.renderMode + 1) % VIEW_MODES.length;
-      this.setRenderMode(nextMode);
-  }
+    resize(width: number, height: number) {
+        this.renderer.resize(width, height);
+    }
 
-  setRenderMode(mode: number) {
-      this.renderMode = mode;
-      this.renderer.renderMode = mode;
-      this.notifyUI();
-  }
-  
-  setPostProcessConfig(config: Partial<PostProcessConfig>) {
-      this.renderer.ppConfig = { ...this.renderer.ppConfig, ...config };
-      this.notifyUI();
-  }
-  
-  getPostProcessConfig() {
-      return this.renderer.ppConfig;
-  }
+    subscribe(listener: () => void) {
+        this.listeners.push(listener);
+        return () => {
+            this.listeners = this.listeners.filter(l => l !== listener);
+        };
+    }
 
-  // --- Material Management ---
-  
-  applyMaterialToSelected(materialAssetId: string) {
-      if (this.selectedIds.size === 0) return;
-      
-      const matId = assetManager.getMaterialID(materialAssetId);
-      if (!matId) return;
+    notifyUI() {
+        this.listeners.forEach(l => l());
+    }
 
-      this.pushUndoState();
-      
-      this.selectedIds.forEach(entityId => {
-          const idx = this.ecs.idToIndex.get(entityId);
-          if (idx !== undefined && this.ecs.store.isActive[idx]) {
-              // Ensure mask has MESH
-              if (this.ecs.store.componentMask[idx] & COMPONENT_MASKS.MESH) {
-                  this.ecs.store.materialIndex[idx] = matId;
-              }
-          }
-      });
-      
-      console.log(`[Engine] Applied Material ID ${matId} to ${this.selectedIds.size} entities.`);
-      this.notifyUI();
-  }
+    start() { this.isPlaying = true; this.notifyUI(); }
+    pause() { this.isPlaying = false; this.notifyUI(); }
+    stop() { 
+        this.isPlaying = false; 
+        this.notifyUI(); 
+    }
 
-  compileGraph(nodes: GraphNode[], connections: GraphConnection[], materialId?: string) {
+    setSelected(ids: string[]) {
+        this.selectedIds = ids;
+        this.notifyUI();
+    }
+
+    updateCamera(vp: Float32Array, camPos: {x:number, y:number, z:number}, w: number, h: number) {
+        this._vpMatrix = vp;
+        this._camPos = camPos;
+        this._width = w;
+        this._height = h;
+        
+        // Trigger Render if not playing (game loop handles render when playing)
+        if (!this.isPlaying) {
+            this.renderFrame();
+        }
+    }
+
+    renderFrame() {
+        if (!this.canvas) return;
+        const selectedIndices = new Set<number>();
+        this.selectedIds.forEach(id => {
+            const idx = this.ecs.getEntityIndex(id);
+            if (idx !== undefined) selectedIndices.add(idx);
+        });
+        
+        this.renderer.render(
+            this.ecs.store, 
+            this.ecs.count, 
+            selectedIndices, 
+            this._vpMatrix, 
+            this._width, 
+            this._height, 
+            this._camPos
+        );
+    }
+
+    tick(dt: number) {
+        const start = performance.now();
+        
+        if (this.isPlaying) {
+            this.physicsSystem.update(dt, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
+            // Execute Scripts (Not implemented in this demo)
+        }
+
+        this.sceneGraph.update();
+        
+        this.renderFrame();
+        
+        // Metrics
+        const end = performance.now();
+        this.metrics.frameTime = end - start;
+        this.metrics.fps = 1000 / (this.metrics.frameTime || 1);
+        this.metrics.drawCalls = this.renderer.drawCalls;
+        this.metrics.triangleCount = this.renderer.triangleCount;
+        this.metrics.entityCount = this.ecs.count;
+    }
+
+    selectEntityAt(x: number, y: number, w: number, h: number): string | null {
+        if (!this._vpMatrix) return null;
+        
+        let closestDist = Infinity;
+        let closestId: string | null = null;
+        
+        this.ecs.idToIndex.forEach((idx, id) => {
+            if (!this.ecs.store.isActive[idx]) return;
+            
+            // Get World Pos
+            const wmIndex = idx * 16;
+            const px = this.ecs.store.worldMatrix[wmIndex + 12];
+            const py = this.ecs.store.worldMatrix[wmIndex + 13];
+            const pz = this.ecs.store.worldMatrix[wmIndex + 14];
+            
+            // Project
+            const coord = Mat4Utils.transformPoint({x:px, y:py, z:pz}, this._vpMatrix, w, h);
+            
+            if (coord.w > 0) { // In front of camera
+                const dx = coord.x - x;
+                const dy = coord.y - y;
+                const d = Math.sqrt(dx*dx + dy*dy);
+                
+                // Simple radius check (30px threshold)
+                if (d < 30 && d < closestDist) {
+                    closestDist = d;
+                    closestId = id;
+                }
+            }
+        });
+        
+        return closestId;
+    }
+    
+    selectEntitiesInRect(x: number, y: number, w: number, h: number): string[] {
+        if (!this._vpMatrix) return [];
+        const ids: string[] = [];
+        const x1 = Math.min(x, x + w);
+        const x2 = Math.max(x, x + w);
+        const y1 = Math.min(y, y + h);
+        const y2 = Math.max(y, y + h);
+
+        this.ecs.idToIndex.forEach((idx, id) => {
+            if (!this.ecs.store.isActive[idx]) return;
+            const wmIndex = idx * 16;
+            const px = this.ecs.store.worldMatrix[wmIndex + 12];
+            const py = this.ecs.store.worldMatrix[wmIndex + 13];
+            const pz = this.ecs.store.worldMatrix[wmIndex + 14];
+            const coord = Mat4Utils.transformPoint({x:px, y:py, z:pz}, this._vpMatrix, this._width, this._height);
+            
+            if (coord.w > 0 && coord.x >= x1 && coord.x <= x2 && coord.y >= y1 && coord.y <= y2) {
+                ids.push(id);
+            }
+        });
+        return ids;
+    }
+
+    createEntityFromAsset(assetId: string, position: {x:number, y:number, z:number}) {
+        const asset = assetManager.getAsset(assetId);
+        if (!asset) return;
+        
+        this.pushUndoState();
+        const id = this.ecs.createEntity(asset.name);
+        
+        // Add Transform
+        const transform = this.ecs.createProxy(id, this.sceneGraph)?.components[ComponentType.TRANSFORM];
+        if(transform) transform.position = position;
+
+        if (asset.type === 'MESH') {
+            this.ecs.addComponent(id, ComponentType.MESH);
+            const mesh = this.ecs.createProxy(id, this.sceneGraph)?.components[ComponentType.MESH];
+            if(mesh) {
+                if (asset.name.includes('Cube')) mesh.meshType = 'Cube';
+                else if (asset.name.includes('Sphere')) mesh.meshType = 'Sphere';
+                else if (asset.name.includes('Plane')) mesh.meshType = 'Plane';
+                else mesh.meshType = 'Cube'; // Default
+            }
+        } else if (asset.type === 'MATERIAL') {
+            const sphereId = this.ecs.createEntity(asset.name);
+            const t = this.ecs.createProxy(sphereId, this.sceneGraph)?.components[ComponentType.TRANSFORM];
+            if(t) t.position = position;
+            this.ecs.addComponent(sphereId, ComponentType.MESH);
+            const m = this.ecs.createProxy(sphereId, this.sceneGraph)?.components[ComponentType.MESH];
+            if(m) {
+                m.meshType = 'Sphere';
+                m.materialId = assetId;
+            }
+        }
+        
+        this.notifyUI();
+    }
+
+    pushUndoState() {
+        this.historySystem.pushState(this.ecs);
+    }
+
+    compileGraph(nodes: GraphNode[], connections: GraphConnection[], materialId?: string) {
       // 1. Compile Logic (CPU)
       this.executionList = [];
       const nodeMap = new Map(nodes.map(n => [n.id, n]));
@@ -195,6 +244,7 @@ export class Ti3DEngine {
           const node = nodeMap.get(nodeId);
           if (!node) return;
 
+          // Visit inputs first (Dependency resolution - Left to Right)
           const inputConns = connections.filter(c => c.toNode === nodeId);
           for(const c of inputConns) visit(c.fromNode);
 
@@ -216,7 +266,11 @@ export class Ti3DEngine {
           }
       };
 
-      for (const node of nodes) visit(node.id);
+      // OPTIMIZATION: Sort nodes by Y position to enforce "Upper to Lower" execution flow
+      // for independent logic branches (like Sequence outputs).
+      const sortedNodes = [...nodes].sort((a, b) => a.position.y - b.position.y);
+
+      for (const node of sortedNodes) visit(node.id);
       
       // 2. Compile Shader (GPU)
       const compiled = compileShader(nodes, connections);
@@ -236,226 +290,60 @@ export class Ti3DEngine {
               }
           }
       }
-  }
+    }
 
-  viewProjectionMatrix = Mat4Utils.create();
-  cameraPosition = { x: 0, y: 0, z: 0 };
-  private canvasWidth = 1;
-  private canvasHeight = 1;
+    toggleGrid() {
+        this.renderer.showGrid = !this.renderer.showGrid;
+        this.renderFrame();
+    }
 
-  updateCamera(vpMatrix: Mat4, cameraPos: {x:number, y:number, z:number}, w: number, h: number) {
-      Mat4Utils.copy(this.viewProjectionMatrix, vpMatrix);
-      this.cameraPosition = cameraPos;
-      this.canvasWidth = w;
-      this.canvasHeight = h;
-  }
+    setRenderMode(mode: number) {
+        this.renderer.renderMode = mode;
+        this.renderFrame();
+    }
 
-  selectEntityAt(x: number, y: number, width: number, height: number): string | null {
-      if (!Mat4Utils.invert(this.viewProjectionMatrix, TMP_MAT4_1)) return null;
-      const ray = RayUtils.create();
-      RayUtils.fromScreen(x, y, width, height, TMP_MAT4_1, ray);
+    applyMaterialToSelected(assetId: string) {
+        this.selectedIds.forEach(id => {
+            const proxy = this.ecs.createProxy(id, this.sceneGraph);
+            if (proxy && proxy.components.Mesh) {
+                proxy.components.Mesh.materialId = assetId;
+            }
+        });
+        this.notifyUI();
+    }
 
-      let closestId: string | null = null;
-      let minDist = Infinity;
-      const localRay = RayUtils.create();
-      const invWorld = TMP_MAT4_2;
+    saveScene() {
+        return this.ecs.serialize();
+    }
 
-      for (const [id, index] of this.ecs.idToIndex) {
-          if (!this.ecs.store.isActive[index]) continue;
-          // Must have mesh to be selectable by raycast
-          if (!(this.ecs.store.componentMask[index] & COMPONENT_MASKS.MESH)) continue;
-          
-          const meshType = this.ecs.store.meshType[index];
-          if (meshType === 0) continue; 
+    loadScene(json: string) {
+        this.ecs.deserialize(json, this.sceneGraph);
+        this.notifyUI();
+    }
 
-          const worldMatrix = this.sceneGraph.getWorldMatrix(id);
-          if (!worldMatrix) continue;
-          if (!Mat4Utils.invert(worldMatrix, invWorld)) continue;
+    getPostProcessConfig() { return this.renderer.ppConfig; }
+    setPostProcessConfig(config: PostProcessConfig) { 
+        this.renderer.ppConfig = config;
+        this.renderFrame();
+    }
 
-          Vec3Utils.transformMat4(ray.origin, invWorld, localRay.origin);
-          Vec3Utils.transformMat4Normal(ray.direction, invWorld, localRay.direction);
+    setGridConfig(config: GridConfiguration) {
+        this.renderer.gridOpacity = config.opacity;
+        this.renderer.gridSize = config.size;
+        this.renderer.gridFadeDistance = config.fadeDistance;
+        // hex string to float array
+        const r = parseInt(config.color.slice(1,3), 16)/255;
+        const g = parseInt(config.color.slice(3,5), 16)/255;
+        const b = parseInt(config.color.slice(5,7), 16)/255;
+        this.renderer.gridColor = [r,g,b];
+        this.renderer.gridExcludePP = config.excludeFromPostProcess;
+        this.renderer.showGrid = config.visible;
+        this.renderFrame();
+    }
 
-          let t: number | null = null;
-          // Rough approximation for selection
-          if (meshType === MESH_TYPES['Sphere']) t = RayUtils.intersectSphere(localRay, {x:0, y:0, z:0}, 0.5);
-          else t = RayUtils.intersectBox(localRay, {x:-0.5, y:-0.5, z:-0.5}, {x:0.5, y:0.5, z:0.5});
-
-          if (t !== null && t > 0) {
-              if (t < minDist) {
-                  minDist = t;
-                  closestId = id;
-              }
-          }
-      }
-      return closestId;
-  }
-
-  selectEntitiesInRect(x: number, y: number, w: number, h: number): string[] {
-      const results: string[] = [];
-      const minX = Math.min(x, x + w), maxX = Math.max(x, x + w);
-      const minY = Math.min(y, y + h), maxY = Math.max(y, y + h);
-
-      for (const [id, index] of this.ecs.idToIndex) {
-          if (!this.ecs.store.isActive[index]) continue;
-          // Must have mesh to be selectable
-          if (!(this.ecs.store.componentMask[index] & COMPONENT_MASKS.MESH)) continue;
-          
-          const worldPos = this.sceneGraph.getWorldPosition(id);
-          const screenPos = Mat4Utils.transformPoint(worldPos, this.viewProjectionMatrix, this.canvasWidth, this.canvasHeight);
-          
-          if (screenPos.w <= 0) continue;
-          if (screenPos.x >= minX && screenPos.x <= maxX &&
-              screenPos.y >= minY && screenPos.y <= maxY) {
-              results.push(id);
-          }
-      }
-      return results;
-  }
-
-  createEntity(name: string): Entity {
-      const id = this.ecs.createEntity(name);
-      this.sceneGraph.registerEntity(id);
-      this.pushUndoState();
-      this.notifyUI();
-      return this.ecs.createProxy(id, this.sceneGraph)!;
-  }
-  
-  createEntityFromAsset(assetId: string, position?: {x:number,y:number,z:number}) {
-      const asset = assetManager.getAsset(assetId);
-      if (!asset) return;
-      
-      const meshId = assetManager.getMeshID(assetId);
-      const e = this.createEntity(asset.name);
-      
-      // Manually set integer mesh type bypassing string lookup
-      const idx = this.ecs.idToIndex.get(e.id);
-      if (idx !== undefined) {
-          this.ecs.addComponent(e.id, ComponentType.MESH);
-          this.ecs.store.meshType[idx] = meshId;
-          this.ecs.store.textureIndex[idx] = 1; // Default Grid texture
-          if(position) {
-              this.ecs.store.setPosition(idx, position.x, position.y, position.z);
-          }
-      }
-      this.notifyUI();
-  }
-
-  private initDemoScene() {
-      const p = this.createEntity('Player Cube');
-      this.ecs.addComponent(p.id, ComponentType.MESH);
-      this.ecs.addComponent(p.id, ComponentType.PHYSICS);
-      p.components[ComponentType.MESH]!.meshType = 'Cube';
-      p.components[ComponentType.MESH]!.color = '#3b82f6';
-      p.components[ComponentType.MESH]!.textureIndex = 0; 
-
-      const s = this.createEntity('Orbiting Satellite');
-      this.ecs.addComponent(s.id, ComponentType.MESH);
-      s.components[ComponentType.MESH]!.meshType = 'Sphere';
-      s.components[ComponentType.MESH]!.color = '#ef4444';
-      s.components[ComponentType.MESH]!.textureIndex = 2;
-      s.components[ComponentType.TRANSFORM]!.position = {x: 3, y: 0, z: 0};
-      s.components[ComponentType.TRANSFORM]!.scale = {x: 0.5, y: 0.5, z: 0.5};
-      this.sceneGraph.attach(s.id, p.id);
-
-      const f = this.createEntity('Floor');
-      this.ecs.addComponent(f.id, ComponentType.MESH);
-      f.components[ComponentType.MESH]!.meshType = 'Plane';
-      f.components[ComponentType.MESH]!.color = '#ffffff';
-      f.components[ComponentType.MESH]!.textureIndex = 3;
-      f.components[ComponentType.TRANSFORM]!.position = {x: 0, y: -2, z: 0};
-      f.components[ComponentType.TRANSFORM]!.scale = {x: 10, y: 0.1, z: 10};
-
-      const l = this.createEntity('Directional Light');
-      this.ecs.addComponent(l.id, ComponentType.LIGHT);
-      l.components[ComponentType.LIGHT]!.intensity = 1.0;
-      
-      // Angle the light so shading is visible (approx 45 deg down/side)
-      const idx = this.ecs.idToIndex.get(l.id)!;
-      this.ecs.store.setRotation(idx, 0.8, 2.5, 0); 
-  }
-
-  syncTransforms() {
-      this.sceneGraph.update();
-  }
-
-  tick(deltaTime: number) {
-      const now = performance.now();
-      
-      this.frameCount++;
-      if (now - this.lastFpsTime >= 1000) {
-          this.metrics.fps = this.frameCount;
-          this.frameCount = 0;
-          this.lastFpsTime = now;
-      }
-
-      // 1. Physics
-      if (this.isPlaying) {
-          const sId = Array.from(this.ecs.idToIndex.entries()).find(x => this.ecs.store.names[x[1]] === 'Orbiting Satellite')?.[0];
-          if (sId) {
-              const idx = this.ecs.idToIndex.get(sId)!;
-              this.ecs.store.setRotation(idx, this.ecs.store.rotX[idx], this.ecs.store.rotY[idx] + deltaTime * 2.0, this.ecs.store.rotZ[idx]);
-          }
-          this.physics.update(deltaTime, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
-      }
-
-      // 2. Scene Graph
-      this.syncTransforms();
-      
-      // 3. Script / Logic
-      this.debugRenderer.begin();
-      this.nodeResults.clear();
-      
-      for(const step of this.executionList) {
-          const inputs = step.inputs.map(link => {
-              if (!link) return null;
-              const res = this.nodeResults.get(link.nodeId);
-              if (res && typeof res === 'object' && link.pinId in res && !ArrayBuffer.isView(res)) {
-                  return res[link.pinId];
-              }
-              return res;
-          });
-          try {
-             // Only execute nodes that have an execution function
-             if (step.def.execute) {
-                 const result = step.def.execute(inputs, step.data, this);
-                 this.nodeResults.set(step.id, result);
-             }
-          } catch(e) { }
-      }
-
-      // 4. Rendering
-      this.renderer.render(
-          this.ecs.store, 
-          this.ecs.count, 
-          this.selectedIndices,
-          this.viewProjectionMatrix,
-          this.canvasWidth,
-          this.canvasHeight,
-          this.cameraPosition
-      );
-      
-      this.debugRenderer.render(this.viewProjectionMatrix);
-
-      const end = performance.now();
-      this.metrics.frameTime = end - now;
-      this.metrics.drawCalls = this.renderer.drawCalls;
-      this.metrics.triangleCount = this.renderer.triangleCount;
-      this.metrics.entityCount = this.ecs.idToIndex.size;
-  }
-  
-  start() { this.isPlaying = true; this.notifyUI(); }
-  pause() { this.isPlaying = false; this.notifyUI(); }
-  stop() { this.isPlaying = false; this.notifyUI(); }
-  
-  subscribe(cb: () => void) { 
-      this.listeners.push(cb); 
-      return () => { this.listeners = this.listeners.filter(c => c !== cb); };
-  }
-  
-  notifyUI() { 
-      this.syncTransforms();
-      this.listeners.forEach(cb => cb()); 
-  }
+    syncTransforms() {
+        this.sceneGraph.update();
+    }
 }
 
-export const engineInstance = new Ti3DEngine();
+export const engineInstance = new EngineService();

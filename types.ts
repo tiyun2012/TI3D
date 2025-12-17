@@ -59,7 +59,7 @@ export interface PerformanceMetrics {
 }
 
 // Asset Types
-export type AssetType = 'MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'TEXTURE' | 'SCRIPT';
+export type AssetType = 'MESH' | 'SKELETAL_MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'TEXTURE' | 'SCRIPT' | 'RIG';
 
 export interface StaticMeshAsset {
     id: string;
@@ -71,6 +71,24 @@ export interface StaticMeshAsset {
         normals: Float32Array | number[];
         uvs: Float32Array | number[];
         indices: Uint16Array | number[];
+    };
+}
+
+export interface SkeletalMeshAsset {
+    id: string;
+    name: string;
+    type: 'SKELETAL_MESH';
+    thumbnail?: string;
+    geometry: {
+        vertices: Float32Array | number[];
+        normals: Float32Array | number[];
+        uvs: Float32Array | number[];
+        indices: Uint16Array | number[];
+        jointIndices: Float32Array | number[]; // 4 weights per vertex
+        jointWeights: Float32Array | number[]; // 4 weights per vertex
+    };
+    skeleton: {
+        bones: Array<{ name: string; parentIndex: number; bindPose: Float32Array }>;
     };
 }
 
@@ -107,4 +125,14 @@ export interface ScriptAsset {
     };
 }
 
-export type Asset = StaticMeshAsset | MaterialAsset | PhysicsMaterialAsset | ScriptAsset;
+export interface RigAsset {
+    id: string;
+    name: string;
+    type: 'RIG';
+    data: {
+        nodes: GraphNode[];
+        connections: GraphConnection[];
+    };
+}
+
+export type Asset = StaticMeshAsset | SkeletalMeshAsset | MaterialAsset | PhysicsMaterialAsset | ScriptAsset | RigAsset;

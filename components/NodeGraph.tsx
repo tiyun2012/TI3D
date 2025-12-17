@@ -1,10 +1,11 @@
 
-import React, { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react';
-import { GraphNode, GraphConnection } from '../types';
+import React, { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect, useContext } from 'react';
+import { GraphNode, GraphConnection, AssetType } from '../types';
 import { engineInstance } from '../services/engine';
 import { NodeRegistry, getTypeColor } from '../services/NodeRegistry';
 import { Icon } from './Icon';
 import { assetManager } from '../services/AssetManager';
+import { EditorContext } from '../contexts/EditorContext';
 
 // Modular imports
 import { LayoutConfig } from './node-graph/GraphConfig';
@@ -17,9 +18,18 @@ interface NodeGraphProps {
     assetId?: string | null;
 }
 
+// Define allowed categories per Asset Type for stability
+const ALLOWED_CATEGORIES: Record<string, string[]> = {
+    'MATERIAL': ['Shader', 'Geometry', 'Effects', 'Pro', 'Advanced', 'Shader Math', 'Input', 'Math', 'Vector', 'Vec2 Math', 'Vec3 Math'],
+    'SCRIPT': ['Query', 'Entity', 'Input', 'Math', 'Vector', 'Vec2 Math', 'Vec3 Math', 'Logic'],
+    'RIG': ['Rigging', 'Input', 'Math', 'Vector', 'Vec2 Math', 'Vec3 Math', 'Logic'],
+};
+
 export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
+    const { setInspectedNode } = useContext(EditorContext)!;
     const [nodes, setNodes] = useState<GraphNode[]>([]);
     const [connections, setConnections] = useState<GraphConnection[]>([]);
+    const [assetType, setAssetType] = useState<AssetType | null>(null);
     
     // History Hook
     const { pushSnapshot, undo, redo } = useGraphHistory(nodes, connections, setNodes, setConnections);
@@ -52,9 +62,11 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
     useEffect(() => {
         if (assetId) {
             const asset = assetManager.getAsset(assetId);
-            if (asset && (asset.type === 'MATERIAL' || asset.type === 'SCRIPT')) {
+            if (asset && (asset.type === 'MATERIAL' || asset.type === 'SCRIPT' || asset.type === 'RIG')) {
+                setAssetType(asset.type);
                 setNodes(asset.data.nodes);
                 setConnections(asset.data.connections);
+                
                 // Initial compile on load
                 if (asset.type === 'MATERIAL') {
                     engineInstance.compileGraph(asset.data.nodes, asset.data.connections, assetId);
@@ -65,8 +77,20 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
         } else {
             setNodes([]);
             setConnections([]);
+            setAssetType(null);
         }
     }, [assetId]);
+
+    // Update Inspected Node when selection changes
+    useEffect(() => {
+        if (selectedNodeIds.size === 1) {
+            const id = Array.from(selectedNodeIds)[0];
+            const node = nodes.find(n => n.id === id);
+            setInspectedNode(node || null);
+        } else {
+            setInspectedNode(null);
+        }
+    }, [selectedNodeIds, nodes, setInspectedNode]);
 
     const handleSave = () => {
         if (assetId) {
@@ -75,9 +99,9 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
                 const glsl = engineInstance.currentShaderSource;
                 assetManager.saveMaterial(assetId, nodes, connections, glsl);
                 alert(`Saved Material!`);
-            } else if (asset?.type === 'SCRIPT') {
+            } else if (asset?.type === 'SCRIPT' || asset?.type === 'RIG') {
                 assetManager.saveScript(assetId, nodes, connections);
-                alert(`Saved Script!`);
+                alert(`Saved Graph!`);
             }
         }
     };
@@ -110,7 +134,7 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
             if (asset.type === 'MATERIAL') {
                 engineInstance.compileGraph(nodes, connections, assetId);
             } else {
-                // For scripts, we compile logic which updates execution list instantly
+                // For scripts and rigs, we compile logic which updates execution list instantly
                 engineInstance.compileGraph(nodes, connections);
             }
             setCompileStatus('READY');
@@ -651,6 +675,7 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
         let initialData = {};
         if (type === 'Float') initialData = { value: '0' };
         if (type === 'Vec3') initialData = { x: '0', y: '0', z: '0' };
+        if (type === 'StaticMesh') initialData = { assetId: '' };
 
         const newNode: GraphNode = { id: newNodeId, type, position: pos, data: initialData };
         
@@ -715,6 +740,15 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
         );
     }
 
+    // Filter available nodes based on Asset Type
+    const allowedCategories = assetType ? ALLOWED_CATEGORIES[assetType] : [];
+    
+    // Always include Input nodes for flexibility
+    const availableNodes = Object.values(NodeRegistry).filter(def => 
+        (def.category === 'Input' || allowedCategories.includes(def.category)) && 
+        def.title.toLowerCase().includes(searchFilter.toLowerCase())
+    );
+
     return (
         <div 
             ref={containerRef}
@@ -777,7 +811,7 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
             
             {assetId && (
                 <div className="absolute top-2 right-2 z-50 px-2 py-1 bg-black/50 text-white/50 text-[10px] rounded border border-white/5 pointer-events-none">
-                    Editing: {assetManager.getAsset(assetId)?.name}
+                    Editing: {assetManager.getAsset(assetId)?.name} <span className="opacity-50">({assetType})</span>
                 </div>
             )}
 
@@ -866,14 +900,14 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
                         onChange={e => setSearchFilter(e.target.value)} 
                     />
                     <div className="max-h-64 overflow-y-auto custom-scrollbar">
-                         {Object.values(NodeRegistry)
-                            .filter(d => d.title.toLowerCase().includes(searchFilter.toLowerCase()))
-                            .map(def => (
+                         {availableNodes.length > 0 ? availableNodes.map(def => (
                              <button key={def.type} className="w-full text-left px-3 py-2 text-gray-300 hover:bg-accent hover:text-white flex items-center justify-between group" onClick={() => addNode(def.type)}>
                                  <span>{def.title}</span>
                                  <span className="text-[9px] text-gray-600 group-hover:text-white/70">{def.category}</span>
                              </button>
-                         ))}
+                         )) : (
+                             <div className="p-2 text-center text-gray-500 italic">No compatible nodes</div>
+                         )}
                     </div>
                 </div>
             )}

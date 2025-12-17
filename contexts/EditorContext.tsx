@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Entity, ToolType, TransformSpace, SelectionType } from '../types';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
 import { GizmoConfiguration } from '../components/gizmos/GizmoUtils';
 
@@ -50,6 +50,10 @@ export interface EditorContextType {
   selectedAssetIds: string[];
   setSelectedAssetIds: (ids: string[]) => void;
 
+  // Graph Node Selection (For Inspector/Spreadsheet)
+  inspectedNode: GraphNode | null;
+  setInspectedNode: (node: GraphNode | null) => void;
+
   selectionType: SelectionType;
   setSelectionType: (type: SelectionType) => void;
 
@@ -67,10 +71,6 @@ export interface EditorContextType {
 
   gridConfig: GridConfiguration;
   setGridConfig: (config: GridConfiguration) => void;
-  
-  // Asset Editing
-  editingAssetId: string | null;
-  setEditingAssetId: (id: string | null) => void;
 }
 
 export const EditorContext = React.createContext<EditorContextType | null>(null);

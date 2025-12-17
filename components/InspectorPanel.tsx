@@ -299,11 +299,31 @@ const ComponentCard: React.FC<{
                 <div className="flex-1">
                    <Select 
                       icon="Wand2"
-                      value={component.effectIndex || 0}
+                      value={(component.effectIndex || 0) % 100}
                       options={effects}
-                      onChange={(v) => handleAtomicChange('effectIndex', v)}
+                      onChange={(v) => {
+                          const currentExcluded = (component.effectIndex || 0) >= 100;
+                          handleAtomicChange('effectIndex', Number(v) + (currentExcluded ? 100 : 0));
+                      }}
                    />
                 </div>
+             </div>
+             
+             <div className="flex items-center gap-2 mt-1">
+                 <span className="w-24"></span>
+                 <label className="flex items-center gap-2 cursor-pointer group">
+                     <input 
+                        type="checkbox" 
+                        checked={(component.effectIndex || 0) >= 100}
+                        onChange={(e) => {
+                            const currentBase = (component.effectIndex || 0) % 100;
+                            handleAtomicChange('effectIndex', currentBase + (e.target.checked ? 100 : 0));
+                        }}
+                        className="rounded bg-white/10 border-transparent focus:ring-0 checked:bg-accent text-accent"
+                        aria-label="Exclude from Global Post FX"
+                     />
+                     <span className="text-[10px] text-text-secondary group-hover:text-white transition-colors">Exclude Global FX</span>
+                 </label>
              </div>
 
              <div className="border-t border-white/5 my-1"></div>
@@ -445,10 +465,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
   
   const updateAssetData = (field: string, value: any) => {
       if (type !== 'ASSET' || !object) return;
-      const asset = object as PhysicsMaterialAsset; // Safe cast contextually
+      const asset = object as PhysicsMaterialAsset; 
       if (asset.type === 'PHYSICS_MATERIAL') {
           assetManager.updatePhysicsMaterial(asset.id, { [field]: value });
-          setRefresh(r => r + 1); // Local refresh
+          setRefresh(r => r + 1); 
       }
   };
 
@@ -468,12 +488,17 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
   // --- ASSET INSPECTOR ---
   if (type === 'ASSET') {
       const asset = object as Asset;
+      let icon = 'File';
+      if(asset.type === 'PHYSICS_MATERIAL') icon = 'Activity';
+      if(asset.type === 'RIG') icon = 'GitBranch';
+      if(asset.type === 'SCRIPT') icon = 'FileCode';
+      if(asset.type === 'MATERIAL') icon = 'Palette';
+
       return (
         <div className="h-full bg-panel flex flex-col font-sans border-l border-black/20">
-            {/* Same Asset Inspector Code... */}
             <div className="p-4 border-b border-black/20 bg-panel-header flex items-center gap-3">
                  <div className="w-8 h-8 bg-green-600 rounded flex items-center justify-center text-white shadow-sm shrink-0">
-                     <Icon name={asset.type === 'PHYSICS_MATERIAL' ? 'Activity' : 'File'} size={16} />
+                     <Icon name={icon as any} size={16} />
                  </div>
                  <div className="flex-1 min-w-0">
                      <input 
@@ -520,9 +545,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
                     </div>
                 )}
                 
-                {asset.type === 'MATERIAL' && (
+                {(asset.type === 'MATERIAL' || asset.type === 'SCRIPT' || asset.type === 'RIG') && (
                     <div className="text-center text-text-secondary text-xs mt-10">
-                        Use the Node Graph editor to modify Shader Materials.
+                        Double-click asset to open Graph for {asset.type === 'RIG' ? 'Rig Graphs' : (asset.type === 'SCRIPT' ? 'Visual Scripts' : 'Shader Materials')}.
                     </div>
                 )}
             </div>

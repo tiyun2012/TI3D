@@ -7,13 +7,15 @@ import { EditorContext } from '../contexts/EditorContext';
 import { WindowManagerContext } from './WindowManager';
 import { MATERIAL_TEMPLATES } from '../services/MaterialTemplates';
 import { engineInstance } from '../services/engine';
+import { NodeGraph } from './NodeGraph'; // Import NodeGraph to embed in windows
+import { ImportWizard } from './ImportWizard';
 
 export const ProjectPanel: React.FC = () => {
     const [tab, setTab] = useState<'PROJECT' | 'CONSOLE'>('PROJECT');
-    const [filter, setFilter] = useState<'ALL' | 'MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'SCRIPT'>('ALL');
+    const [filter, setFilter] = useState<'ALL' | 'MESH' | 'SKELETAL_MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'SCRIPT' | 'RIG'>('ALL');
     const [search, setSearch] = useState('');
     const [scale, setScale] = useState(40);
-    const { setEditingAssetId, setSelectedAssetIds, selectedAssetIds, setSelectionType } = useContext(EditorContext)!;
+    const { setSelectedAssetIds, selectedAssetIds, setSelectionType } = useContext(EditorContext)!;
     const wm = useContext(WindowManagerContext);
     
     // UI State
@@ -28,25 +30,16 @@ export const ProjectPanel: React.FC = () => {
         return true;
     });
 
-    // Close menus on click away
     useEffect(() => {
         const close = () => { setShowCreateMenu(false); setContextMenu(null); };
         window.addEventListener('click', close);
         window.addEventListener('contextmenu', (e) => {
-            // Close if clicking outside
-            if (contextMenu?.visible) {
-                // We rely on the menu's stopPropagation to keep it open if clicked inside,
-                // but for outside context clicks, we close.
-                // Actually, let's just close on any global click/context to be safe and simple
-                setContextMenu(null); 
-            }
+            setContextMenu(null); 
         });
         return () => {
             window.removeEventListener('click', close);
-            // Don't remove the anonymous contextmenu listener to avoid complex ref logic, 
-            // relying on standard React unmount cleanup is better but here we just added global close.
         };
-    }, [contextMenu]); // dependency on contextMenu to close it correctly? No, just close.
+    }, [contextMenu]);
 
     const handleDragStart = (e: React.DragEvent, assetId: string) => {
         e.dataTransfer.setData('application/ti3d-asset', assetId);
@@ -58,32 +51,45 @@ export const ProjectPanel: React.FC = () => {
         setSelectionType('ASSET');
     };
 
-    const handleDoubleClick = (assetId: string) => {
+    // Open a new Graph Window for the asset
+    const openAssetEditor = (assetId: string) => {
         const asset = assetManager.getAsset(assetId);
-        if (asset && (asset.type === 'MATERIAL' || asset.type === 'SCRIPT')) {
-            setEditingAssetId(assetId);
-            wm?.openWindow('graph');
+        if (asset && (asset.type === 'MATERIAL' || asset.type === 'SCRIPT' || asset.type === 'RIG')) {
+            const winId = `graph_${assetId}`;
+            wm?.registerWindow({
+                id: winId,
+                title: `${asset.name}`,
+                icon: asset.type === 'RIG' ? 'GitBranch' : (asset.type === 'SCRIPT' ? 'FileCode' : 'Palette'),
+                content: <NodeGraph assetId={assetId} />,
+                width: 900,
+                height: 600,
+                initialPosition: { 
+                    x: 150 + (Math.random() * 50), 
+                    y: 100 + (Math.random() * 50) 
+                }
+            });
+            wm?.openWindow(winId);
         }
+    };
+
+    const handleDoubleClick = (assetId: string) => {
+        openAssetEditor(assetId);
     };
 
     const handleContextMenu = (e: React.MouseEvent, assetId: string) => {
         e.preventDefault();
-        e.stopPropagation(); // Stop bubbling to window listener
-        
-        // Use clientX/Y directly. 
-        // NOTE: If the user complains about "far", it's often due to scaling/transforms. 
-        // Using Portal to document.body + fixed position relative to viewport (clientX/Y) is the most robust way.
+        e.stopPropagation();
         setContextMenu({ x: e.clientX, y: e.clientY, assetId, visible: true });
-        
-        // Also select it
         handleClick(assetId);
     };
 
     // Actions
     const createMaterial = (templateIndex?: number) => {
         const tpl = templateIndex !== undefined ? MATERIAL_TEMPLATES[templateIndex] : undefined;
-        assetManager.createMaterial(`New Material ${Math.floor(Math.random() * 1000)}`, tpl);
+        const asset = assetManager.createMaterial(`New Material ${Math.floor(Math.random() * 1000)}`, tpl);
         setRefresh(r => r + 1);
+        // Optional: Auto open
+        // openAssetEditor(asset.id);
     };
 
     const createPhysicsMaterial = () => {
@@ -92,8 +98,29 @@ export const ProjectPanel: React.FC = () => {
     };
 
     const createScript = () => {
-        assetManager.createScript(`New Script ${Math.floor(Math.random() * 1000)}`);
+        const asset = assetManager.createScript(`New Visual Script ${Math.floor(Math.random() * 1000)}`);
         setRefresh(r => r + 1);
+        openAssetEditor(asset.id);
+    };
+
+    const createRig = () => {
+        const asset = assetManager.createRig(`New Rig Graph ${Math.floor(Math.random() * 1000)}`);
+        setRefresh(r => r + 1);
+        openAssetEditor(asset.id);
+    };
+
+    const openImportWizard = () => {
+        const winId = 'import_wizard';
+        wm?.registerWindow({
+            id: winId,
+            title: 'Import Asset',
+            icon: 'Import',
+            content: <ImportWizard onClose={() => wm.closeWindow(winId)} onImportSuccess={() => { setRefresh(r=>r+1); wm.closeWindow(winId); }} />,
+            width: 400,
+            height: 500,
+            initialPosition: { x: window.innerWidth/2 - 200, y: window.innerHeight/2 - 250 }
+        });
+        wm?.openWindow(winId);
     };
 
     const duplicateAsset = (id: string) => {
@@ -126,20 +153,39 @@ export const ProjectPanel: React.FC = () => {
                 
                 {tab === 'PROJECT' && (
                     <div className="flex items-center gap-2">
+                        <button 
+                            onClick={openImportWizard}
+                            className="bg-accent/80 hover:bg-accent text-white px-3 py-1 rounded text-xs flex items-center gap-1 shadow-sm transition-colors"
+                            title="Import External Asset"
+                        >
+                            <Icon name="Import" size={14} />
+                            <span>Import</span>
+                        </button>
+
+                        <div className="h-4 w-px bg-white/10"></div>
+
                         <div className="relative">
                             <button 
                                 onClick={(e) => { e.stopPropagation(); setShowCreateMenu(!showCreateMenu); }}
-                                className={`p-1 hover:bg-white/10 rounded flex items-center gap-1 transition-colors ${showCreateMenu ? 'bg-white/10 text-white' : 'text-accent'}`}
+                                className={`p-1 hover:bg-white/10 rounded flex items-center gap-1 transition-colors ${showCreateMenu ? 'bg-white/10 text-white' : 'text-emerald-500'}`}
                                 title="Create Asset"
                             >
                                 <Icon name="PlusSquare" size={16} />
+                                <span className="text-xs font-bold">Add</span>
                                 <Icon name="ChevronDown" size={10} />
                             </button>
                             
                             {/* Create Menu */}
                             {showCreateMenu && (
                                 <div className="absolute top-full right-0 mt-1 w-40 bg-[#252525] border border-white/10 shadow-xl rounded z-50 py-1 text-xs">
-                                    <div className="px-3 py-1 text-[9px] text-text-secondary uppercase font-bold tracking-wider opacity-50">Create Material</div>
+                                    <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => createScript()}>
+                                        Visual Script
+                                    </div>
+                                    <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => createRig()}>
+                                        Rig Graph
+                                    </div>
+                                    <div className="border-t border-white/10 my-1"></div>
+                                    <div className="px-3 py-1 text-[9px] text-text-secondary uppercase font-bold tracking-wider opacity-50">Materials</div>
                                     {MATERIAL_TEMPLATES.map((tpl, i) => (
                                         <div 
                                             key={i} 
@@ -149,10 +195,6 @@ export const ProjectPanel: React.FC = () => {
                                             {tpl.name}
                                         </div>
                                     ))}
-                                    <div className="border-t border-white/10 my-1"></div>
-                                    <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => createScript()}>
-                                        Logic Script
-                                    </div>
                                     <div 
                                         className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer"
                                         onClick={() => createPhysicsMaterial()}
@@ -189,11 +231,15 @@ export const ProjectPanel: React.FC = () => {
                 <div className="bg-panel flex items-center gap-2 px-3 py-1.5 text-xs border-b border-black/10 overflow-x-auto">
                     <button onClick={() => setFilter('ALL')} className={`hover:text-white whitespace-nowrap ${filter === 'ALL' ? 'text-white font-bold' : 'text-text-secondary'}`}>All</button>
                     <span className="text-white/10">|</span>
+                    <button onClick={() => setFilter('SKELETAL_MESH')} className={`hover:text-white whitespace-nowrap ${filter === 'SKELETAL_MESH' ? 'text-white font-bold' : 'text-text-secondary'}`}>Skeletal</button>
+                    <span className="text-white/10">|</span>
+                    <button onClick={() => setFilter('RIG')} className={`hover:text-white whitespace-nowrap ${filter === 'RIG' ? 'text-white font-bold' : 'text-text-secondary'}`}>Rigs</button>
+                    <span className="text-white/10">|</span>
                     <button onClick={() => setFilter('SCRIPT')} className={`hover:text-white whitespace-nowrap ${filter === 'SCRIPT' ? 'text-white font-bold' : 'text-text-secondary'}`}>Scripts</button>
                     <span className="text-white/10">|</span>
                     <button onClick={() => setFilter('MATERIAL')} className={`hover:text-white whitespace-nowrap ${filter === 'MATERIAL' ? 'text-white font-bold' : 'text-text-secondary'}`}>Materials</button>
                     <span className="text-white/10">|</span>
-                    <button onClick={() => setFilter('MESH')} className={`hover:text-white whitespace-nowrap ${filter === 'MESH' ? 'text-white font-bold' : 'text-text-secondary'}`}>Meshes</button>
+                    <button onClick={() => setFilter('MESH')} className={`hover:text-white whitespace-nowrap ${filter === 'MESH' ? 'text-white font-bold' : 'text-text-secondary'}`}>Static</button>
                     <span className="text-white/10">|</span>
                     <button onClick={() => setFilter('PHYSICS_MATERIAL')} className={`hover:text-white whitespace-nowrap ${filter === 'PHYSICS_MATERIAL' ? 'text-white font-bold' : 'text-text-secondary'}`}>Physics</button>
                 </div>
@@ -207,6 +253,8 @@ export const ProjectPanel: React.FC = () => {
                             const isMat = asset.type === 'MATERIAL';
                             const isPhys = asset.type === 'PHYSICS_MATERIAL';
                             const isScript = asset.type === 'SCRIPT';
+                            const isRig = asset.type === 'RIG';
+                            const isSkel = asset.type === 'SKELETAL_MESH';
                             const isSelected = selectedAssetIds.includes(asset.id);
                             
                             let iconName = 'Box';
@@ -214,6 +262,8 @@ export const ProjectPanel: React.FC = () => {
                             if (isMat) { iconName = 'Palette'; color = 'text-pink-500'; }
                             else if (isPhys) { iconName = 'Activity'; color = 'text-green-500'; }
                             else if (isScript) { iconName = 'FileCode'; color = 'text-yellow-500'; }
+                            else if (isRig) { iconName = 'GitBranch'; color = 'text-orange-500'; }
+                            else if (isSkel) { iconName = 'PersonStanding'; color = 'text-purple-500'; }
 
                             return (
                                 <div 
@@ -221,8 +271,8 @@ export const ProjectPanel: React.FC = () => {
                                     className={`flex flex-col items-center group cursor-pointer p-2 rounded-md transition-colors border active:bg-white/20 relative
                                         ${isSelected ? 'bg-accent/20 border-accent' : 'hover:bg-white/10 border-transparent hover:border-white/5'}
                                     `}
-                                    draggable={asset.type === 'MESH'} 
-                                    onDragStart={(e) => asset.type === 'MESH' && handleDragStart(e, asset.id)}
+                                    draggable={asset.type === 'MESH' || asset.type === 'SKELETAL_MESH'} 
+                                    onDragStart={(e) => (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') && handleDragStart(e, asset.id)}
                                     onClick={() => handleClick(asset.id)}
                                     onDoubleClick={() => handleDoubleClick(asset.id)}
                                     onContextMenu={(e) => handleContextMenu(e, asset.id)}
@@ -277,8 +327,13 @@ export const ProjectPanel: React.FC = () => {
                 >
                     {(assetManager.getAsset(contextMenu.assetId)?.type === 'MATERIAL' || 
                       assetManager.getAsset(contextMenu.assetId)?.type === 'PHYSICS_MATERIAL' || 
-                      assetManager.getAsset(contextMenu.assetId)?.type === 'SCRIPT') && (
+                      assetManager.getAsset(contextMenu.assetId)?.type === 'SCRIPT' ||
+                      assetManager.getAsset(contextMenu.assetId)?.type === 'RIG') && (
                         <>
+                            <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2"
+                                onClick={() => { openAssetEditor(contextMenu.assetId); setContextMenu(null); }}>
+                                <Icon name="Workflow" size={12} /> Open Graph
+                            </div>
                             {assetManager.getAsset(contextMenu.assetId)?.type === 'MATERIAL' && (
                                 <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" 
                                     onClick={() => { applyMaterial(contextMenu.assetId); setContextMenu(null); }}>
