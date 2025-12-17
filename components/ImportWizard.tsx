@@ -47,7 +47,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
             
             await new Promise(r => setTimeout(r, 100)); 
             
-            const asset = assetManager.importFile(file.name, content, importType);
+            // Fix: Await the import because parsing is now async (for decompression)
+            const asset = await assetManager.importFile(file.name, content, importType);
             
             // CRITICAL: Immediately register with GPU so viewport can display it
             engineInstance.registerAssetWithGPU(asset);
@@ -72,7 +73,9 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
             reader.onload = (e) => resolve(e.target?.result || "");
             reader.onerror = (e) => reject(e);
             
-            if (file.name.toLowerCase().endsWith('.obj')) {
+            const ext = file.name.toLowerCase();
+            // FBX and GLB require ArrayBuffer for binary detection/parsing
+            if (ext.endsWith('.obj')) {
                 reader.readAsText(file);
             } else {
                 reader.readAsArrayBuffer(file);
@@ -86,7 +89,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
                 type="file" 
                 ref={fileInputRef} 
                 className="hidden" 
-                accept=".obj,.glb,.gltf" 
+                accept=".obj,.glb,.gltf,.fbx" 
                 onChange={handleFileChange} 
                 aria-label="Select Source File" 
             />
@@ -116,7 +119,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
                         ) : (
                             <>
                                 <Icon name="UploadCloud" size={24} className="text-text-secondary mb-2" />
-                                <span className="text-text-secondary">Click to select .OBJ or .GLB</span>
+                                <span className="text-text-secondary">Click to select .OBJ, .GLB or .FBX</span>
                             </>
                         )}
                     </div>
