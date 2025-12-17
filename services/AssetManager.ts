@@ -1,4 +1,3 @@
-
 import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 import { MESH_TYPES } from './constants';
@@ -293,7 +292,7 @@ class AssetManagerService {
     private async inflate(data: Uint8Array): Promise<Uint8Array> {
         const ds = new DecompressionStream('deflate');
         const writer = ds.writable.getWriter();
-        writer.write(data);
+        writer.write(data as any); 
         writer.close();
         const reader = ds.readable.getReader();
         const chunks = [];
@@ -320,6 +319,8 @@ class AssetManagerService {
         
         let finalV: number[] = [];
         let finalIdx: number[] = [];
+        let finalUV: number[] = [];
+        let finalUVIdx: number[] = [];
 
         const readArrayProp = async (typeCode: string) => {
             const arrLen = view.getUint32(offset, true);
@@ -377,7 +378,8 @@ class AssetManagerService {
                 if (!child) break;
                 if (child.name === 'Vertices') finalV = child.props[0];
                 if (child.name === 'PolygonVertexIndex') finalIdx = child.props[0];
-                if (finalV.length > 0 && finalIdx.length > 0) break;
+                if (child.name === 'UV') finalUV = child.props[0];
+                if (child.name === 'UVIndex') finalUVIdx = child.props[0];
             }
             offset = endOffset;
             return { name, props };
@@ -391,22 +393,73 @@ class AssetManagerService {
         } catch (e) { console.error("Binary FBX Parse Failed", e); }
 
         if (finalV.length > 0) {
-            const scaledV = finalV.map(v => v * importScale);
-            const triangulatedIdx: number[] = [];
+            // Unroll geometry to support UV seams
+            const outV: number[] = [];
+            const outN: number[] = [];
+            const outU: number[] = [];
+            const outIdx: number[] = [];
+            
+            const cache = new Map<string, number>();
+            let nextIndex = 0;
+            let polyVertIndex = 0; // Index for ByPolygonVertex data (like UVs)
+
             let polygon: number[] = [];
-            for (let rawIdx of finalIdx) {
+
+            for (let i = 0; i < finalIdx.length; i++) {
+                let rawIdx = finalIdx[i];
                 let isEnd = false;
                 if (rawIdx < 0) { rawIdx = (rawIdx ^ -1); isEnd = true; }
-                polygon.push(rawIdx);
+
+                // Retrieve UV
+                let u = 0, v = 0;
+                if (finalUV.length > 0) {
+                    let uvIdx = polyVertIndex; // Default Direct mapping
+                    // Handle IndexToDirect
+                    if (finalUVIdx.length > 0) {
+                         if (polyVertIndex < finalUVIdx.length) uvIdx = finalUVIdx[polyVertIndex];
+                         else uvIdx = 0; // Fallback
+                    }
+                    
+                    // SAFE ACCESS with fallback to 0
+                    if (uvIdx >= 0 && uvIdx * 2 + 1 < finalUV.length) {
+                        const valU = finalUV[uvIdx * 2];
+                        const valV = finalUV[uvIdx * 2 + 1];
+                        u = (typeof valU === 'number') ? valU : 0;
+                        v = (typeof valV === 'number') ? valV : 0;
+                    }
+                }
+
+                // Create Unique Vertex Key (Position Index + UV)
+                const key = `${rawIdx}:${u.toFixed(5)}:${v.toFixed(5)}`;
+                let newIdx = -1;
+
+                if (cache.has(key)) {
+                    newIdx = cache.get(key)!;
+                } else {
+                    const px = finalV[rawIdx * 3] * importScale;
+                    const py = finalV[rawIdx * 3 + 1] * importScale;
+                    const pz = finalV[rawIdx * 3 + 2] * importScale;
+                    outV.push(px, py, pz);
+                    outU.push(u, v);
+                    outN.push(0, 0, 0); // Placeholder
+                    newIdx = nextIndex++;
+                    cache.set(key, newIdx);
+                }
+
+                polygon.push(newIdx);
+                polyVertIndex++;
+
                 if (isEnd) {
-                    for (let i = 1; i < polygon.length - 1; i++) triangulatedIdx.push(polygon[0], polygon[i], polygon[i+1]);
+                    // Triangulate
+                    for (let k = 1; k < polygon.length - 1; k++) {
+                        outIdx.push(polygon[0], polygon[k], polygon[k+1]);
+                    }
                     polygon = [];
                 }
             }
-            const finalN = new Array(scaledV.length).fill(0);
-            const finalU = new Array((scaledV.length / 3) * 2).fill(0);
-            this.generateMissingNormals(scaledV, finalN, triangulatedIdx);
-            return { v: scaledV, n: finalN, u: finalU, idx: triangulatedIdx };
+            
+            this.generateMissingNormals(outV, outN, outIdx);
+            return { v: outV, n: outN, u: outU, idx: outIdx };
         }
         return this.generateCylinder(24);
     }
@@ -416,27 +469,78 @@ class AssetManagerService {
         const finalN: number[] = [];
         const finalU: number[] = [];
         const finalIdx: number[] = [];
+        
         try {
             const vMatch = text.match(/Vertices:\s*\*(\d+)\s*{([^}]*)}/);
             const iMatch = text.match(/PolygonVertexIndex:\s*\*(\d+)\s*{([^}]*)}/);
+            const uMatch = text.match(/UV:\s*\*(\d+)\s*{([^}]*)}/);
+            const uIdxMatch = text.match(/UVIndex:\s*\*(\d+)\s*{([^}]*)}/);
+
             if (vMatch && iMatch) {
-                const verts = vMatch[2].split(',').map(s => parseFloat(s.trim()) * importScale);
+                const verts = vMatch[2].split(',').map(s => parseFloat(s.trim()));
                 const indices = iMatch[2].split(',').map(s => parseInt(s.trim()));
+                
+                let uvData: number[] = [];
+                let uvIndices: number[] = [];
+
+                if (uMatch) uvData = uMatch[2].split(',').map(s => parseFloat(s.trim()));
+                if (uIdxMatch) uvIndices = uIdxMatch[2].split(',').map(s => parseInt(s.trim()));
+
+                const outV: number[] = [];
+                const outU: number[] = [];
+                const outN: number[] = [];
+                const outIdx: number[] = [];
+                
+                const cache = new Map<string, number>();
+                let nextIndex = 0;
+                let polyVertIndex = 0;
                 let polygon: number[] = [];
-                for (let rawIdx of indices) {
+
+                for (let i = 0; i < indices.length; i++) {
+                    let rawIdx = indices[i];
                     let isEnd = false;
                     if (rawIdx < 0) { rawIdx = (rawIdx ^ -1); isEnd = true; }
-                    polygon.push(rawIdx);
+
+                    let u = 0, v = 0;
+                    if (uvData.length > 0) {
+                        let uvIdx = polyVertIndex;
+                        if (uvIndices.length > 0 && polyVertIndex < uvIndices.length) uvIdx = uvIndices[polyVertIndex];
+                        
+                        // SAFE ACCESS
+                        if (uvIdx >= 0 && uvIdx * 2 + 1 < uvData.length) {
+                             const valU = uvData[uvIdx * 2];
+                             const valV = uvData[uvIdx * 2 + 1];
+                             u = (typeof valU === 'number') ? valU : 0;
+                             v = (typeof valV === 'number') ? valV : 0;
+                        }
+                    }
+
+                    const key = `${rawIdx}:${u.toFixed(5)}:${v.toFixed(5)}`;
+                    let newIdx = -1;
+
+                    if (cache.has(key)) {
+                        newIdx = cache.get(key)!;
+                    } else {
+                        outV.push(verts[rawIdx * 3] * importScale, verts[rawIdx * 3 + 1] * importScale, verts[rawIdx * 3 + 2] * importScale);
+                        outU.push(u, v);
+                        outN.push(0, 0, 0);
+                        newIdx = nextIndex++;
+                        cache.set(key, newIdx);
+                    }
+
+                    polygon.push(newIdx);
+                    polyVertIndex++;
+
                     if (isEnd) {
-                        for (let i = 1; i < polygon.length - 1; i++) finalIdx.push(polygon[0], polygon[i], polygon[i+1]);
+                        for (let k = 1; k < polygon.length - 1; k++) {
+                            outIdx.push(polygon[0], polygon[k], polygon[k+1]);
+                        }
                         polygon = [];
                     }
                 }
-                finalV.push(...verts);
-                finalN.push(...new Array(verts.length).fill(0));
-                finalU.push(...new Array((verts.length / 3) * 2).fill(0));
-                this.generateMissingNormals(finalV, finalN, finalIdx);
-                return { v: finalV, n: finalN, u: finalU, idx: finalIdx };
+                
+                this.generateMissingNormals(outV, outN, outIdx);
+                return { v: outV, n: outN, u: outU, idx: outIdx };
             }
         } catch (e) { console.error("FBX ASCII Parser failed", e); }
         return this.generateCylinder(24);
