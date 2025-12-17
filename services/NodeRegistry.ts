@@ -190,6 +190,21 @@ export const NodeRegistry: Record<string, NodeDefinition> = {
         data: { x: 0.0, y: 0.0 },
         glsl: (i, v, d) => `vec2 ${v} = vec2(${d.x}, ${d.y});`
     },
+    'TextureSample': {
+        type: 'TextureSample', category: 'Input', title: 'Texture 2D',
+        inputs: [{ id: 'uv', name: 'UV', type: 'vec2' }], 
+        outputs: [{ id: 'rgb', name: 'RGB', type: 'vec3' }, { id: 'a', name: 'A', type: 'float' }],
+        data: { textureId: '0' }, // Default White
+        glsl: (i, v, d) => {
+            const uv = i[0] || 'v_uv';
+            const texIdx = d.textureId || '0';
+            return `
+            vec4 ${v}_raw = texture(u_textures, vec3(${uv}, ${parseFloat(texIdx).toFixed(1)}));
+            vec3 ${v} = ${v}_raw.rgb;
+            float ${v}_a = ${v}_raw.a;
+            `;
+        }
+    },
     
     // --- GEOMETRY ---
     'UV': {

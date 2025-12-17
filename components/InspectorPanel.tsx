@@ -98,42 +98,6 @@ const Vector3Input: React.FC<{
   </div>
 );
 
-const TexturePicker: React.FC<{ value: number, onChange: (v: number) => void }> = ({ value, onChange }) => {
-    const textures = [
-        { id: 0, name: 'White', color: '#ffffff' },
-        { id: 1, name: 'Grid', color: '#888888', pattern: true },
-        { id: 2, name: 'Noise', color: '#aaaaaa', noise: true },
-        { id: 3, name: 'Brick', color: '#a0522d' }
-    ];
-
-    return (
-        <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-text-secondary">Default Texture</span>
-            <div className="grid grid-cols-4 gap-2">
-                {textures.map(tex => (
-                    <button 
-                        key={tex.id}
-                        onClick={() => onChange(tex.id)}
-                        className={`aspect-square rounded border-2 transition-all relative overflow-hidden group ${value === tex.id ? 'border-accent ring-1 ring-accent' : 'border-transparent hover:border-white/30'}`}
-                        title={tex.name}
-                        aria-label={`Select Texture ${tex.name}`}
-                    >
-                        <div className="absolute inset-0" style={{ backgroundColor: tex.color }}>
-                            {tex.pattern && <div className="w-full h-full opacity-30" style={{ backgroundImage: 'linear-gradient(#000 1px, transparent 1px), linear-gradient(90deg, #000 1px, transparent 1px)', backgroundSize: '4px 4px' }} />}
-                            {tex.noise && <div className="w-full h-full opacity-50" style={{ filter: 'contrast(200%) brightness(150%)', background: 'repeating-radial-gradient(#000 0 0.0001%,#fff 0 0.0002%) 50% 0/2500px 2500px, repeating-conic-gradient(#000 0 0.0001%,#fff 0 0.0002%) 60% 60%/2500px 2500px' }} />}
-                        </div>
-                        {value === tex.id && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/20">
-                                <Icon name="Check" size={12} className="text-white drop-shadow-md" />
-                            </div>
-                        )}
-                    </button>
-                ))}
-            </div>
-        </div>
-    );
-};
-
 const ComponentCard: React.FC<{ 
   component: Component; 
   title: string; 
@@ -277,37 +241,6 @@ const ComponentCard: React.FC<{
                    />
                 </div>
              </div>
-
-             {/* Texture Picker (Only active if no material selected) */}
-             {!component.materialId && (
-                 <>
-                    <div className="border-t border-white/5 my-1"></div>
-                    <TexturePicker 
-                        value={component.textureIndex || 0} 
-                        onChange={(v) => handleAtomicChange('textureIndex', v)}
-                    />
-                    
-                    <div className="flex items-center gap-2">
-                        <span className="w-24 text-text-secondary">Color Tint</span>
-                        <div className="flex-1 flex gap-2">
-                            <input 
-                                type="color" 
-                                value={component.color} 
-                                onChange={(e) => handleAtomicChange('color', e.target.value)}
-                                className="w-8 h-6 rounded cursor-pointer bg-transparent"
-                                aria-label="Color Picker"
-                            />
-                            <input 
-                                type="text" 
-                                value={component.color} 
-                                onChange={(e) => handleAtomicChange('color', e.target.value)}
-                                className="flex-1 bg-input-bg rounded px-2 text-text-secondary outline-none focus:text-white" 
-                                aria-label="Color Hex"
-                            />
-                        </div>
-                    </div>
-                 </>
-             )}
              
              {/* Post Process Effect Selection */}
              <div className="border-t border-white/5 my-1"></div>

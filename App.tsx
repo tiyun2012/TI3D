@@ -1,9 +1,10 @@
 
-import React, { useState, useEffect, useCallback, useContext, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
 import { engineInstance } from './services/engine';
 import { Entity, ToolType, TransformSpace, SelectionType, GraphNode } from './types';
-import { EditorContext, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG } from './contexts/EditorContext';
+import { EditorContext, EditorContextType, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG, SnapSettings, DEFAULT_SNAP_CONFIG } from './contexts/EditorContext';
 import { assetManager } from './services/AssetManager';
+import { consoleService } from './services/Console';
 
 // Components
 import { Toolbar } from './components/Toolbar';
@@ -16,6 +17,7 @@ import { PreferencesModal } from './components/PreferencesModal';
 import { WindowManager, WindowManagerContext } from './components/WindowManager';
 import { DEFAULT_GIZMO_CONFIG, GizmoConfiguration } from './components/gizmos/GizmoUtils';
 import { GeometrySpreadsheet } from './components/GeometrySpreadsheet';
+import { UVEditor } from './components/UVEditor';
 
 // --- Widget Wrappers ---
 
@@ -81,16 +83,7 @@ const SceneWrapper = () => {
 
 const ProjectWrapper = () => <ProjectPanel />;
 
-const ConsoleWrapper = () => (
-    <div className="h-full flex flex-col font-mono text-xs bg-black/40">
-        <div className="p-2 text-gray-400 space-y-1">
-            <div className="text-emerald-500">[System] Ti3D Engine initialized v1.0.0</div>
-            <div>[System] WebGL2 Texture Array created (4 layers).</div>
-            <div>[System] Undo/Redo System Ready.</div>
-            <div className="text-yellow-500">[Warn] No Skybox material found, using default clear color.</div>
-        </div>
-    </div>
-);
+const ConsoleWrapper = () => <ProjectPanel initialTab="CONSOLE" />;
 
 const StatsContent = () => {
     const [metrics, setMetrics] = useState(engineInstance.metrics);
@@ -123,10 +116,10 @@ const StatsContent = () => {
     );
 };
 
-// --- Main App Content (Inner) ---
-const EditorLayout: React.FC = () => {
+// --- Main Editor UI ---
+const EditorInterface: React.FC = () => {
     const wm = useContext(WindowManagerContext);
-    const { setGizmoConfig } = useContext(EditorContext)!;
+    const editor = useContext(EditorContext);
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
     const initialized = useRef(false);
 
@@ -163,6 +156,10 @@ const EditorLayout: React.FC = () => {
             id: 'stats', title: 'Performance', icon: 'Activity', content: <StatsContent />, 
             width: 280, initialPosition: { x: window.innerWidth - 300, y: 60 }
         });
+        wm.registerWindow({
+            id: 'uveditor', title: 'UV Editor', icon: 'LayoutGrid', content: <UVEditor />, 
+            width: 500, height: 500, initialPosition: { x: 200, y: 200 }
+        });
 
         // Open Default Layout only once
         if (!initialized.current) {
@@ -170,9 +167,15 @@ const EditorLayout: React.FC = () => {
             wm.openWindow('inspector');
             wm.openWindow('project');
             initialized.current = true;
+            
+            // Log startup
+            consoleService.success('Ti3D Engine Editor Initialized');
+            consoleService.info(`Loaded ${assetManager.getAllAssets().length} assets from AssetManager`);
         }
         
     }, [wm]);
+
+    if (!editor) return <div className="flex h-screen items-center justify-center text-white">Initializing...</div>;
 
     const toggleMenu = (e: React.MouseEvent, menu: string) => {
         e.stopPropagation();
@@ -183,10 +186,16 @@ const EditorLayout: React.FC = () => {
         const json = localStorage.getItem('ti3d_scene');
         if (json) {
             engineInstance.loadScene(json);
-            alert("Scene Loaded!");
+            consoleService.success("Scene Loaded Successfully");
         } else {
-            alert("No saved scene found.");
+            consoleService.warn("No saved scene found in local storage.");
         }
+    };
+
+    const handleSave = () => {
+        const json = engineInstance.saveScene();
+        localStorage.setItem('ti3d_scene', json);
+        consoleService.success("Scene Saved");
     };
 
     return (
@@ -204,10 +213,7 @@ const EditorLayout: React.FC = () => {
                         <span className="hover:bg-white/10 px-2 py-1 rounded cursor-pointer transition-colors" onClick={(e) => toggleMenu(e, 'File')}>File</span>
                         {activeMenu === 'File' && (
                             <div className="absolute top-7 left-0 bg-[#252525] border border-white/10 shadow-2xl rounded-md py-1 min-w-[160px] text-text-primary z-[100]">
-                                <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex justify-between" onClick={() => {
-                                    const json = engineInstance.saveScene();
-                                    localStorage.setItem('ti3d_scene', json);
-                                }}><span>Save Scene</span><span className="text-white/30 text-[9px]">Ctrl+S</span></div>
+                                <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex justify-between" onClick={handleSave}><span>Save Scene</span><span className="text-white/30 text-[9px]">Ctrl+S</span></div>
                                 <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={handleLoad}>Load Scene</div>
                             </div>
                         )}
@@ -230,6 +236,9 @@ const EditorLayout: React.FC = () => {
                                     <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('console'); setActiveMenu(null); }}>
                                         <Icon name="Terminal" size={12} /> Console
                                     </div>
+                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('uveditor'); setActiveMenu(null); }}>
+                                        <Icon name="LayoutGrid" size={12} /> UV Editor
+                                    </div>
                                     <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('spreadsheet'); setActiveMenu(null); }}>
                                         <Icon name="Table" size={12} /> Spreadsheet
                                     </div>
@@ -243,14 +252,14 @@ const EditorLayout: React.FC = () => {
 
                 {/* Toolbar */}
                 <Toolbar 
-                    isPlaying={useContext(EditorContext)!.isPlaying}
+                    isPlaying={editor.isPlaying}
                     onPlay={() => { engineInstance.start(); }}
                     onPause={() => { engineInstance.pause(); }}
                     onStop={() => { engineInstance.stop(); }}
-                    currentTool={useContext(EditorContext)!.tool}
-                    setTool={useContext(EditorContext)!.setTool}
-                    transformSpace={useContext(EditorContext)!.transformSpace}
-                    setTransformSpace={useContext(EditorContext)!.setTransformSpace}
+                    currentTool={editor.tool}
+                    setTool={editor.setTool}
+                    transformSpace={editor.transformSpace}
+                    setTransformSpace={editor.setTransformSpace}
                 />
             </div>
 
@@ -262,7 +271,7 @@ const EditorLayout: React.FC = () => {
             {/* Status Bar */}
             <div className="absolute bottom-0 w-full h-6 bg-panel-header/90 backdrop-blur flex items-center px-4 justify-between text-[10px] text-text-secondary shrink-0 select-none z-50 border-t border-white/5">
                 <div className="flex items-center gap-4">
-                    {useContext(EditorContext)!.isPlaying ? <span className="text-emerald-500 animate-pulse font-bold">● PLAYING</span> : <span>Ready</span>}
+                    {editor.isPlaying ? <span className="text-emerald-500 animate-pulse font-bold">● PLAYING</span> : <span>Ready</span>}
                 </div>
                 <div className="flex items-center gap-4 font-mono opacity-60">
                     <span>{engineInstance.metrics.entityCount} Objects</span>
@@ -273,78 +282,61 @@ const EditorLayout: React.FC = () => {
     );
 };
 
+// --- Root Application with Providers ---
 const App: React.FC = () => {
-  const [entities, setEntities] = useState<Entity[]>([]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
-  const [selectionType, setSelectionType] = useState<SelectionType>('ENTITY');
-  const [inspectedNode, setInspectedNode] = useState<GraphNode | null>(null);
-  const [tool, setTool] = useState<ToolType>('SELECT');
-  const [transformSpace, setTransformSpace] = useState<TransformSpace>('Gimbal');
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [gizmoConfig, setGizmoConfig] = useState<GizmoConfiguration>(DEFAULT_GIZMO_CONFIG);
-  const [uiConfig, setUiConfig] = useState<UIConfiguration>(DEFAULT_UI_CONFIG);
-  const [gridConfig, setGridConfig] = useState<GridConfiguration>(DEFAULT_GRID_CONFIG);
-
-  const refreshState = useCallback(() => {
-    setEntities(engineInstance.ecs.getAllProxies(engineInstance.sceneGraph));
-  }, []);
-
-  useEffect(() => {
-    const syncPlayState = () => setIsPlaying(engineInstance.isPlaying);
-    const unsubscribe = engineInstance.subscribe(syncPlayState);
-    return () => { unsubscribe(); };
-  }, []);
-
-  useEffect(() => {
-    refreshState();
-    const unsubscribe = engineInstance.subscribe(refreshState);
+    // Editor State
+    const [entities, setEntities] = useState<Entity[]>([]);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+    const [inspectedNode, setInspectedNode] = useState<GraphNode | null>(null);
+    const [selectionType, setSelectionType] = useState<SelectionType>('ENTITY');
+    const [tool, setTool] = useState<ToolType>('SELECT');
+    const [transformSpace, setTransformSpace] = useState<TransformSpace>('World');
+    const [isPlaying, setIsPlaying] = useState(false);
     
-    let animationFrameId: number;
-    let lastTime = performance.now();
-    const loop = (time: number) => {
-      const delta = (time - lastTime) / 1000;
-      lastTime = time;
-      engineInstance.tick(delta);
-      animationFrameId = requestAnimationFrame(loop);
-    };
-    
-    animationFrameId = requestAnimationFrame(loop);
-    return () => {
-      unsubscribe();
-      cancelAnimationFrame(animationFrameId);
-    };
-  }, [refreshState]);
+    // Config State
+    const [gizmoConfig, setGizmoConfig] = useState<GizmoConfiguration>(DEFAULT_GIZMO_CONFIG);
+    const [uiConfig, setUiConfig] = useState<UIConfiguration>(DEFAULT_UI_CONFIG);
+    const [gridConfig, setGridConfig] = useState<GridConfiguration>(DEFAULT_GRID_CONFIG);
+    const [snapSettings, setSnapSettings] = useState<SnapSettings>(DEFAULT_SNAP_CONFIG);
 
-  return (
-    <EditorContext.Provider value={{
-      entities,
-      sceneGraph: engineInstance.sceneGraph,
-      selectedIds,
-      setSelectedIds,
-      selectedAssetIds,
-      setSelectedAssetIds,
-      selectionType,
-      setSelectionType,
-      inspectedNode,
-      setInspectedNode,
-      tool,
-      setTool,
-      transformSpace,
-      setTransformSpace,
-      isPlaying,
-      gizmoConfig,
-      setGizmoConfig,
-      uiConfig,
-      setUiConfig,
-      gridConfig,
-      setGridConfig
-    }}>
-        <WindowManager>
-            <EditorLayout />
-        </WindowManager>
-    </EditorContext.Provider>
-  );
+    // Sync with Engine
+    useEffect(() => {
+        const updateState = () => {
+            setEntities(engineInstance.ecs.getAllProxies(engineInstance.sceneGraph));
+            setIsPlaying(engineInstance.isPlaying);
+        };
+        const unsubscribe = engineInstance.subscribe(updateState);
+        
+        // Initial Fetch
+        updateState();
+        
+        return unsubscribe;
+    }, []);
+
+    const contextValue = useMemo<EditorContextType>(() => ({
+        entities,
+        sceneGraph: engineInstance.sceneGraph,
+        selectedIds, setSelectedIds,
+        selectedAssetIds, setSelectedAssetIds,
+        inspectedNode, setInspectedNode,
+        selectionType, setSelectionType,
+        tool, setTool,
+        transformSpace, setTransformSpace,
+        isPlaying,
+        gizmoConfig, setGizmoConfig,
+        uiConfig, setUiConfig,
+        gridConfig, setGridConfig,
+        snapSettings, setSnapSettings
+    }), [entities, selectedIds, selectedAssetIds, inspectedNode, selectionType, tool, transformSpace, isPlaying, gizmoConfig, uiConfig, gridConfig, snapSettings]);
+
+    return (
+        <EditorContext.Provider value={contextValue}>
+            <WindowManager>
+                <EditorInterface />
+            </WindowManager>
+        </EditorContext.Provider>
+    );
 };
 
 export default App;

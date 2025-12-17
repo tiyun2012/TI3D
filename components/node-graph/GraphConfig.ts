@@ -19,5 +19,9 @@ export const LayoutConfig = {
     CODE_LABEL_HEIGHT: 14,  // Height for the "GLSL Code Body" label
     CODE_FOOTER_HEIGHT: 12, // Height for the variable list footer
     CODE_GAP: 4,            // Matches gap-1
-    CODE_MARGIN_BOTTOM: 8   // Matches mb-2
+    CODE_MARGIN_BOTTOM: 8,  // Matches mb-2
+    
+    // Texture Preview
+    // 160px height matches the inner width of a 180px node (minus padding), creating a square UV viewport
+    TEXTURE_PREVIEW_HEIGHT: 160
 };

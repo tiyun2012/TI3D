@@ -18,7 +18,14 @@ export interface GridConfiguration {
     opacity: number;  // Base alpha
     fadeDistance: number;
     color: string;
-    excludeFromPostProcess: boolean; // New option
+    excludeFromPostProcess: boolean;
+}
+
+export interface SnapSettings {
+    active: boolean;
+    move: number;   // Grid units (e.g. 0.5)
+    rotate: number; // Degrees (e.g. 15)
+    scale: number;  // Factor (e.g. 0.1)
 }
 
 export const DEFAULT_UI_CONFIG: UIConfiguration = {
@@ -36,6 +43,13 @@ export const DEFAULT_GRID_CONFIG: GridConfiguration = {
     fadeDistance: 200.0,
     color: '#808080',
     excludeFromPostProcess: false
+};
+
+export const DEFAULT_SNAP_CONFIG: SnapSettings = {
+    active: false,
+    move: 0.5,
+    rotate: 15.0,
+    scale: 0.1
 };
 
 export interface EditorContextType {
@@ -71,6 +85,9 @@ export interface EditorContextType {
 
   gridConfig: GridConfiguration;
   setGridConfig: (config: GridConfiguration) => void;
+
+  snapSettings: SnapSettings;
+  setSnapSettings: (settings: SnapSettings) => void;
 }
 
 export const EditorContext = React.createContext<EditorContextType | null>(null);

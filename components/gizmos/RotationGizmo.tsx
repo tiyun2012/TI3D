@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useContext, useMemo, useRef } from 'react';
 import { Entity, ComponentType, Vector3, RotationOrder } from '../../types';
 import { engineInstance } from '../../services/engine';
@@ -75,7 +76,6 @@ const axisAngleToMat4 = (axis: Vector3, angle: number) => {
     return out;
 };
 
-// --- Data interfaces for Ref/State separation ---
 interface DragContext {
     axis: Axis;
     startRotation: Vector3;
@@ -94,40 +94,33 @@ interface VisualState {
 }
 
 export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport, containerRef }) => {
-    const { gizmoConfig, transformSpace } = useContext(EditorContext)!;
+    const { gizmoConfig, transformSpace, snapSettings } = useContext(EditorContext)!;
     const [hoverAxis, setHoverAxis] = useState<Axis | null>(null);
-    
-    // 1. Lifecycle Control
     const [isDragging, setIsDragging] = useState(false);
-    
-    // 2. Visual State (Purely for React Rendering, not for Logic)
     const [visualState, setVisualState] = useState<VisualState | null>(null);
 
-    // 3. Logic State (Refs for stable event handling)
     const dragRef = useRef<DragContext | null>(null);
     const stateRef = useRef({ 
         vpMatrix, 
         invViewProj: new Float32Array(16), 
         viewport,
-        basis 
+        basis,
+        snapSettings
     });
 
     const { origin, scale } = basis;
 
-    // --- Memoized Helpers ---
     const invViewProj = useMemo(() => {
         const inv = new Float32Array(16);
         Mat4Utils.invert(vpMatrix, inv);
         return inv;
     }, [vpMatrix]);
 
-    // Keep Ref updated
-    stateRef.current = { vpMatrix, invViewProj, viewport, basis };
+    stateRef.current = { vpMatrix, invViewProj, viewport, basis, snapSettings };
     
     const project = (v: Vector3) => GizmoMath.project(v, vpMatrix, viewport.width, viewport.height);
     const pCenter = project(origin);
 
-    // --- RING HIERARCHY ---
     const { ringMatrices } = useMemo(() => {
         const ringMats: Record<string, Float32Array> = {};
         
@@ -222,11 +215,9 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         return { axis: basisZ, u: basisX, v: basisY };
     };
 
-    // --- Helper Logic (Refactored to be pure) ---
     const calculateAngle = (
         mouseX: number, mouseY: number, 
         center: Vector3, 
-        // Use stateRef values passed in
         currentInvViewProj: Float32Array,
         currentCamPos: Vector3,
         currentViewport: {width:number, height:number},
@@ -239,7 +230,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             currentViewport.width, currentViewport.height, 
             currentInvViewProj, currentCamPos
         );
-        // Plane normal is the cross of u and v (which is the axis)
         const normal = GizmoMath.normalize(GizmoMath.cross(u, v));
         const hit = GizmoMath.rayPlaneIntersection(ray.origin, ray.direction, center, normal);
         if (!hit) return 0;
@@ -249,7 +239,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         return Math.atan2(sin, cos);
     };
 
-    // --- Stable Event Listener ---
     useEffect(() => {
         if (!isDragging) return;
 
@@ -257,10 +246,8 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             const dragData = dragRef.current;
             if (!dragData || !containerRef.current) return;
             
-            // 1. Get Fresh Data from Ref
-            const { invViewProj: currInvVp, basis: currBasis, viewport: currVp } = stateRef.current;
+            const { invViewProj: currInvVp, basis: currBasis, viewport: currVp, snapSettings } = stateRef.current;
 
-            // 2. Calculate New Angle
             const currentMouseAngle = calculateAngle(
                 e.clientX, e.clientY, 
                 currBasis.origin, 
@@ -269,27 +256,24 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             );
 
             let totalDelta = currentMouseAngle - dragData.startAngle;
-            // Normalize -PI to PI
             while (totalDelta <= -Math.PI) totalDelta += Math.PI * 2;
             while (totalDelta > Math.PI) totalDelta -= Math.PI * 2;
 
-            if (e.shiftKey) {
-                const snap = Math.PI / 12; 
-                totalDelta = Math.round(totalDelta / snap) * snap;
+            if (snapSettings.active || e.shiftKey) {
+                const snapDeg = snapSettings.rotate;
+                const snapRad = snapDeg * (Math.PI / 180);
+                totalDelta = Math.round(totalDelta / snapRad) * snapRad;
             }
 
-            // 3. Update ECS
             const transform = entity.components[ComponentType.TRANSFORM];
             
             if (dragData.axis === 'X') transform.rotation.x = dragData.startRotation.x + totalDelta;
             else if (dragData.axis === 'Y') transform.rotation.y = dragData.startRotation.y + totalDelta;
             else if (dragData.axis === 'Z') transform.rotation.z = dragData.startRotation.z + totalDelta;
             
-            // 4. Force Update (Fixes Trail/Sync)
             engineInstance.notifyUI();
-            engineInstance.tick(0); // Sync 3D view immediately
+            engineInstance.tick(0); 
             
-            // 5. Update Visuals (Separated from logic loop)
             setVisualState({
                 axis: dragData.axis,
                 currentAngle: totalDelta,
@@ -314,7 +298,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             window.removeEventListener('mousemove', handleGlobalMouseMove);
             window.removeEventListener('mouseup', handleGlobalMouseUp);
         };
-    }, [isDragging, entity, containerRef]); // Stable dependencies
+    }, [isDragging, entity, containerRef]);
 
     const startDrag = (e: React.MouseEvent, axis: Axis) => {
         if (e.altKey) return;
@@ -322,7 +306,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         e.stopPropagation(); e.preventDefault();
         
         const { u, v } = getRingBasis(axis);
-        // Use current refs for initial calculation
         const { invViewProj: currInvVp, basis: currBasis, viewport: currVp } = stateRef.current;
         
         const startAngle = calculateAngle(
@@ -334,16 +317,14 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         
         const transform = entity.components[ComponentType.TRANSFORM];
 
-        // Store Logic Data
         dragRef.current = {
             axis,
             startRotation: { ...transform.rotation },
             startAngle,
-            axisVector: getRingBasis(axis).axis, // Recalculate or use cached
+            axisVector: getRingBasis(axis).axis,
             u, v
         };
 
-        // Initialize Visuals
         setVisualState({
             axis,
             currentAngle: 0,
@@ -353,8 +334,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
 
         setIsDragging(true);
     };
-
-    // --- Rendering Helpers (Same as before, using visualState) ---
 
     const renderVolumetricMesh = (vertices: Vector3[], indices: number[][], fillStyle: string, opacity: number = 1.0) => {
          const projected: { x: number; y: number; z: number; w: number }[] = vertices.map(v => {
@@ -425,7 +404,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
         const { axis: axisVec, u, v } = getRingBasis(axis);
         let visibility = 1.0;
         
-        // Use visualState for rendering activity
         const isActive = visualState?.axis === axis;
         const isHover = hoverAxis === axis;
         const isOtherDragging = visualState && visualState.axis !== axis;

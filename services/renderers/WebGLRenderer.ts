@@ -335,7 +335,7 @@ export class WebGLRenderer {
         uniform mat4 u_viewProjection;
         out vec3 v_worldPos;
         void main() {
-            vec3 pos = a_position * 500.0;
+            vec3 pos = vec3(a_position.x, 0.0, a_position.y) * 500.0;
             v_worldPos = pos;
             gl_Position = u_viewProjection * vec4(pos, 1.0);
         }`;
@@ -444,11 +444,90 @@ export class WebGLRenderer {
     initTextureArray(gl: WebGL2RenderingContext) {
         this.textureArray = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray);
-        gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, 1, 1, 4);
-        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255,255,255,255]));
-        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 1, 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([200,200,200,255]));
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        
+        // Allocate 256x256 texture array with 16 layers (increased from 4)
+        const width = 256;
+        const height = 256;
+        const depth = 16;
+        gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, width, height, depth);
+        
+        // Generate Procedural Texture Data for Layers 0-3
+        const data = new Uint8Array(width * height * 4 * depth); // Init all zero
+        
+        for (let layer = 0; layer < 4; layer++) {
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const idx = (layer * width * height + y * width + x) * 4;
+                    let r = 255, g = 255, b = 255;
+
+                    if (layer === 0) {
+                        // Layer 0: White (Default)
+                        r = 255; g = 255; b = 255;
+                    } else if (layer === 1) {
+                        // Layer 1: Grid (UV Checkerboard)
+                        const scale = 32;
+                        const check = ((Math.floor(x / scale) + Math.floor(y / scale)) % 2 === 0);
+                        const c = check ? 220 : 255;
+                        r = c; g = c; b = c;
+                    } else if (layer === 2) {
+                        // Layer 2: Noise
+                        const n = Math.random() * 255;
+                        r = n; g = n; b = n;
+                    } else if (layer === 3) {
+                        // Layer 3: Brick Pattern
+                        const brickH = 32;
+                        const brickW = 64;
+                        const row = Math.floor(y / brickH);
+                        const offset = (row % 2 === 0) ? 0 : brickW / 2;
+                        const bx = (x + offset) % brickW;
+                        const by = y % brickH;
+                        
+                        // Mortar lines (4px)
+                        if (bx < 4 || by < 4) {
+                            r = 180; g = 180; b = 180; // Gray Mortar
+                        } else {
+                            // Brick Color variation
+                            const noise = Math.random() * 30;
+                            // Reddish-Brown
+                            r = 160 + noise; 
+                            g = 60 + noise; 
+                            b = 40 + noise;
+                        }
+                    }
+
+                    data[idx] = r;
+                    data[idx+1] = g;
+                    data[idx+2] = b;
+                    data[idx+3] = 255; // Alpha
+                }
+            }
+        }
+
+        // Upload Data for all layers (0-3 filled, rest empty)
+        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, width, height, depth, gl.RGBA, gl.UNSIGNED_BYTE, data);
+
+        // Parameters
+        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    }
+
+    uploadTexture(layerIndex: number, image: HTMLImageElement) {
+        if (!this.gl || !this.textureArray) return;
+        const gl = this.gl;
+        
+        // Resize image to 256x256 (canvas intermediate)
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        
+        ctx.drawImage(image, 0, 0, 256, 256);
+        
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray);
+        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, layerIndex, 256, 256, 1, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
     }
 
     resize(width: number, height: number) {
@@ -646,6 +725,37 @@ export class WebGLRenderer {
         }
     }
 
+    private renderGrid(gl: WebGL2RenderingContext, viewProjection: Float32Array) {
+        if (!this.gridProgram || !this.quadVAO) return;
+        
+        gl.useProgram(this.gridProgram);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(false);
+
+        const uVP = gl.getUniformLocation(this.gridProgram, 'u_viewProjection');
+        if (uVP) gl.uniformMatrix4fv(uVP, false, viewProjection);
+        
+        const uOpacity = gl.getUniformLocation(this.gridProgram, 'u_opacity');
+        if (uOpacity) gl.uniform1f(uOpacity, this.gridOpacity);
+        
+        const uSize = gl.getUniformLocation(this.gridProgram, 'u_gridSize');
+        if (uSize) gl.uniform1f(uSize, this.gridSize);
+        
+        const uFade = gl.getUniformLocation(this.gridProgram, 'u_fadeDist');
+        if (uFade) gl.uniform1f(uFade, this.gridFadeDistance);
+        
+        const uColor = gl.getUniformLocation(this.gridProgram, 'u_gridColor');
+        if (uColor) gl.uniform3fv(uColor, this.gridColor);
+
+        gl.bindVertexArray(this.quadVAO);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.bindVertexArray(null);
+        
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
+    }
+
     private renderBuckets(buckets: Map<number, number[]>, store: ComponentStorage, selectedIndices: Set<number>, vp: Float32Array, cam: {x:number, y:number, z:number}, time: number) {
         if (buckets.size === 0) return;
         const gl = this.gl!;
@@ -721,30 +831,5 @@ export class WebGLRenderer {
                 this.triangleCount += (mesh.count / 3) * instanceCount;
             }
         });
-    }
-    
-    private renderGrid(gl: WebGL2RenderingContext, viewProjection: Float32Array) {
-        gl.enable(gl.BLEND);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        gl.depthMask(false); 
-        
-        gl.useProgram(this.gridProgram);
-        const uVP = gl.getUniformLocation(this.gridProgram!, 'u_viewProjection'); if (uVP) gl.uniformMatrix4fv(uVP, false, viewProjection);
-        const uOp = gl.getUniformLocation(this.gridProgram!, 'u_opacity'); if (uOp) gl.uniform1f(uOp, this.gridOpacity);
-        const uSz = gl.getUniformLocation(this.gridProgram!, 'u_gridSize'); if (uSz) gl.uniform1f(uSz, this.gridSize);
-        const uFD = gl.getUniformLocation(this.gridProgram!, 'u_fadeDist'); if (uFD) gl.uniform1f(uFD, this.gridFadeDistance);
-        const uCol = gl.getUniformLocation(this.gridProgram!, 'u_gridColor'); if (uCol) gl.uniform3fv(uCol, this.gridColor);
-
-        // Find the plane mesh ID (assumed 3 based on MESH_TYPES, or we query AssetManager for default plane)
-        // Since we synced IDs in AssetManager, we know MESH_TYPES['Plane'] is 3.
-        const planeMesh = this.meshes.get(MESH_TYPES['Plane']);
-        if (planeMesh) {
-            gl.bindVertexArray(planeMesh.vao);
-            gl.drawElements(gl.TRIANGLES, planeMesh.count, gl.UNSIGNED_SHORT, 0);
-            gl.bindVertexArray(null);
-        }
-        
-        gl.depthMask(true);
-        gl.disable(gl.BLEND);
     }
 }

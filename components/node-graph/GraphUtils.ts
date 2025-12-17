@@ -48,6 +48,11 @@ export const GraphUtils = {
              extraHeight += 200 + 8 + LayoutConfig.GAP;
         }
 
+        // 4. Texture Preview
+        if (node.type === 'TextureSample') {
+            extraHeight += LayoutConfig.TEXTURE_PREVIEW_HEIGHT + LayoutConfig.GAP;
+        }
+
         let index = 0;
         if (type === 'output') {
             index += def.inputs.length;

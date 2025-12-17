@@ -135,4 +135,12 @@ export interface RigAsset {
     };
 }
 
-export type Asset = StaticMeshAsset | SkeletalMeshAsset | MaterialAsset | PhysicsMaterialAsset | ScriptAsset | RigAsset;
+export interface TextureAsset {
+    id: string;
+    name: string;
+    type: 'TEXTURE';
+    source: string; // Base64 or URL
+    layerIndex: number; // Internal GPU Array Layer
+}
+
+export type Asset = StaticMeshAsset | SkeletalMeshAsset | MaterialAsset | PhysicsMaterialAsset | ScriptAsset | RigAsset | TextureAsset;

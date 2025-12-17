@@ -1,10 +1,11 @@
 
-import React, { memo } from 'react';
-import { GraphNode } from '../../types';
+import React, { memo, useRef } from 'react';
+import { GraphNode, TextureAsset } from '../../types';
 import { NodeRegistry, getTypeColor } from '../../services/NodeRegistry';
 import { LayoutConfig } from './GraphConfig';
 import { ShaderPreview } from '../ShaderPreview';
 import { assetManager } from '../../services/AssetManager';
+import { Icon } from '../Icon';
 
 interface NodeItemProps {
     node: GraphNode;
@@ -19,12 +20,60 @@ interface NodeItemProps {
     onDataChange: (nodeId: string, key: string, value: string) => void;
 }
 
+const getTexturePreviewStyle = (id: string, assets: TextureAsset[]): React.CSSProperties => {
+    const num = parseFloat(id);
+    
+    // Check if it's a custom asset
+    if (num >= 4) {
+        const asset = assets.find(a => a.layerIndex === num);
+        if (asset) {
+            return {
+                backgroundImage: `url(${asset.source})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center'
+            };
+        }
+    }
+
+    if (num === 1) { // Grid (UV Checkerboard)
+        return {
+            backgroundColor: '#ffffff',
+            backgroundImage: `linear-gradient(45deg, #ccc 25%, transparent 25%), 
+                              linear-gradient(-45deg, #ccc 25%, transparent 25%), 
+                              linear-gradient(45deg, transparent 75%, #ccc 75%), 
+                              linear-gradient(-45deg, transparent 75%, #ccc 75%)`,
+            backgroundSize: '25% 25%', // Scales to fit 4x4 tiles in the viewport
+            backgroundPosition: '0 0, 0 12.5%, 12.5% -12.5%, -12.5% 0px' 
+        };
+    }
+    if (num === 2) { // Noise (Full Scale)
+        return {
+            backgroundColor: '#808080',
+            backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='1'/%3E%3C/svg%3E")`,
+            backgroundSize: '100% 100%' // Fit exactly to square
+        };
+    }
+    if (num === 3) { // Brick (Tiled UV)
+        return {
+            backgroundColor: '#8B4513',
+            backgroundImage: `linear-gradient(335deg, rgba(255,255,255,0.1) 23px, transparent 23px),
+                              linear-gradient(155deg, rgba(255,255,255,0.1) 23px, transparent 23px),
+                              linear-gradient(335deg, rgba(255,255,255,0.1) 23px, transparent 23px),
+                              linear-gradient(155deg, rgba(255,255,255,0.1) 23px, transparent 23px)`,
+            backgroundSize: '50% 50%', // 2x2 Bricks in UV space
+            backgroundPosition: '0px 2px, 4px 35px, 29px 31px, 34px 6px'
+        };
+    }
+    return { backgroundColor: '#ffffff' }; // Default White
+};
+
 export const NodeItem = memo(({ 
     node, selected, connecting, 
     onMouseDown, onPinDown, onPinUp, onPinEnter, onPinLeave, onDataChange 
 }: NodeItemProps) => {
     
     const def = NodeRegistry[node.type];
+    const fileInputRef = useRef<HTMLInputElement>(null);
     if (!def) return null;
 
     const isReroute = node.type === 'Reroute';
@@ -32,6 +81,7 @@ export const NodeItem = memo(({
     const isCustomCode = node.type === 'CustomExpression';
     const isForLoop = node.type === 'ForLoop';
     const isStaticMesh = node.type === 'StaticMesh';
+    const isTextureSample = node.type === 'TextureSample';
     
     const borderStyle = selected ? 'ring-1 ring-accent border-accent' : 'border-white/10';
 
@@ -77,6 +127,19 @@ export const NodeItem = memo(({
         );
     };
 
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files[0]) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const result = ev.target?.result as string;
+                const asset = assetManager.createTexture(file.name, result);
+                onDataChange(node.id, 'textureId', asset.layerIndex.toString());
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
     let nodeWidth = LayoutConfig.NODE_WIDTH;
     if (isReroute) nodeWidth = LayoutConfig.REROUTE_SIZE;
     else if (isShaderOutput) nodeWidth = LayoutConfig.PREVIEW_NODE_WIDTH;
@@ -84,6 +147,9 @@ export const NodeItem = memo(({
 
     let nodeHeight: number | string = 'auto';
     if (isReroute) nodeHeight = LayoutConfig.REROUTE_SIZE;
+
+    // Fetch custom textures for dropdown
+    const customTextures = assetManager.getAssetsByType('TEXTURE') as TextureAsset[];
 
     return (
         <div
@@ -110,6 +176,15 @@ export const NodeItem = memo(({
                         onMouseDown={(e) => onMouseDown(e, node)}
                     >
                         <span className={`text-xs font-bold ${selected ? 'text-white' : 'text-gray-200'}`}>{def.title}</span>
+                        {isTextureSample && (
+                            <button 
+                                className="text-white/50 hover:text-white" 
+                                title="Upload Texture" 
+                                onClick={() => fileInputRef.current?.click()}
+                            >
+                                <Icon name="Upload" size={12} />
+                            </button>
+                        )}
                     </div>
                     <div 
                         style={{ 
@@ -162,6 +237,34 @@ export const NodeItem = memo(({
                                         <option key={m.id} value={m.id}>{m.name}</option>
                                     ))}
                                 </select>
+                            </div>
+                        )}
+
+                        {isTextureSample && (
+                            <div style={{ marginBottom: LayoutConfig.GAP }} className="px-1">
+                                <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
+                                <span className="text-[9px] text-gray-500 uppercase mb-1 block">Texture</span>
+                                <select
+                                    className="w-full bg-black/40 text-[10px] text-white px-1 rounded border border-white/10 h-5 focus:border-accent outline-none"
+                                    value={node.data?.textureId || '0'}
+                                    onChange={(e) => onDataChange(node.id, 'textureId', e.target.value)}
+                                    onMouseDown={e => e.stopPropagation()}
+                                >
+                                    <option value="0">White (Default)</option>
+                                    <option value="1">Grid Pattern</option>
+                                    <option value="2">Noise Texture</option>
+                                    <option value="3">Brick Texture</option>
+                                    {customTextures.map(tex => (
+                                        <option key={tex.id} value={tex.layerIndex}>{tex.name}</option>
+                                    ))}
+                                </select>
+                                <div 
+                                    className="mt-2 w-full rounded border border-white/10 overflow-hidden relative shadow-inner aspect-square" 
+                                    style={{ height: LayoutConfig.TEXTURE_PREVIEW_HEIGHT, ...getTexturePreviewStyle(node.data?.textureId || '0', customTextures) }}
+                                >
+                                    {/* UV 0-1 Indicator Overlay */}
+                                    <div className="absolute inset-0 border border-white/5 opacity-50"></div>
+                                </div>
                             </div>
                         )}
                         

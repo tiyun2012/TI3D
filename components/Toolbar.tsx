@@ -1,7 +1,8 @@
 
-import React from 'react';
+import React, { useContext } from 'react';
 import { Icon } from './Icon';
 import { ToolType, TransformSpace } from '../types';
+import { EditorContext } from '../contexts/EditorContext';
 
 interface ToolbarProps {
   isPlaying: boolean;
@@ -18,6 +19,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   isPlaying, onPlay, onPause, onStop, currentTool, setTool,
   transformSpace, setTransformSpace
 }) => {
+  const ctx = useContext(EditorContext);
+  // Default values if context is missing during init/reload
+  const snapSettings = ctx?.snapSettings || { active: false, move: 0.5, rotate: 15, scale: 0.1 };
+  const setSnapSettings = ctx?.setSnapSettings || (() => {});
   
   const toolClass = (active: boolean) => 
     `p-1.5 rounded-md transition-all ${active ? 'bg-accent text-white shadow-sm' : 'text-text-secondary hover:text-white hover:bg-white/10'}`;
@@ -45,8 +50,12 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         <div className="h-5 w-px bg-white/10 mx-2"></div>
         
         <div className="flex gap-2 text-text-secondary text-xs font-medium">
-            <button className="flex items-center gap-1 hover:text-white transition-colors p-1 rounded hover:bg-white/5" title="Toggle Snapping">
-                <Icon name="Magnet" size={14}/> <span>Snap</span>
+            <button 
+                className={`flex items-center gap-1 transition-colors p-1 rounded hover:bg-white/5 ${snapSettings.active ? 'text-accent' : 'text-text-secondary'}`}
+                onClick={() => setSnapSettings({ ...snapSettings, active: !snapSettings.active })}
+                title="Toggle Snapping"
+            >
+                <Icon name="Magnet" size={14} className={snapSettings.active ? "fill-current" : ""}/> <span>Snap</span>
             </button>
             
             <button 

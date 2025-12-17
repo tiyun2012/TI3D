@@ -9,9 +9,14 @@ import { MATERIAL_TEMPLATES } from '../services/MaterialTemplates';
 import { engineInstance } from '../services/engine';
 import { NodeGraph } from './NodeGraph'; // Import NodeGraph to embed in windows
 import { ImportWizard } from './ImportWizard';
+import { consoleService, LogEntry } from '../services/Console';
 
-export const ProjectPanel: React.FC = () => {
-    const [tab, setTab] = useState<'PROJECT' | 'CONSOLE'>('PROJECT');
+interface ProjectPanelProps {
+    initialTab?: 'PROJECT' | 'CONSOLE';
+}
+
+export const ProjectPanel: React.FC<ProjectPanelProps> = ({ initialTab = 'PROJECT' }) => {
+    const [tab, setTab] = useState<'PROJECT' | 'CONSOLE'>(initialTab);
     const [filter, setFilter] = useState<'ALL' | 'MESH' | 'SKELETAL_MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'SCRIPT' | 'RIG'>('ALL');
     const [search, setSearch] = useState('');
     const [scale, setScale] = useState(40);
@@ -22,6 +27,10 @@ export const ProjectPanel: React.FC = () => {
     const [showCreateMenu, setShowCreateMenu] = useState(false);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, assetId: string, visible: boolean } | null>(null);
     const [refresh, setRefresh] = useState(0);
+    
+    // Console State
+    const [logs, setLogs] = useState<LogEntry[]>([]);
+    const logsEndRef = useRef<HTMLDivElement>(null);
 
     const allAssets = assetManager.getAllAssets();
     const filteredAssets = allAssets.filter(a => {
@@ -29,6 +38,20 @@ export const ProjectPanel: React.FC = () => {
         if (!a.name.toLowerCase().includes(search.toLowerCase())) return false;
         return true;
     });
+
+    useEffect(() => {
+        const unsubscribe = consoleService.subscribe(() => {
+            setLogs([...consoleService.getLogs()]);
+        });
+        setLogs([...consoleService.getLogs()]); // Init
+        return unsubscribe;
+    }, []);
+
+    useEffect(() => {
+        if (tab === 'CONSOLE' && logsEndRef.current) {
+            logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [logs, tab]);
 
     useEffect(() => {
         const close = () => { setShowCreateMenu(false); setContextMenu(null); };
@@ -88,8 +111,7 @@ export const ProjectPanel: React.FC = () => {
         const tpl = templateIndex !== undefined ? MATERIAL_TEMPLATES[templateIndex] : undefined;
         const asset = assetManager.createMaterial(`New Material ${Math.floor(Math.random() * 1000)}`, tpl);
         setRefresh(r => r + 1);
-        // Optional: Auto open
-        // openAssetEditor(asset.id);
+        consoleService.success(`Created Material: ${asset.name}`);
     };
 
     const createPhysicsMaterial = () => {
@@ -116,7 +138,11 @@ export const ProjectPanel: React.FC = () => {
             id: winId,
             title: 'Import Asset',
             icon: 'Import',
-            content: <ImportWizard onClose={() => wm.closeWindow(winId)} onImportSuccess={() => { setRefresh(r=>r+1); wm.closeWindow(winId); }} />,
+            content: <ImportWizard onClose={() => wm.closeWindow(winId)} onImportSuccess={(id) => { 
+                setRefresh(r=>r+1); 
+                wm.closeWindow(winId); 
+                consoleService.success("Asset Imported Successfully");
+            }} />,
             width: 400,
             height: 500,
             initialPosition: { x: window.innerWidth/2 - 200, y: window.innerHeight/2 - 250 }
@@ -125,12 +151,25 @@ export const ProjectPanel: React.FC = () => {
     };
 
     const duplicateAsset = (id: string) => {
-        assetManager.duplicateAsset(id);
-        setRefresh(r => r + 1);
+        const newAsset = assetManager.duplicateAsset(id);
+        if (newAsset) {
+            setRefresh(r => r + 1);
+            consoleService.info(`Duplicated asset: ${newAsset.name}`);
+        }
     };
 
     const applyMaterial = (assetId: string) => {
         engineInstance.applyMaterialToSelected(assetId);
+        consoleService.info(`Applied material to selection`);
+    };
+
+    const renderLogIcon = (type: string) => {
+        switch(type) {
+            case 'error': return <Icon name="AlertCircle" size={14} className="text-red-500" />;
+            case 'warn': return <Icon name="AlertTriangle" size={14} className="text-yellow-500" />;
+            case 'success': return <Icon name="CheckCircle2" size={14} className="text-green-500" />;
+            default: return <Icon name="Info" size={14} className="text-blue-400" />;
+        }
     };
 
     return (
@@ -148,7 +187,7 @@ export const ProjectPanel: React.FC = () => {
                         onClick={() => setTab('CONSOLE')}
                         className={`text-xs px-3 py-1 rounded-t-md transition-colors ${tab === 'CONSOLE' ? 'bg-panel text-white border-t border-x border-black/10 font-bold' : 'text-text-secondary hover:text-white'}`}
                     >
-                        Console
+                        Console {logs.filter(l => l.type === 'error').length > 0 && <span className="ml-1 text-red-500 font-bold">!</span>}
                     </button>
                 </div>
                 
@@ -235,6 +274,17 @@ export const ProjectPanel: React.FC = () => {
                         </div>
                     </div>
                 )}
+                
+                {tab === 'CONSOLE' && (
+                    <div className="flex items-center gap-2">
+                        <button 
+                            onClick={() => consoleService.clear()}
+                            className="text-xs px-2 py-1 hover:bg-white/10 rounded text-text-secondary hover:text-white"
+                        >
+                            Clear
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* Breadcrumbs / Filters (Project Mode) */}
@@ -312,13 +362,25 @@ export const ProjectPanel: React.FC = () => {
                     </div>
                 )}
                 {tab === 'CONSOLE' && (
-                    <div className="font-mono text-xs space-y-0.5">
-                        <div className="flex items-start gap-2 py-1 px-2 hover:bg-white/5 border-b border-white/5">
-                             <Icon name="Info" size={14} className="text-text-secondary mt-0.5" />
-                             <div>
-                                 <span className="text-white">[System]</span> <span className="text-text-secondary">Asset Manager loaded {allAssets.length} assets.</span>
-                             </div>
-                        </div>
+                    <div className="font-mono text-xs space-y-0.5 pb-10">
+                        {logs.length === 0 && <div className="text-text-secondary italic p-2 opacity-50">Console is empty.</div>}
+                        {logs.map((log) => (
+                            <div key={log.id} className="flex items-start gap-2 py-1 px-2 hover:bg-white/5 border-b border-white/5 group">
+                                <div className="mt-0.5 shrink-0 opacity-70">
+                                    {renderLogIcon(log.type)}
+                                </div>
+                                <div className="flex-1 break-all">
+                                    <span className="text-[10px] text-white/30 mr-2">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                                    <span className={log.type === 'error' ? 'text-red-400' : (log.type === 'warn' ? 'text-yellow-400' : 'text-text-primary')}>
+                                        {log.message}
+                                    </span>
+                                    {log.count > 1 && (
+                                        <span className="ml-2 bg-white/10 text-white px-1.5 rounded-full text-[9px] font-bold">{log.count}</span>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                        <div ref={logsEndRef} />
                     </div>
                 )}
             </div>

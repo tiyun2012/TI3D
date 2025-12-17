@@ -1,9 +1,10 @@
 
 // services/AssetManager.ts
 
-import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, GraphNode, GraphConnection, Asset } from '../types';
+import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 import { MESH_TYPES } from './constants';
+import { engineInstance } from './engine';
 
 export interface RigTemplate {
     name: string;
@@ -117,6 +118,7 @@ class AssetManagerService {
     private nextMatIntId = 1; 
     private nextPhysMatIntId = 1;
     private nextRigIntId = 1;
+    private nextTextureLayerId = 4; // 0-3 reserved for procedural
 
     constructor() {
         this.registerDefaultAssets();
@@ -175,6 +177,36 @@ class AssetManagerService {
     
     getAssetsByType(type: Asset['type']) {
         return Array.from(this.assets.values()).filter(a => a.type === type);
+    }
+
+    // --- Texture Management ---
+    createTexture(name: string, source: string): TextureAsset {
+        const id = crypto.randomUUID();
+        // Cycle slots 4-15 (12 slots)
+        const layerIndex = this.nextTextureLayerId;
+        this.nextTextureLayerId = 4 + ((this.nextTextureLayerId - 3) % 12); 
+        
+        const asset: TextureAsset = {
+            id, name, type: 'TEXTURE',
+            source,
+            layerIndex
+        };
+        this.registerAsset(asset);
+        
+        // Upload to GPU immediately
+        this.uploadTextureToGPU(asset);
+        
+        return asset;
+    }
+
+    private uploadTextureToGPU(asset: TextureAsset) {
+        const img = new Image();
+        img.onload = () => {
+            if (engineInstance && engineInstance.renderer) {
+                engineInstance.renderer.uploadTexture(asset.layerIndex, img);
+            }
+        };
+        img.src = asset.source;
     }
 
     // --- Material Management ---

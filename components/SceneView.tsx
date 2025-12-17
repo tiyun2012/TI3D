@@ -69,6 +69,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     isSelecting: boolean;
   } | null>(null);
 
+  // Initialize GL and Resize Observer
   useLayoutEffect(() => {
     if (canvasRef.current && containerRef.current) {
         engineInstance.initGL(canvasRef.current);
@@ -83,6 +84,24 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         observer.observe(containerRef.current);
         return () => observer.disconnect();
     }
+  }, []);
+
+  // Main Game Loop
+  useEffect(() => {
+      let frameId: number;
+      let lastTime = performance.now();
+
+      const loop = (time: number) => {
+          const dt = (time - lastTime) / 1000;
+          lastTime = time;
+          
+          engineInstance.tick(dt);
+          
+          frameId = requestAnimationFrame(loop);
+      };
+      
+      frameId = requestAnimationFrame(loop);
+      return () => cancelAnimationFrame(frameId);
   }, []);
 
   useEffect(() => {
