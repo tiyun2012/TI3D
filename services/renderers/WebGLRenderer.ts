@@ -1,4 +1,3 @@
-
 // services/renderers/WebGLRenderer.ts
 
 import { ComponentStorage } from '../ecs/ComponentStorage';
@@ -547,7 +546,8 @@ export class WebGLRenderer {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.fboWidth, this.fboHeight, 0, gl.RGBA, gl.FLOAT, null);
         
         gl.bindRenderbuffer(gl.RENDERBUFFER, this.depthRenderbuffer);
-        gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, this.fboWidth, this.fboHeight);
+        // Use DEPTH_COMPONENT24 for better compatibility with default framebuffer depth buffer
+        gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, this.fboWidth, this.fboHeight);
         
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.fboTexture, 0);
@@ -650,7 +650,7 @@ export class WebGLRenderer {
             this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA32F, width, height, 0, this.gl.RGBA, this.gl.FLOAT, null);
             
             this.gl.bindRenderbuffer(this.gl.RENDERBUFFER, this.depthRenderbuffer);
-            this.gl.renderbufferStorage(this.gl.RENDERBUFFER, this.gl.DEPTH_COMPONENT16, width, height);
+            this.gl.renderbufferStorage(this.gl.RENDERBUFFER, this.gl.DEPTH_COMPONENT24, width, height);
         }
     }
 
@@ -924,9 +924,10 @@ export class WebGLRenderer {
         if (ppEnabled && this.ppProgram && this.quadVAO && this.fbo) {
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             gl.viewport(0, 0, width, height);
+            
+            // Disable depth writes to preserve default depth buffer state (whatever it is)
+            gl.depthMask(false);
             gl.clear(gl.COLOR_BUFFER_BIT); 
-            // NOTE: Usually we don't clear depth here if we want to keep scene depth,
-            // but the PP pass is a full screen quad.
             
             gl.useProgram(this.ppProgram);
             
@@ -958,6 +959,8 @@ export class WebGLRenderer {
             gl.bindVertexArray(this.quadVAO);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
             gl.bindVertexArray(null);
+            
+            gl.depthMask(true); // Restore depth mask
         }
 
         // --- RENDER GRID (Mode B: Excluded from PP) ---
@@ -1018,7 +1021,7 @@ export class WebGLRenderer {
     createCubeData() {
         const v = [ -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,0.5,0.5, -0.5,0.5,0.5, 0.5,-0.5,-0.5, -0.5,-0.5,-0.5, -0.5,0.5,-0.5, 0.5,0.5,-0.5, -0.5,0.5,0.5, 0.5,0.5,0.5, 0.5,0.5,-0.5, -0.5,0.5,-0.5, -0.5,-0.5,-0.5, 0.5,-0.5,-0.5, 0.5,-0.5,0.5, -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,-0.5,-0.5, 0.5,0.5,-0.5, 0.5,0.5,0.5, -0.5,-0.5,-0.5, -0.5,-0.5,0.5, -0.5,0.5,0.5, -0.5,0.5,-0.5 ];
         const n = [ 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0 ];
-        const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
+        const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
         const idx = [ 0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11, 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23 ];
         return { vertices: new Float32Array(v), normals: new Float32Array(n), uvs: new Float32Array(u), indices: new Uint16Array(idx) };
     }
