@@ -147,6 +147,7 @@ const ComponentCard: React.FC<{
   const editorCtx = useContext(EditorContext);
   const physicsMaterials = assetManager.getAssetsByType('PHYSICS_MATERIAL');
   const materials = assetManager.getAssetsByType('MATERIAL'); // Get Shader Materials
+  const rigs = assetManager.getAssetsByType('RIG'); // Get Rig Graphs
 
   const handleAtomicChange = (field: string, value: any) => {
       if(onStartUpdate) onStartUpdate();
@@ -239,7 +240,7 @@ const ComponentCard: React.FC<{
                    <Select
                       icon="Box"
                       value={component.meshType}
-                      options={['Cube', 'Sphere', 'Plane'].map(v => ({ label: v, value: v }))}
+                      options={['Cube', 'Sphere', 'Plane', 'Custom'].map(v => ({ label: v, value: v }))}
                       onChange={(v) => handleAtomicChange('meshType', v)}
                    />
                 </div>
@@ -257,6 +258,22 @@ const ComponentCard: React.FC<{
                           ...materials.map(m => ({ label: m.name, value: m.id }))
                       ]}
                       onChange={(v) => handleAtomicChange('materialId', v)}
+                   />
+                </div>
+             </div>
+
+             {/* Rig Picker (New) */}
+             <div className="flex items-center gap-2">
+                <span className="w-24 text-text-secondary">Rig Graph</span>
+                <div className="flex-1">
+                   <Select 
+                      icon="GitBranch"
+                      value={component.rigId || ""}
+                      options={[
+                          { label: 'None', value: "" },
+                          ...rigs.map(r => ({ label: r.name, value: r.id }))
+                      ]}
+                      onChange={(v) => handleAtomicChange('rigId', v)}
                    />
                 </div>
              </div>

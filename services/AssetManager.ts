@@ -3,6 +3,99 @@
 
 import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, GraphNode, GraphConnection, Asset } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
+import { MESH_TYPES } from './constants';
+
+export interface RigTemplate {
+    name: string;
+    description: string;
+    nodes: GraphNode[];
+    connections: GraphConnection[];
+}
+
+export const RIG_TEMPLATES: RigTemplate[] = [
+    {
+        name: 'Locomotion IK Logic',
+        description: 'Basic two-bone IK setup for leg movement.',
+        nodes: [
+            // Logic Section
+            { id: 'time', type: 'Time', position: { x: 50, y: 50 } },
+            { id: 'speed', type: 'Float', position: { x: 50, y: 150 }, data: { value: '3.0' } },
+            { id: 'mul_t', type: 'Multiply', position: { x: 250, y: 100 } },
+            { id: 'sin', type: 'Sine', position: { x: 400, y: 100 } },
+            { id: 'zero', type: 'Float', position: { x: 400, y: 200 }, data: { value: '0.0' } },
+            { id: 'gt', type: 'GreaterThan', position: { x: 550, y: 150 } },
+
+            // Rig Flow
+            { id: 'in', type: 'RigInput', position: { x: 50, y: 400 } },
+            { id: 'branch', type: 'Branch', position: { x: 750, y: 300 } },
+            
+            // True Path (Apply IK)
+            { id: 'target', type: 'Vec3', position: { x: 750, y: 500 }, data: { x: '0.2', y: '0.5', z: '0.0' } },
+            { id: 'ik', type: 'TwoBoneIK', position: { x: 950, y: 450 }, data: { root: 'Thigh_L', mid: 'Calf_L', eff: 'Foot_L' } },
+            
+            { id: 'out', type: 'RigOutput', position: { x: 1200, y: 350 } }
+        ],
+        connections: [
+            { id: 'l1', fromNode: 'time', fromPin: 'out', toNode: 'mul_t', toPin: 'a' },
+            { id: 'l2', fromNode: 'speed', fromPin: 'out', toNode: 'mul_t', toPin: 'b' },
+            { id: 'l3', fromNode: 'mul_t', fromPin: 'out', toNode: 'sin', toPin: 'in' },
+            { id: 'l4', fromNode: 'sin', fromPin: 'out', toNode: 'gt', toPin: 'a' },
+            { id: 'l5', fromNode: 'zero', fromPin: 'out', toNode: 'gt', toPin: 'b' },
+            { id: 'f1', fromNode: 'gt', fromPin: 'out', toNode: 'branch', toPin: 'condition' },
+            { id: 'f2', fromNode: 'in', fromPin: 'pose', toNode: 'branch', toPin: 'false' },
+            { id: 'f3', fromNode: 'in', fromPin: 'pose', toNode: 'ik', toPin: 'pose' },
+            { id: 'f4', fromNode: 'target', fromPin: 'out', toNode: 'ik', toPin: 'target' },
+            { id: 'f5', fromNode: 'ik', fromPin: 'outPose', toNode: 'branch', toPin: 'true' },
+            { id: 'f6', fromNode: 'branch', fromPin: 'out', toNode: 'out', toPin: 'pose' }
+        ]
+    },
+    {
+        name: 'Deform Mesh (Scale Pulse)',
+        description: 'Pulses the mesh scale using a sine wave.',
+        nodes: [
+            { id: 'in', type: 'RigInput', position: { x: 50, y: 400 } },
+            
+            // Logic
+            { id: 'time', type: 'Time', position: { x: 50, y: 50 } },
+            { id: 'speed', type: 'Float', position: { x: 50, y: 150 }, data: { value: '5.0' } },
+            { id: 'mul', type: 'Multiply', position: { x: 200, y: 100 } },
+            { id: 'sin', type: 'Sine', position: { x: 350, y: 100 } },
+            
+            // Calc Scale: 1.0 + (Sin * 0.3)
+            { id: 'amp', type: 'Float', position: { x: 350, y: 200 }, data: { value: '0.3' } },
+            { id: 'sin_amp', type: 'Multiply', position: { x: 500, y: 150 } },
+            { id: 'base', type: 'Float', position: { x: 500, y: 50 }, data: { value: '1.0' } },
+            { id: 'final_scale_val', type: 'Add', position: { x: 650, y: 100 } },
+            
+            // Make Vector3 (Uniform Scale)
+            { id: 'make_vec', type: 'MakeVec3', position: { x: 800, y: 100 } },
+            
+            // Apply Transform
+            { id: 'set', type: 'SetEntityTransform', position: { x: 950, y: 300 } },
+            
+            { id: 'out', type: 'RigOutput', position: { x: 1200, y: 300 } }
+        ],
+        connections: [
+            // Logic: Time * Speed -> Sin -> * Amp -> + Base -> MakeVec3 -> SetScale
+            { id: 'c1', fromNode: 'time', fromPin: 'out', toNode: 'mul', toPin: 'a' },
+            { id: 'c2', fromNode: 'speed', fromPin: 'out', toNode: 'mul', toPin: 'b' },
+            { id: 'c3', fromNode: 'mul', fromPin: 'out', toNode: 'sin', toPin: 'in' },
+            { id: 'c4', fromNode: 'sin', fromPin: 'out', toNode: 'sin_amp', toPin: 'a' },
+            { id: 'c5', fromNode: 'amp', fromPin: 'out', toNode: 'sin_amp', toPin: 'b' },
+            { id: 'c6', fromNode: 'base', fromPin: 'out', toNode: 'final_scale_val', toPin: 'a' },
+            { id: 'c7', fromNode: 'sin_amp', fromPin: 'out', toNode: 'final_scale_val', toPin: 'b' },
+            
+            // Fan out to X, Y, Z
+            { id: 'c8', fromNode: 'final_scale_val', fromPin: 'out', toNode: 'make_vec', toPin: 'x' },
+            { id: 'c9', fromNode: 'final_scale_val', fromPin: 'out', toNode: 'make_vec', toPin: 'y' },
+            { id: 'c10', fromNode: 'final_scale_val', fromPin: 'out', toNode: 'make_vec', toPin: 'z' },
+            
+            // Apply
+            { id: 'c11', fromNode: 'make_vec', fromPin: 'out', toNode: 'set', toPin: 'scale' },
+            { id: 'c12', fromNode: 'set', fromPin: 'out', toNode: 'out', toPin: 'pose' }
+        ]
+    }
+];
 
 class AssetManagerService {
     assets = new Map<string, Asset>();
@@ -17,24 +110,28 @@ class AssetManagerService {
     physMatIntToUuid = new Map<number, string>();
     physMatUuidToInt = new Map<string, number>();
 
+    rigIntToUuid = new Map<number, string>();
+    rigUuidToInt = new Map<string, number>();
+
     private nextMeshIntId = 100; 
     private nextMatIntId = 1; 
     private nextPhysMatIntId = 1;
+    private nextRigIntId = 1;
 
     constructor() {
         this.registerDefaultAssets();
         this.createMaterial('Standard', MATERIAL_TEMPLATES[1]);
         this.createDefaultPhysicsMaterials();
         this.createScript('New Visual Script');
-        this.createRig('Locomotion IK Logic');
+        this.createRig('Locomotion IK Logic', RIG_TEMPLATES[0]);
     }
 
-    registerAsset(asset: Asset): number {
+    registerAsset(asset: Asset, forcedIntId?: number): number {
         this.assets.set(asset.id, asset);
         
         if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
             if (this.meshUuidToInt.has(asset.id)) return this.meshUuidToInt.get(asset.id)!;
-            const intId = this.nextMeshIntId++;
+            const intId = forcedIntId || this.nextMeshIntId++;
             this.meshIntToUuid.set(intId, asset.id);
             this.meshUuidToInt.set(asset.id, intId);
             return intId;
@@ -50,6 +147,12 @@ class AssetManagerService {
             this.physMatIntToUuid.set(intId, asset.id);
             this.physMatUuidToInt.set(asset.id, intId);
             return intId;
+        } else if (asset.type === 'RIG') {
+            if (this.rigUuidToInt.has(asset.id)) return this.rigUuidToInt.get(asset.id)!;
+            const intId = this.nextRigIntId++;
+            this.rigIntToUuid.set(intId, asset.id);
+            this.rigUuidToInt.set(asset.id, intId);
+            return intId;
         }
         return 0;
     }
@@ -63,6 +166,8 @@ class AssetManagerService {
     getMaterialUUID(intId: number): string | undefined { return this.matIntToUuid.get(intId); } 
     getPhysicsMaterialID(uuid: string): number { return this.physMatUuidToInt.get(uuid) || 0; }
     getPhysicsMaterialUUID(intId: number): string | undefined { return this.physMatIntToUuid.get(intId); }
+    getRigID(uuid: string): number { return this.rigUuidToInt.get(uuid) || 0; }
+    getRigUUID(intId: number): string | undefined { return this.rigIntToUuid.get(intId); }
 
     getAllAssets() {
         return Array.from(this.assets.values());
@@ -127,42 +232,12 @@ class AssetManagerService {
         return asset;
     }
 
-    createRig(name: string): RigAsset {
+    createRig(name: string, template?: RigTemplate): RigAsset {
         const id = crypto.randomUUID();
+        const base = template || RIG_TEMPLATES[0];
         
-        const nodes: GraphNode[] = [
-            // Logic Section
-            { id: 'time', type: 'Time', position: { x: 50, y: 50 } },
-            { id: 'speed', type: 'Float', position: { x: 50, y: 150 }, data: { value: '3.0' } },
-            { id: 'mul_t', type: 'Multiply', position: { x: 250, y: 100 } },
-            { id: 'sin', type: 'Sine', position: { x: 400, y: 100 } },
-            { id: 'zero', type: 'Float', position: { x: 400, y: 200 }, data: { value: '0.0' } },
-            { id: 'gt', type: 'GreaterThan', position: { x: 550, y: 150 } },
-
-            // Rig Flow
-            { id: 'in', type: 'RigInput', position: { x: 50, y: 400 } },
-            { id: 'branch', type: 'Branch', position: { x: 750, y: 300 } },
-            
-            // True Path (Apply IK)
-            { id: 'target', type: 'Vec3', position: { x: 750, y: 500 }, data: { x: '0.2', y: '0.5', z: '0.0' } },
-            { id: 'ik', type: 'TwoBoneIK', position: { x: 950, y: 450 }, data: { root: 'Thigh_L', mid: 'Calf_L', eff: 'Foot_L' } },
-            
-            { id: 'out', type: 'RigOutput', position: { x: 1200, y: 350 } }
-        ];
-
-        const connections: GraphConnection[] = [
-            { id: 'l1', fromNode: 'time', fromPin: 'out', toNode: 'mul_t', toPin: 'a' },
-            { id: 'l2', fromNode: 'speed', fromPin: 'out', toNode: 'mul_t', toPin: 'b' },
-            { id: 'l3', fromNode: 'mul_t', fromPin: 'out', toNode: 'sin', toPin: 'in' },
-            { id: 'l4', fromNode: 'sin', fromPin: 'out', toNode: 'gt', toPin: 'a' },
-            { id: 'l5', fromNode: 'zero', fromPin: 'out', toNode: 'gt', toPin: 'b' },
-            { id: 'f1', fromNode: 'gt', fromPin: 'out', toNode: 'branch', toPin: 'condition' },
-            { id: 'f2', fromNode: 'in', fromPin: 'pose', toNode: 'branch', toPin: 'false' },
-            { id: 'f3', fromNode: 'in', fromPin: 'pose', toNode: 'ik', toPin: 'pose' },
-            { id: 'f4', fromNode: 'target', fromPin: 'out', toNode: 'ik', toPin: 'target' },
-            { id: 'f5', fromNode: 'ik', fromPin: 'outPose', toNode: 'branch', toPin: 'true' },
-            { id: 'f6', fromNode: 'branch', fromPin: 'out', toNode: 'out', toPin: 'pose' }
-        ];
+        const nodes = JSON.parse(JSON.stringify(base.nodes));
+        const connections = JSON.parse(JSON.stringify(base.connections));
 
         const asset: RigAsset = {
             id,
@@ -352,20 +427,14 @@ class AssetManagerService {
     }
 
     private registerDefaultAssets() {
-        this.registerAsset(this.createPrimitive('Cylinder', (segs) => {
-            return this.generateCylinder(segs);
-        }));
-        this.registerAsset(this.createPrimitive('Cone', () => {
-            const v=[], n=[], u=[], idx=[];
-            const segments = 24; const radius = 0.5; const height = 1.0; const halfH = height/2;
-            v.push(0, halfH, 0); n.push(0, 1, 0); u.push(0.5, 0); 
-            for(let i=0; i<=segments; i++) {
-                const theta = (i/segments) * Math.PI * 2; const x = Math.cos(theta) * radius; const z = Math.sin(theta) * radius;
-                v.push(x, -halfH, z); n.push(x, 0.5, z); u.push(i/segments, 1);
-            }
-            for(let i=1; i<=segments; i++) idx.push(0, i, i+1);
+        this.registerAsset(this.createPrimitive('Cube', () => {
+            const v = [ -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,0.5,0.5, -0.5,0.5,0.5, 0.5,-0.5,-0.5, -0.5,-0.5,-0.5, -0.5,0.5,-0.5, 0.5,0.5,-0.5, -0.5,0.5,0.5, 0.5,0.5,0.5, 0.5,0.5,-0.5, -0.5,0.5,-0.5, -0.5,-0.5,-0.5, 0.5,-0.5,-0.5, 0.5,-0.5,0.5, -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,-0.5,-0.5, 0.5,0.5,-0.5, 0.5,0.5,0.5, -0.5,-0.5,-0.5, -0.5,-0.5,0.5, -0.5,0.5,0.5, -0.5,0.5,-0.5 ];
+            const n = [ 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0 ];
+            const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
+            const idx = [ 0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11, 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23 ];
             return { v, n, u, idx };
-        }));
+        }), MESH_TYPES['Cube']); // ID: 1
+
         this.registerAsset(this.createPrimitive('Sphere', () => {
             const radius = 0.5; const latBands = 24; const longBands = 24; const v=[], n=[], u=[], idx=[];
             for (let lat = 0; lat <= latBands; lat++) {
@@ -383,14 +452,31 @@ class AssetManagerService {
                 }
             }
             return { v, n, u, idx };
-        }));
-        this.registerAsset(this.createPrimitive('Cube', () => {
-            const v = [ -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,0.5,0.5, -0.5,0.5,0.5, 0.5,-0.5,-0.5, -0.5,-0.5,-0.5, -0.5,0.5,-0.5, 0.5,0.5,-0.5, -0.5,0.5,0.5, 0.5,0.5,0.5, 0.5,0.5,-0.5, -0.5,0.5,-0.5, -0.5,-0.5,-0.5, 0.5,-0.5,-0.5, 0.5,-0.5,0.5, -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,-0.5,-0.5, 0.5,0.5,-0.5, 0.5,0.5,0.5, -0.5,-0.5,-0.5, -0.5,-0.5,0.5, -0.5,0.5,0.5, -0.5,0.5,-0.5 ];
-            const n = [ 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0 ];
-            const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
-            const idx = [ 0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11, 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23 ];
+        }), MESH_TYPES['Sphere']); // ID: 2
+
+        this.registerAsset(this.createPrimitive('Plane', () => {
+            const v = [-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5];
+            const n = [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0];
+            const u = [0, 0, 1, 0, 1, 1, 0, 1];
+            const idx = [0, 1, 2, 0, 2, 3];
             return { v, n, u, idx };
-        }));
+        }), MESH_TYPES['Plane']); // ID: 3
+
+        this.registerAsset(this.createPrimitive('Cylinder', (segs) => {
+            return this.generateCylinder(segs);
+        }), MESH_TYPES['Cylinder']); // ID: 4
+
+        this.registerAsset(this.createPrimitive('Cone', () => {
+            const v=[], n=[], u=[], idx=[];
+            const segments = 24; const radius = 0.5; const height = 1.0; const halfH = height/2;
+            v.push(0, halfH, 0); n.push(0, 1, 0); u.push(0.5, 0); 
+            for(let i=0; i<=segments; i++) {
+                const theta = (i/segments) * Math.PI * 2; const x = Math.cos(theta) * radius; const z = Math.sin(theta) * radius;
+                v.push(x, -halfH, z); n.push(x, 0.5, z); u.push(i/segments, 1);
+            }
+            for(let i=1; i<=segments; i++) idx.push(0, i, i+1);
+            return { v, n, u, idx };
+        }), MESH_TYPES['Cone']); // ID: 5
     }
 
     private generateCylinder(segments: number) {

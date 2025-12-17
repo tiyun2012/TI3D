@@ -60,6 +60,7 @@ export class SoAEntitySystem {
 
         this.store.physicsMaterialIndex[index] = 0;
         this.store.materialIndex[index] = 0;
+        this.store.rigIndex[index] = 0;
         this.store.mass[index] = 1.0; // Default Mass
         
         this.idToIndex.set(id, index);
@@ -156,7 +157,7 @@ export class SoAEntitySystem {
 
         const meshProxy = {
             type: ComponentType.MESH,
-            get meshType() { return MESH_NAMES[store.meshType[index]]; },
+            get meshType() { return MESH_NAMES[store.meshType[index]] || 'Custom'; },
             set meshType(v: string) { store.meshType[index] = MESH_TYPES[v] || 0; },
             get textureIndex() { return store.textureIndex[index]; },
             set textureIndex(v: number) { store.textureIndex[index] = v; },
@@ -180,6 +181,13 @@ export class SoAEntitySystem {
             },
             set materialId(v: string) {
                 store.materialIndex[index] = v ? assetManager.getMaterialID(v) : 0;
+            },
+            get rigId() {
+                const id = store.rigIndex[index];
+                return id === 0 ? '' : assetManager.getRigUUID(id) || '';
+            },
+            set rigId(v: string) {
+                store.rigIndex[index] = v ? assetManager.getRigID(v) : 0;
             }
         };
 

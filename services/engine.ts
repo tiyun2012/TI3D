@@ -1,76 +1,81 @@
 
 import { SoAEntitySystem } from './ecs/EntitySystem';
 import { SceneGraph } from './SceneGraph';
-import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
-import { DebugRenderer } from './renderers/DebugRenderer';
 import { PhysicsSystem } from './systems/PhysicsSystem';
 import { HistorySystem } from './systems/HistorySystem';
+import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
+import { DebugRenderer } from './renderers/DebugRenderer';
 import { assetManager } from './AssetManager';
-import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType } from '../types';
+import { PerformanceMetrics, GraphNode, GraphConnection, Vector3, ComponentType } from '../types';
+import { Mat4Utils, RayUtils, Vec3Utils } from './math';
 import { compileShader } from './ShaderCompiler';
-import { NodeRegistry } from './NodeRegistry';
 import { GridConfiguration } from '../contexts/EditorContext';
-import { Mat4Utils } from './math';
+import { NodeRegistry } from './NodeRegistry';
 
-export class EngineService {
+export class Engine {
     ecs: SoAEntitySystem;
     sceneGraph: SceneGraph;
-    renderer: WebGLRenderer;
-    debugRenderer: DebugRenderer;
     physicsSystem: PhysicsSystem;
     historySystem: HistorySystem;
+    renderer: WebGLRenderer;
+    debugRenderer: DebugRenderer;
     
-    metrics: PerformanceMetrics = {
-        fps: 0, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0
-    };
+    metrics: PerformanceMetrics;
     
-    isPlaying = false;
-    renderMode = 0;
-    currentShaderSource = '';
+    isPlaying: boolean = false;
+    renderMode: number = 0;
     
-    private canvas: HTMLCanvasElement | null = null;
+    selectedIndices: Set<number> = new Set();
+    
     private listeners: (() => void)[] = [];
-    private selectedIds: string[] = [];
-    
-    // Graph Execution
-    private executionList: { id: string, def: any, inputs: any[], data: any }[] = [];
+    currentShaderSource: string = '';
 
-    // Helper fields to store camera state from SceneView
-    private _vpMatrix: Float32Array = new Float32Array(16);
-    private _camPos: {x:number, y:number, z:number} = {x:0, y:0, z:0};
-    private _width = 1;
-    private _height = 1;
+    // Camera State
+    private currentViewProj: Float32Array | null = null;
+    private currentCameraPos: {x:number, y:number, z:number} = {x:0,y:0,z:0};
+    private currentWidth: number = 1;
+    private currentHeight: number = 1;
 
     constructor() {
         this.ecs = new SoAEntitySystem();
         this.sceneGraph = new SceneGraph();
-        this.renderer = new WebGLRenderer();
-        this.debugRenderer = new DebugRenderer();
+        this.sceneGraph.setContext(this.ecs);
         this.physicsSystem = new PhysicsSystem();
         this.historySystem = new HistorySystem();
+        this.renderer = new WebGLRenderer();
+        this.debugRenderer = new DebugRenderer();
         
-        this.sceneGraph.setContext(this.ecs);
+        this.metrics = {
+            fps: 0,
+            frameTime: 0,
+            drawCalls: 0,
+            triangleCount: 0,
+            entityCount: 0
+        };
+
+        // Create default scene
+        // Defer creation slightly to ensure AssetManager is ready if needed, mostly synchronous though.
+        setTimeout(() => {
+            try {
+                this.createEntityFromAsset('SM_Cube', { x: 0, y: 0, z: 0 });
+                const light = this.ecs.createEntity('Directional Light');
+                this.ecs.addComponent(light, ComponentType.LIGHT);
+                this.ecs.store.setPosition(this.ecs.idToIndex.get(light)!, 5, 10, 5);
+                this.ecs.store.setRotation(this.ecs.idToIndex.get(light)!, -0.5, 0.5, 0); 
+                this.sceneGraph.registerEntity(light);
+            } catch (e) {
+                console.warn("Could not create default scene entities:", e);
+            }
+        }, 0);
     }
 
     initGL(canvas: HTMLCanvasElement) {
-        this.canvas = canvas;
         this.renderer.init(canvas);
         this.debugRenderer.init(this.renderer.gl!);
     }
 
     resize(width: number, height: number) {
         this.renderer.resize(width, height);
-    }
-
-    subscribe(listener: () => void) {
-        this.listeners.push(listener);
-        return () => {
-            this.listeners = this.listeners.filter(l => l !== listener);
-        };
-    }
-
-    notifyUI() {
-        this.listeners.forEach(l => l());
     }
 
     start() { this.isPlaying = true; this.notifyUI(); }
@@ -80,53 +85,44 @@ export class EngineService {
         this.notifyUI(); 
     }
 
-    setSelected(ids: string[]) {
-        this.selectedIds = ids;
-        this.notifyUI();
-    }
-
-    updateCamera(vp: Float32Array, camPos: {x:number, y:number, z:number}, w: number, h: number) {
-        this._vpMatrix = vp;
-        this._camPos = camPos;
-        this._width = w;
-        this._height = h;
-        
-        // Trigger Render if not playing (game loop handles render when playing)
-        if (!this.isPlaying) {
-            this.renderFrame();
-        }
-    }
-
-    renderFrame() {
-        if (!this.canvas) return;
-        const selectedIndices = new Set<number>();
-        this.selectedIds.forEach(id => {
-            const idx = this.ecs.getEntityIndex(id);
-            if (idx !== undefined) selectedIndices.add(idx);
-        });
-        
-        this.renderer.render(
-            this.ecs.store, 
-            this.ecs.count, 
-            selectedIndices, 
-            this._vpMatrix, 
-            this._width, 
-            this._height, 
-            this._camPos
-        );
-    }
-
     tick(dt: number) {
         const start = performance.now();
         
+        // --- 1. Physics & Game Logic (Play Mode Only) ---
         if (this.isPlaying) {
             this.physicsSystem.update(dt, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
-            // Execute Scripts (Not implemented in this demo)
         }
 
+        // --- 2. Animation & Control Rig (Always Run) ---
+        const store = this.ecs.store;
+        for(let i=0; i<this.ecs.count; i++) {
+            if (store.isActive[i]) {
+                const id = store.ids[i];
+                
+                // Execute Rig
+                const rigId = store.rigIndex[i];
+                if (rigId > 0) {
+                    const assetId = assetManager.getRigUUID(rigId);
+                    if(assetId) this.executeAssetGraph(id, assetId);
+                }
+            }
+        }
+
+        // --- 3. Scene Graph Update (Hierarchy) ---
         this.sceneGraph.update();
         
-        this.renderFrame();
+        // --- 4. Render ---
+        if (this.currentViewProj) {
+             this.renderer.render(
+                 this.ecs.store, 
+                 this.ecs.count, 
+                 this.selectedIndices, 
+                 this.currentViewProj, 
+                 this.currentWidth, 
+                 this.currentHeight, 
+                 this.currentCameraPos
+             );
+        }
         
         // Metrics
         const end = performance.now();
@@ -137,183 +133,118 @@ export class EngineService {
         this.metrics.entityCount = this.ecs.count;
     }
 
-    selectEntityAt(x: number, y: number, w: number, h: number): string | null {
-        if (!this._vpMatrix) return null;
-        
-        let closestDist = Infinity;
-        let closestId: string | null = null;
-        
-        this.ecs.idToIndex.forEach((idx, id) => {
-            if (!this.ecs.store.isActive[idx]) return;
-            
-            // Get World Pos
-            const wmIndex = idx * 16;
-            const px = this.ecs.store.worldMatrix[wmIndex + 12];
-            const py = this.ecs.store.worldMatrix[wmIndex + 13];
-            const pz = this.ecs.store.worldMatrix[wmIndex + 14];
-            
-            // Project
-            const coord = Mat4Utils.transformPoint({x:px, y:py, z:pz}, this._vpMatrix, w, h);
-            
-            if (coord.w > 0) { // In front of camera
-                const dx = coord.x - x;
-                const dy = coord.y - y;
-                const d = Math.sqrt(dx*dx + dy*dy);
-                
-                // Simple radius check (30px threshold)
-                if (d < 30 && d < closestDist) {
-                    closestDist = d;
-                    closestId = id;
-                }
-            }
-        });
-        
-        return closestId;
+    updateCamera(vpMatrix: Float32Array, eye: {x:number, y:number, z:number}, width: number, height: number) {
+        this.currentViewProj = vpMatrix;
+        this.currentCameraPos = eye;
+        this.currentWidth = width;
+        this.currentHeight = height;
     }
-    
-    selectEntitiesInRect(x: number, y: number, w: number, h: number): string[] {
-        if (!this._vpMatrix) return [];
-        const ids: string[] = [];
-        const x1 = Math.min(x, x + w);
-        const x2 = Math.max(x, x + w);
-        const y1 = Math.min(y, y + h);
-        const y2 = Math.max(y, y + h);
 
-        this.ecs.idToIndex.forEach((idx, id) => {
-            if (!this.ecs.store.isActive[idx]) return;
-            const wmIndex = idx * 16;
-            const px = this.ecs.store.worldMatrix[wmIndex + 12];
-            const py = this.ecs.store.worldMatrix[wmIndex + 13];
-            const pz = this.ecs.store.worldMatrix[wmIndex + 14];
-            const coord = Mat4Utils.transformPoint({x:px, y:py, z:pz}, this._vpMatrix, this._width, this._height);
-            
-            if (coord.w > 0 && coord.x >= x1 && coord.x <= x2 && coord.y >= y1 && coord.y <= y2) {
-                ids.push(id);
-            }
+    setSelected(ids: string[]) {
+        this.selectedIndices.clear();
+        ids.forEach(id => {
+            const idx = this.ecs.idToIndex.get(id);
+            if (idx !== undefined) this.selectedIndices.add(idx);
         });
-        return ids;
+    }
+
+    notifyUI() {
+        this.listeners.forEach(l => l());
+    }
+
+    subscribe(cb: () => void) {
+        this.listeners.push(cb);
+        return () => { this.listeners = this.listeners.filter(l => l !== cb); };
     }
 
     createEntityFromAsset(assetId: string, position: {x:number, y:number, z:number}) {
-        const asset = assetManager.getAsset(assetId);
+        let asset = assetManager.getAsset(assetId);
+        // Fallback for primitive IDs if string lookup fails (e.g. 'SM_Cube' vs actual UUID)
+        if (!asset) {
+            asset = assetManager.getAllAssets().find(a => a.name === assetId) || undefined;
+        }
+
         if (!asset) return;
-        
-        this.pushUndoState();
+
         const id = this.ecs.createEntity(asset.name);
+        this.sceneGraph.registerEntity(id);
+        const idx = this.ecs.idToIndex.get(id)!;
         
-        // Add Transform
-        const transform = this.ecs.createProxy(id, this.sceneGraph)?.components[ComponentType.TRANSFORM];
-        if(transform) transform.position = position;
+        this.ecs.store.setPosition(idx, position.x, position.y, position.z);
 
         if (asset.type === 'MESH') {
             this.ecs.addComponent(id, ComponentType.MESH);
-            const mesh = this.ecs.createProxy(id, this.sceneGraph)?.components[ComponentType.MESH];
-            if(mesh) {
-                if (asset.name.includes('Cube')) mesh.meshType = 'Cube';
-                else if (asset.name.includes('Sphere')) mesh.meshType = 'Sphere';
-                else if (asset.name.includes('Plane')) mesh.meshType = 'Plane';
-                else mesh.meshType = 'Cube'; // Default
-            }
-        } else if (asset.type === 'MATERIAL') {
-            const sphereId = this.ecs.createEntity(asset.name);
-            const t = this.ecs.createProxy(sphereId, this.sceneGraph)?.components[ComponentType.TRANSFORM];
-            if(t) t.position = position;
-            this.ecs.addComponent(sphereId, ComponentType.MESH);
-            const m = this.ecs.createProxy(sphereId, this.sceneGraph)?.components[ComponentType.MESH];
-            if(m) {
-                m.meshType = 'Sphere';
-                m.materialId = assetId;
-            }
+            this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
+        } else if (asset.type === 'SKELETAL_MESH') {
+             this.ecs.addComponent(id, ComponentType.MESH);
+             this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
         }
         
         this.notifyUI();
+        this.pushUndoState();
     }
 
     pushUndoState() {
         this.historySystem.pushState(this.ecs);
     }
 
-    compileGraph(nodes: GraphNode[], connections: GraphConnection[], materialId?: string) {
-      // 1. Compile Logic (CPU)
-      this.executionList = [];
-      const nodeMap = new Map(nodes.map(n => [n.id, n]));
-      const visited = new Set<string>();
-
-      const visit = (nodeId: string) => {
-          if (visited.has(nodeId)) return;
-          const node = nodeMap.get(nodeId);
-          if (!node) return;
-
-          // Visit inputs first (Dependency resolution - Left to Right)
-          const inputConns = connections.filter(c => c.toNode === nodeId);
-          for(const c of inputConns) visit(c.fromNode);
-
-          visited.add(nodeId);
-
-          const def = NodeRegistry[node.type];
-          if (def) {
-              const inputs = def.inputs.map(inputDef => {
-                  const conn = connections.find(c => c.toNode === nodeId && c.toPin === inputDef.id);
-                  return conn ? { nodeId: conn.fromNode, pinId: conn.fromPin } : null;
-              });
-
-              this.executionList.push({
-                  id: nodeId,
-                  def,
-                  inputs,
-                  data: node.data
-              });
-          }
-      };
-
-      // OPTIMIZATION: Sort nodes by Y position to enforce "Upper to Lower" execution flow
-      // for independent logic branches (like Sequence outputs).
-      const sortedNodes = [...nodes].sort((a, b) => a.position.y - b.position.y);
-
-      for (const node of sortedNodes) visit(node.id);
-      
-      // 2. Compile Shader (GPU)
-      const compiled = compileShader(nodes, connections);
-      
-      if (typeof compiled === 'object') {
-          // Update Preview State (Use fragment shader source for now)
-          if (compiled.fs !== this.currentShaderSource) {
-              this.currentShaderSource = compiled.fs;
-              this.notifyUI();
-          }
-
-          // 3. Update Renderer Material
-          if (materialId) {
-              const matIntId = assetManager.getMaterialID(materialId);
-              if (matIntId) {
-                  this.renderer.updateMaterial(matIntId, compiled);
-              }
-          }
-      }
+    setRenderMode(modeId: number) {
+        this.renderMode = modeId;
+        this.renderer.renderMode = modeId;
     }
 
     toggleGrid() {
         this.renderer.showGrid = !this.renderer.showGrid;
-        this.renderFrame();
     }
 
-    setRenderMode(mode: number) {
-        this.renderer.renderMode = mode;
-        this.renderFrame();
+    syncTransforms() {
+        this.sceneGraph.update();
+    }
+
+    selectEntityAt(mx: number, my: number, w: number, h: number): string | null {
+        if (!this.currentViewProj) return null;
+        
+        const invVP = new Float32Array(16);
+        if(!Mat4Utils.invert(this.currentViewProj, invVP)) return null;
+
+        const ray = RayUtils.create();
+        RayUtils.fromScreen(mx, my, w, h, invVP, ray);
+
+        let closestDist = Infinity;
+        let closestId: string | null = null;
+
+        const store = this.ecs.store;
+        
+        // Simple bounding sphere test against all entities
+        for(let i=0; i<this.ecs.count; i++) {
+            if(!store.isActive[i]) continue;
+            // Get position
+            const pos = { x: store.worldMatrix[i*16+12], y: store.worldMatrix[i*16+13], z: store.worldMatrix[i*16+14] };
+            // Approx radius = 1 * max scale
+            const maxScale = Math.max(store.scaleX[i], Math.max(store.scaleY[i], store.scaleZ[i]));
+            const radius = 0.5 * maxScale; // Assuming unit cube/sphere base size 1.0
+
+            const t = RayUtils.intersectSphere(ray, pos, radius);
+            if (t !== null && t < closestDist) {
+                closestDist = t;
+                closestId = store.ids[i];
+            }
+        }
+
+        return closestId;
+    }
+    
+    selectEntitiesInRect(x: number, y: number, w: number, h: number): string[] {
+        // Not implemented for this demo
+        return [];
     }
 
     applyMaterialToSelected(assetId: string) {
-        this.selectedIds.forEach(id => {
-            const proxy = this.ecs.createProxy(id, this.sceneGraph);
-            if (proxy && proxy.components.Mesh) {
-                proxy.components.Mesh.materialId = assetId;
-            }
+        const matID = assetManager.getMaterialID(assetId);
+        this.selectedIndices.forEach(idx => {
+            this.ecs.store.materialIndex[idx] = matID;
         });
         this.notifyUI();
-    }
-
-    saveScene() {
-        return this.ecs.serialize();
     }
 
     loadScene(json: string) {
@@ -321,29 +252,124 @@ export class EngineService {
         this.notifyUI();
     }
 
-    getPostProcessConfig() { return this.renderer.ppConfig; }
-    setPostProcessConfig(config: PostProcessConfig) { 
+    saveScene() {
+        return this.ecs.serialize();
+    }
+
+    compileGraph(nodes: GraphNode[], connections: GraphConnection[], assetId?: string) {
+        if (assetId) {
+            // Material Shader
+            const res = compileShader(nodes, connections);
+            if (typeof res !== 'string') {
+                this.currentShaderSource = res.fs; // For preview
+                const matID = assetManager.getMaterialID(assetId);
+                this.renderer.updateMaterial(matID, res);
+            }
+        } else {
+            // Logic Graph (No-op in this demo as execution is interpreted)
+        }
+    }
+
+    executeAssetGraph(entityId: string, assetId: string) {
+        const asset = assetManager.getAsset(assetId);
+        if(!asset || (asset.type !== 'SCRIPT' && asset.type !== 'RIG')) return;
+        
+        // Very basic interpretation
+        const nodes = asset.data.nodes;
+        const connections = asset.data.connections;
+        
+        // Context
+        const context = {
+            ecs: this.ecs,
+            sceneGraph: this.sceneGraph,
+            entityId: entityId,
+            time: performance.now() / 1000
+        };
+
+        // Helper to evaluate a node
+        const nodeMap = new Map(nodes.map(n => [n.id, n]));
+        const computedValues = new Map<string, any>(); // pinId -> value
+
+        const evaluatePin = (nodeId: string, pinId: string): any => {
+            const key = `${nodeId}.${pinId}`;
+            if(computedValues.has(key)) return computedValues.get(key);
+
+            // Find connection to this input pin
+            const conn = connections.find(c => c.toNode === nodeId && c.toPin === pinId);
+            if(conn) {
+                // Evaluate source
+                const val = evaluateNodeOutput(conn.fromNode, conn.fromPin);
+                computedValues.set(key, val);
+                return val;
+            }
+            
+            // Default value from node data
+            const node = nodeMap.get(nodeId);
+            if(node && node.data && node.data[pinId] !== undefined) {
+                return node.data[pinId];
+            }
+            return undefined;
+        };
+
+        const evaluateNodeOutput = (nodeId: string, pinId: string): any => {
+            const node = nodeMap.get(nodeId);
+            if(!node) return null;
+            
+            const def = NodeRegistry[node.type];
+            if(!def) return null;
+
+            if(def.execute) {
+                // Collect inputs
+                const inputs = def.inputs.map(inp => evaluatePin(nodeId, inp.id));
+                const result = def.execute(inputs, node.data, context);
+                
+                // If result is object, pick pinId, else return result (single output)
+                if(result && typeof result === 'object' && pinId in result) {
+                    return result[pinId];
+                }
+                // Fallback for single output implicit
+                if(def.outputs.length === 1) return result;
+                
+                return result; 
+            }
+            return null;
+        };
+
+        // Execute Output Nodes
+        nodes.filter(n => n.type === 'RigOutput' || n.type === 'SetEntityTransform').forEach(n => {
+            // Force evaluation of its inputs
+            const def = NodeRegistry[n.type];
+            if(def && def.inputs) {
+                def.inputs.forEach(inp => evaluatePin(n.id, inp.id));
+            }
+            // Execute the node itself (side effects)
+            if(def && def.execute) {
+                const inputs = def.inputs.map(inp => evaluatePin(n.id, inp.id));
+                def.execute(inputs, n.data, context);
+            }
+        });
+    }
+
+    getPostProcessConfig(): PostProcessConfig {
+        return this.renderer.ppConfig;
+    }
+
+    setPostProcessConfig(config: PostProcessConfig) {
         this.renderer.ppConfig = config;
-        this.renderFrame();
     }
 
     setGridConfig(config: GridConfiguration) {
         this.renderer.gridOpacity = config.opacity;
         this.renderer.gridSize = config.size;
         this.renderer.gridFadeDistance = config.fadeDistance;
-        // hex string to float array
-        const r = parseInt(config.color.slice(1,3), 16)/255;
-        const g = parseInt(config.color.slice(3,5), 16)/255;
-        const b = parseInt(config.color.slice(5,7), 16)/255;
-        this.renderer.gridColor = [r,g,b];
+        // Parse hex color
+        const hex = config.color.replace('#','');
+        const r = parseInt(hex.substring(0,2), 16)/255;
+        const g = parseInt(hex.substring(2,4), 16)/255;
+        const b = parseInt(hex.substring(4,6), 16)/255;
+        this.renderer.gridColor = [r, g, b];
         this.renderer.gridExcludePP = config.excludeFromPostProcess;
-        this.renderer.showGrid = config.visible;
-        this.renderFrame();
-    }
-
-    syncTransforms() {
-        this.sceneGraph.update();
     }
 }
 
-export const engineInstance = new EngineService();
+export const engineInstance = new Engine();

@@ -17,7 +17,7 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     }
 
     // --- Helper for traversing graph from a specific input pin ---
-    const generateGraphFromInput = (startPin: string): { body: string; functions: string[] } => {
+    const generateGraphFromInput = (startPin: string): { body: string; functions: string[]; finalVar: string | null } => {
         const lines: string[] = [];
         const globalFunctions: string[] = [];
         const visited = new Set<string>();
@@ -39,8 +39,11 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
                 if (conn) {
                     const sourceVar = visit(conn.fromNode);
                     const sourceNode = nodes.find(n => n.id === conn.fromNode);
-                    // Handle Split outputs
+                    // Handle Split outputs (append component suffix)
                     if (sourceNode && sourceNode.type === 'Split') {
+                        return `${sourceVar}_${conn.fromPin}`; // e.g. vec3_ID_x
+                    }
+                    if (sourceNode && sourceNode.type === 'SplitVec2') {
                         return `${sourceVar}_${conn.fromPin}`;
                     }
                     return sourceVar;
@@ -57,7 +60,12 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
                 return null;
             });
 
-            const varName = `v_${nodeId.replace(/-/g, '_')}`;
+            // Determine Variable Type Prefix
+            // This is critical for generic nodes (Add, Sub) to know if they are working with floats or vecs
+            const outputType = def.outputs[0]?.type || 'vec3';
+            const safeId = nodeId.replace(/-/g, '_');
+            const varName = `${outputType}_${safeId}`;
+
             const result = def.glsl(inputVars as string[], varName, node.data);
             
             if (typeof result === 'string') {
@@ -74,26 +82,26 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
 
         // Start traversal if connected
         const rootConn = connections.find(c => c.toNode === outNode.id && c.toPin === startPin);
-        let finalVar = 'vec3(0.0)';
+        let finalVar = null;
         if (rootConn) {
             finalVar = visit(rootConn.fromNode);
         }
         
         return {
             body: lines.join('\n        '),
-            functions: [...new Set(globalFunctions)] // Deduplicate functions
+            functions: [...new Set(globalFunctions)], // Deduplicate functions
+            finalVar
         };
     };
 
     // 2. Generate Vertex Shader Logic (from 'offset' pin)
     const vsData = generateGraphFromInput('offset');
-    const vsInputConn = connections.find(c => c.toNode === outNode.id && c.toPin === 'offset');
-    const vsFinalAssignment = vsInputConn ? `vertexOffset = v_${vsInputConn.fromNode.replace(/-/g, '_')};` : '';
+    // Ensure we cast to the expected type if necessary (though simple assignment usually works if types match)
+    const vsFinalAssignment = vsData.finalVar ? `vertexOffset = vec3(${vsData.finalVar});` : '';
 
     // 3. Generate Fragment Shader Logic (from 'rgb' pin)
     const fsData = generateGraphFromInput('rgb');
-    const fsInputConn = connections.find(c => c.toNode === outNode.id && c.toPin === 'rgb');
-    const fsFinalAssignment = fsInputConn ? `vec3 finalColor = v_${fsInputConn.fromNode.replace(/-/g, '_')};` : 'vec3 finalColor = vec3(1.0, 0.0, 1.0);';
+    const fsFinalAssignment = fsData.finalVar ? `vec3 finalColor = vec3(${fsData.finalVar});` : 'vec3 finalColor = vec3(1.0, 0.0, 1.0);';
 
     // IMPORTANT: No indentation before separator comments to ensure exact string match for splitting
     const vsSource = `// --- Global Functions (VS) ---

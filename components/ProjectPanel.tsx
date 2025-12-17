@@ -2,7 +2,7 @@
 import React, { useState, useContext, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
-import { assetManager } from '../services/AssetManager';
+import { assetManager, RIG_TEMPLATES } from '../services/AssetManager';
 import { EditorContext } from '../contexts/EditorContext';
 import { WindowManagerContext } from './WindowManager';
 import { MATERIAL_TEMPLATES } from '../services/MaterialTemplates';
@@ -103,8 +103,9 @@ export const ProjectPanel: React.FC = () => {
         openAssetEditor(asset.id);
     };
 
-    const createRig = () => {
-        const asset = assetManager.createRig(`New Rig Graph ${Math.floor(Math.random() * 1000)}`);
+    const createRig = (templateIndex?: number) => {
+        const tpl = templateIndex !== undefined ? RIG_TEMPLATES[templateIndex] : undefined;
+        const asset = assetManager.createRig(`New Rig ${Math.floor(Math.random() * 1000)}`, tpl);
         setRefresh(r => r + 1);
         openAssetEditor(asset.id);
     };
@@ -181,9 +182,19 @@ export const ProjectPanel: React.FC = () => {
                                     <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => createScript()}>
                                         Visual Script
                                     </div>
-                                    <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => createRig()}>
-                                        Rig Graph
-                                    </div>
+                                    
+                                    <div className="border-t border-white/10 my-1"></div>
+                                    <div className="px-3 py-1 text-[9px] text-text-secondary uppercase font-bold tracking-wider opacity-50">Rig Graphs</div>
+                                    {RIG_TEMPLATES.map((tpl, i) => (
+                                        <div 
+                                            key={i}
+                                            className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" 
+                                            onClick={() => createRig(i)}
+                                        >
+                                            {tpl.name}
+                                        </div>
+                                    ))}
+
                                     <div className="border-t border-white/10 my-1"></div>
                                     <div className="px-3 py-1 text-[9px] text-text-secondary uppercase font-bold tracking-wider opacity-50">Materials</div>
                                     {MATERIAL_TEMPLATES.map((tpl, i) => (

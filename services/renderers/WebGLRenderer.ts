@@ -3,6 +3,8 @@
 
 import { ComponentStorage } from '../ecs/ComponentStorage';
 import { INITIAL_CAPACITY, MESH_TYPES, COMPONENT_MASKS } from '../constants';
+import { assetManager } from '../AssetManager';
+import { StaticMeshAsset } from '../../types';
 
 // --- CONFIGURATION INTERFACE ---
 export interface PostProcessConfig {
@@ -231,17 +233,7 @@ void main() {
     }
 
     // 3. Composite Excluded Objects (Overlay)
-    // Excluded buffer contains (Color * Alpha, Alpha)
     vec4 excluded = texture(u_excluded, v_uv);
-    
-    // If excluded pixel exists (alpha > 0), blend it over the processed included scene
-    // We assume pre-multiplied alpha or standard blend depending on how we render to u_excluded
-    // Here we use simple mix: final = mix(processed, excluded.rgb, excluded.a)
-    // Since we gamma corrected 'color' above, we assume 'excluded' is already gamma correct or linear.
-    // For consistency, let's assume 'excluded' comes from standard render (linear) and needs gamma too, 
-    // OR we just mix it raw if we want it to "glow" / "pop". 
-    // Let's apply Gamma to excluded to match logic.
-    
     if (excluded.a > 0.0) {
         vec3 excColor = pow(excluded.rgb, vec3(1.0 / 2.2));
         color = mix(color, excColor, excluded.a);
@@ -327,9 +319,14 @@ export class WebGLRenderer {
         this.initPostProcess(gl);
         this.initGridShader(gl);
         
-        this.registerMesh(MESH_TYPES['Cube'], this.createCubeData());
-        this.registerMesh(MESH_TYPES['Sphere'], this.createSphereData(24, 16));
-        this.registerMesh(MESH_TYPES['Plane'], this.createPlaneData());
+        // Register meshes from AssetManager
+        const meshes = assetManager.getAssetsByType('MESH') as StaticMeshAsset[];
+        meshes.forEach(asset => {
+            const id = assetManager.getMeshID(asset.id);
+            if (id > 0) {
+                this.registerMesh(id, asset.geometry);
+            }
+        });
     }
 
     initGridShader(gl: WebGL2RenderingContext) {
@@ -347,7 +344,6 @@ export class WebGLRenderer {
         precision mediump float;
         in vec3 v_worldPos;
         layout(location=0) out vec4 outColor;
-        // No second output needed, handled via gl.drawBuffers logic
         
         uniform float u_opacity;
         uniform float u_gridSize;
@@ -476,7 +472,6 @@ export class WebGLRenderer {
         }
     }
 
-    // ... (updateMaterial, ensureCapacity, registerMesh, createCubeData... Unchanged) ...
     updateMaterial(materialId: number, shaderData: { vs: string, fs: string } | string) {
         if (!this.gl) return;
         if (!shaderData) {
@@ -651,7 +646,6 @@ export class WebGLRenderer {
         }
     }
 
-    // Helper to render a batch of buckets (Unchanged logic, just separated)
     private renderBuckets(buckets: Map<number, number[]>, store: ComponentStorage, selectedIndices: Set<number>, vp: Float32Array, cam: {x:number, y:number, z:number}, time: number) {
         if (buckets.size === 0) return;
         const gl = this.gl!;
@@ -728,8 +722,6 @@ export class WebGLRenderer {
             }
         });
     }
-
-    // ... (renderGrid helper, createCubeData, createSphereData, createPlaneData Unchanged) ...
     
     private renderGrid(gl: WebGL2RenderingContext, viewProjection: Float32Array) {
         gl.enable(gl.BLEND);
@@ -743,6 +735,8 @@ export class WebGLRenderer {
         const uFD = gl.getUniformLocation(this.gridProgram!, 'u_fadeDist'); if (uFD) gl.uniform1f(uFD, this.gridFadeDistance);
         const uCol = gl.getUniformLocation(this.gridProgram!, 'u_gridColor'); if (uCol) gl.uniform3fv(uCol, this.gridColor);
 
+        // Find the plane mesh ID (assumed 3 based on MESH_TYPES, or we query AssetManager for default plane)
+        // Since we synced IDs in AssetManager, we know MESH_TYPES['Plane'] is 3.
         const planeMesh = this.meshes.get(MESH_TYPES['Plane']);
         if (planeMesh) {
             gl.bindVertexArray(planeMesh.vao);
@@ -752,40 +746,5 @@ export class WebGLRenderer {
         
         gl.depthMask(true);
         gl.disable(gl.BLEND);
-    }
-
-    createCubeData() {
-        const v = [ -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,0.5,0.5, -0.5,0.5,0.5, 0.5,-0.5,-0.5, -0.5,-0.5,-0.5, -0.5,0.5,-0.5, 0.5,0.5,-0.5, -0.5,0.5,0.5, 0.5,0.5,0.5, 0.5,0.5,-0.5, -0.5,0.5,-0.5, -0.5,-0.5,-0.5, 0.5,-0.5,-0.5, 0.5,-0.5,0.5, -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,-0.5,-0.5, 0.5,0.5,-0.5, 0.5,0.5,0.5, -0.5,-0.5,-0.5, -0.5,-0.5,0.5, -0.5,0.5,0.5, -0.5,0.5,-0.5 ];
-        const n = [ 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0 ];
-        const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
-        const idx = [ 0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11, 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23 ];
-        return { vertices: new Float32Array(v), normals: new Float32Array(n), uvs: new Float32Array(u), indices: new Uint16Array(idx) };
-    }
-
-    createSphereData(latBands: number, longBands: number) {
-        const radius = 0.5; const v=[], n=[], u=[], idx=[];
-        for (let lat = 0; lat <= latBands; lat++) {
-            const theta = lat * Math.PI / latBands; const sinTheta = Math.sin(theta); const cosTheta = Math.cos(theta);
-            for (let lon = 0; lon <= longBands; lon++) {
-                const phi = lon * 2 * Math.PI / longBands; const sinPhi = Math.sin(phi); const cosPhi = Math.cos(phi);
-                const x = cosPhi * sinTheta; const y = cosTheta; const z = sinPhi * sinTheta;
-                n.push(x, y, z); u.push(1 - (lon / longBands), 1 - (lat / latBands)); v.push(x * radius, y * radius, z * radius);
-            }
-        }
-        for (let lat = 0; lat < latBands; lat++) {
-            for (let lon = 0; lon < longBands; lon++) {
-                const first = (lat * (longBands + 1)) + lon; const second = first + longBands + 1;
-                idx.push(first, second, first + 1, second, second + 1, first + 1);
-            }
-        }
-        return { vertices: new Float32Array(v), normals: new Float32Array(n), uvs: new Float32Array(u), indices: new Uint16Array(idx) };
-    }
-
-    createPlaneData() {
-        const v = [-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5];
-        const n = [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0];
-        const u = [0, 0, 1, 0, 1, 1, 0, 1];
-        const idx = [0, 1, 2, 0, 2, 3];
-        return { vertices: new Float32Array(v), normals: new Float32Array(n), uvs: new Float32Array(u), indices: new Uint16Array(idx) };
     }
 }
