@@ -368,6 +368,10 @@ export class Ti3DEngine {
       const l = this.createEntity('Directional Light');
       this.ecs.addComponent(l.id, ComponentType.LIGHT);
       l.components[ComponentType.LIGHT]!.intensity = 1.0;
+      
+      // Angle the light so shading is visible (approx 45 deg down/side)
+      const idx = this.ecs.idToIndex.get(l.id)!;
+      this.ecs.store.setRotation(idx, 0.8, 2.5, 0); 
   }
 
   syncTransforms() {

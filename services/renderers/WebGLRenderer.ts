@@ -1,3 +1,4 @@
+
 // services/renderers/WebGLRenderer.ts
 
 import { ComponentStorage } from '../ecs/ComponentStorage';
@@ -862,13 +863,28 @@ export class WebGLRenderer {
                 if(store.isActive[i] && (store.componentMask[i] & COMPONENT_MASKS.LIGHT)) {
                     lightColor = [store.colorR[i], store.colorG[i], store.colorB[i]];
                     lightIntensity = store.lightIntensity[i];
+                    
+                    // Extract Forward Vector (Z-Axis) from World Matrix for Directional Light
+                    const idx = i * 16;
+                    // Matrix is column-major: 0, 1, 2 is X; 4, 5, 6 is Y; 8, 9, 10 is Z
+                    lightDir = [
+                        store.worldMatrix[idx + 8],
+                        store.worldMatrix[idx + 9],
+                        store.worldMatrix[idx + 10]
+                    ];
+                    
+                    const len = Math.sqrt(lightDir[0]**2 + lightDir[1]**2 + lightDir[2]**2);
+                    if(len > 0.0001) {
+                        lightDir = [lightDir[0]/len, lightDir[1]/len, lightDir[2]/len];
+                    } else {
+                        lightDir = [0, 0, 1];
+                    }
+                    
                     break; 
                 }
             }
             
-            const len = Math.sqrt(lightDir[0]**2 + lightDir[1]**2 + lightDir[2]**2);
-            lightDir = [lightDir[0]/len, lightDir[1]/len, lightDir[2]/len];
-
+            // Note: lightDir is already normalized above
             const uLDir = gl.getUniformLocation(program, 'u_lightDir');
             if (uLDir) gl.uniform3fv(uLDir, lightDir);
             
