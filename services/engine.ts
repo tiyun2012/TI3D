@@ -6,7 +6,7 @@ import { HistorySystem } from './systems/HistorySystem';
 import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { DebugRenderer } from './renderers/DebugRenderer';
 import { assetManager } from './AssetManager';
-import { PerformanceMetrics, GraphNode, GraphConnection, Vector3, ComponentType } from '../types';
+import { PerformanceMetrics, GraphNode, GraphConnection, Vector3, ComponentType, Asset } from '../types';
 import { Mat4Utils, RayUtils, Vec3Utils } from './math';
 import { compileShader } from './ShaderCompiler';
 import { GridConfiguration } from '../contexts/EditorContext';
@@ -54,7 +54,6 @@ export class Engine {
         };
 
         // Create default scene
-        // Defer creation slightly to ensure AssetManager is ready if needed, mostly synchronous though.
         setTimeout(() => {
             try {
                 this.createEntityFromAsset('SM_Cube', { x: 0, y: 0, z: 0 });
@@ -88,18 +87,14 @@ export class Engine {
     tick(dt: number) {
         const start = performance.now();
         
-        // --- 1. Physics & Game Logic (Play Mode Only) ---
         if (this.isPlaying) {
             this.physicsSystem.update(dt, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
         }
 
-        // --- 2. Animation & Control Rig (Always Run) ---
         const store = this.ecs.store;
         for(let i=0; i<this.ecs.count; i++) {
             if (store.isActive[i]) {
                 const id = store.ids[i];
-                
-                // Execute Rig
                 const rigId = store.rigIndex[i];
                 if (rigId > 0) {
                     const assetId = assetManager.getRigUUID(rigId);
@@ -108,10 +103,8 @@ export class Engine {
             }
         }
 
-        // --- 3. Scene Graph Update (Hierarchy) ---
         this.sceneGraph.update();
         
-        // --- 4. Render ---
         if (this.currentViewProj) {
              this.renderer.render(
                  this.ecs.store, 
@@ -124,7 +117,6 @@ export class Engine {
              );
         }
         
-        // Metrics
         const end = performance.now();
         this.metrics.frameTime = end - start;
         this.metrics.fps = 1000 / (this.metrics.frameTime || 1);
@@ -157,14 +149,28 @@ export class Engine {
         return () => { this.listeners = this.listeners.filter(l => l !== cb); };
     }
 
+    /**
+     * Uploads an asset's data to the GPU via the renderer.
+     */
+    registerAssetWithGPU(asset: Asset) {
+        if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
+            const internalId = assetManager.getMeshID(asset.id);
+            if (internalId > 0) {
+                this.renderer.registerMesh(internalId, asset.geometry);
+            }
+        }
+    }
+
     createEntityFromAsset(assetId: string, position: {x:number, y:number, z:number}) {
         let asset = assetManager.getAsset(assetId);
-        // Fallback for primitive IDs if string lookup fails (e.g. 'SM_Cube' vs actual UUID)
         if (!asset) {
             asset = assetManager.getAllAssets().find(a => a.name === assetId) || undefined;
         }
 
         if (!asset) return;
+
+        // Ensure renderer knows about this mesh (important for imported assets)
+        this.registerAssetWithGPU(asset);
 
         const id = this.ecs.createEntity(asset.name);
         this.sceneGraph.registerEntity(id);
@@ -172,12 +178,9 @@ export class Engine {
         
         this.ecs.store.setPosition(idx, position.x, position.y, position.z);
 
-        if (asset.type === 'MESH') {
+        if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
             this.ecs.addComponent(id, ComponentType.MESH);
             this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
-        } else if (asset.type === 'SKELETAL_MESH') {
-             this.ecs.addComponent(id, ComponentType.MESH);
-             this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
         }
         
         this.notifyUI();
@@ -215,14 +218,11 @@ export class Engine {
 
         const store = this.ecs.store;
         
-        // Simple bounding sphere test against all entities
         for(let i=0; i<this.ecs.count; i++) {
             if(!store.isActive[i]) continue;
-            // Get position
             const pos = { x: store.worldMatrix[i*16+12], y: store.worldMatrix[i*16+13], z: store.worldMatrix[i*16+14] };
-            // Approx radius = 1 * max scale
             const maxScale = Math.max(store.scaleX[i], Math.max(store.scaleY[i], store.scaleZ[i]));
-            const radius = 0.5 * maxScale; // Assuming unit cube/sphere base size 1.0
+            const radius = 0.5 * maxScale; 
 
             const t = RayUtils.intersectSphere(ray, pos, radius);
             if (t !== null && t < closestDist) {
@@ -235,7 +235,6 @@ export class Engine {
     }
     
     selectEntitiesInRect(x: number, y: number, w: number, h: number): string[] {
-        // Not implemented for this demo
         return [];
     }
 
@@ -258,15 +257,12 @@ export class Engine {
 
     compileGraph(nodes: GraphNode[], connections: GraphConnection[], assetId?: string) {
         if (assetId) {
-            // Material Shader
             const res = compileShader(nodes, connections);
             if (typeof res !== 'string') {
-                this.currentShaderSource = res.fs; // For preview
+                this.currentShaderSource = res.fs; 
                 const matID = assetManager.getMaterialID(assetId);
                 this.renderer.updateMaterial(matID, res);
             }
-        } else {
-            // Logic Graph (No-op in this demo as execution is interpreted)
         }
     }
 
@@ -274,11 +270,8 @@ export class Engine {
         const asset = assetManager.getAsset(assetId);
         if(!asset || (asset.type !== 'SCRIPT' && asset.type !== 'RIG')) return;
         
-        // Very basic interpretation
         const nodes = asset.data.nodes;
         const connections = asset.data.connections;
-        
-        // Context
         const context = {
             ecs: this.ecs,
             sceneGraph: this.sceneGraph,
@@ -286,24 +279,18 @@ export class Engine {
             time: performance.now() / 1000
         };
 
-        // Helper to evaluate a node
         const nodeMap = new Map(nodes.map(n => [n.id, n]));
-        const computedValues = new Map<string, any>(); // pinId -> value
+        const computedValues = new Map<string, any>();
 
         const evaluatePin = (nodeId: string, pinId: string): any => {
             const key = `${nodeId}.${pinId}`;
             if(computedValues.has(key)) return computedValues.get(key);
-
-            // Find connection to this input pin
             const conn = connections.find(c => c.toNode === nodeId && c.toPin === pinId);
             if(conn) {
-                // Evaluate source
                 const val = evaluateNodeOutput(conn.fromNode, conn.fromPin);
                 computedValues.set(key, val);
                 return val;
             }
-            
-            // Default value from node data
             const node = nodeMap.get(nodeId);
             if(node && node.data && node.data[pinId] !== undefined) {
                 return node.data[pinId];
@@ -314,35 +301,25 @@ export class Engine {
         const evaluateNodeOutput = (nodeId: string, pinId: string): any => {
             const node = nodeMap.get(nodeId);
             if(!node) return null;
-            
             const def = NodeRegistry[node.type];
             if(!def) return null;
-
             if(def.execute) {
-                // Collect inputs
                 const inputs = def.inputs.map(inp => evaluatePin(nodeId, inp.id));
                 const result = def.execute(inputs, node.data, context);
-                
-                // If result is object, pick pinId, else return result (single output)
                 if(result && typeof result === 'object' && pinId in result) {
                     return result[pinId];
                 }
-                // Fallback for single output implicit
                 if(def.outputs.length === 1) return result;
-                
                 return result; 
             }
             return null;
         };
 
-        // Execute Output Nodes
         nodes.filter(n => n.type === 'RigOutput' || n.type === 'SetEntityTransform').forEach(n => {
-            // Force evaluation of its inputs
             const def = NodeRegistry[n.type];
             if(def && def.inputs) {
                 def.inputs.forEach(inp => evaluatePin(n.id, inp.id));
             }
-            // Execute the node itself (side effects)
             if(def && def.execute) {
                 const inputs = def.inputs.map(inp => evaluatePin(n.id, inp.id));
                 def.execute(inputs, n.data, context);
@@ -362,7 +339,6 @@ export class Engine {
         this.renderer.gridOpacity = config.opacity;
         this.renderer.gridSize = config.size;
         this.renderer.gridFadeDistance = config.fadeDistance;
-        // Parse hex color
         const hex = config.color.replace('#','');
         const r = parseInt(hex.substring(0,2), 16)/255;
         const g = parseInt(hex.substring(2,4), 16)/255;

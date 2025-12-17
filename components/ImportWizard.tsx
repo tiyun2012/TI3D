@@ -2,6 +2,7 @@
 import React, { useState, useRef } from 'react';
 import { Icon } from './Icon';
 import { assetManager } from '../services/AssetManager';
+import { engineInstance } from '../services/engine';
 
 interface ImportWizardProps {
     onClose: () => void;
@@ -28,8 +29,6 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
         if (e.target.files && e.target.files[0]) {
             const f = e.target.files[0];
             setFile(f);
-            
-            // Auto-detect type
             const name = f.name.toLowerCase();
             if (name.includes('skel') || name.includes('anim') || name.includes('character')) {
                 setImportType('SKELETAL_MESH');
@@ -43,18 +42,18 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
         setProgress(10);
 
         try {
-            // 1. Read File
             const content = await readFile(file);
             setProgress(50);
-
-            // 2. Parse & Create Asset
-            // Small delay to allow UI update
+            
             await new Promise(r => setTimeout(r, 100)); 
             
             const asset = assetManager.importFile(file.name, content, importType);
+            
+            // CRITICAL: Immediately register with GPU so viewport can display it
+            engineInstance.registerAssetWithGPU(asset);
+            
             setProgress(100);
             
-            // 3. Finish
             setTimeout(() => {
                 onImportSuccess(asset.id);
                 onClose();
@@ -87,13 +86,12 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
                 type="file" 
                 ref={fileInputRef} 
                 className="hidden" 
-                accept=".fbx,.obj,.glb,.gltf" 
+                accept=".obj,.glb,.gltf" 
                 onChange={handleFileChange} 
+                aria-label="Select Source File" 
             />
 
             <div className="flex-1 p-4 overflow-y-auto custom-scrollbar space-y-6">
-                
-                {/* File Selection */}
                 <div className="space-y-2">
                     <div className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Source File</div>
                     <div 
@@ -118,13 +116,12 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
                         ) : (
                             <>
                                 <Icon name="UploadCloud" size={24} className="text-text-secondary mb-2" />
-                                <span className="text-text-secondary">Click to select .FBX, .OBJ, or .GLB</span>
+                                <span className="text-text-secondary">Click to select .OBJ or .GLB</span>
                             </>
                         )}
                     </div>
                 </div>
 
-                {/* Import Type Selection */}
                 <div className="space-y-2">
                     <div className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Asset Type</div>
                     <div className="grid grid-cols-2 gap-2">
@@ -147,7 +144,6 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
                     </div>
                 </div>
 
-                {/* Detailed Settings */}
                 <div className="space-y-3 pt-2 border-t border-white/5">
                     <div className="flex items-center justify-between">
                         <span className="text-text-secondary">Uniform Scale</span>
@@ -157,6 +153,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
                             onChange={(e) => setSettings({...settings, scale: parseFloat(e.target.value)})}
                             className="w-20 bg-input-bg rounded px-2 py-1 text-white border border-transparent focus:border-accent outline-none text-right"
                             disabled={isImporting}
+                            aria-label="Uniform Scale"
                         />
                     </div>
                     
@@ -184,7 +181,6 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
                 </div>
             </div>
 
-            {/* Footer Actions */}
             <div className="p-4 border-t border-white/10 flex justify-end gap-2 bg-black/20">
                 <button 
                     onClick={onClose}

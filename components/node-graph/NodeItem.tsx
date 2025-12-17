@@ -1,4 +1,3 @@
-
 import React, { memo, useRef } from 'react';
 import { GraphNode, TextureAsset } from '../../types';
 import { NodeRegistry, getTypeColor } from '../../services/NodeRegistry';
@@ -231,6 +230,7 @@ export const NodeItem = memo(({
                                     value={node.data?.assetId || ''}
                                     onChange={(e) => onDataChange(node.id, 'assetId', e.target.value)}
                                     onMouseDown={e => e.stopPropagation()}
+                                    aria-label="Select Mesh Asset"
                                 >
                                     <option value="">Select Mesh...</option>
                                     {assetManager.getAssetsByType('MESH').map(m => (
@@ -242,13 +242,21 @@ export const NodeItem = memo(({
 
                         {isTextureSample && (
                             <div style={{ marginBottom: LayoutConfig.GAP }} className="px-1">
-                                <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
+                                <input 
+                                    type="file" 
+                                    ref={fileInputRef} 
+                                    className="hidden" 
+                                    accept="image/*" 
+                                    onChange={handleFileUpload}
+                                    aria-label="Upload Texture File" 
+                                />
                                 <span className="text-[9px] text-gray-500 uppercase mb-1 block">Texture</span>
                                 <select
                                     className="w-full bg-black/40 text-[10px] text-white px-1 rounded border border-white/10 h-5 focus:border-accent outline-none"
                                     value={node.data?.textureId || '0'}
                                     onChange={(e) => onDataChange(node.id, 'textureId', e.target.value)}
                                     onMouseDown={e => e.stopPropagation()}
+                                    aria-label="Select Texture Pattern"
                                 >
                                     <option value="0">White (Default)</option>
                                     <option value="1">Grid Pattern</option>

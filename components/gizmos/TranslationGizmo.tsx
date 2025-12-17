@@ -1,9 +1,8 @@
-
 import React, { useState, useEffect, useContext, useMemo, useRef } from 'react';
 import { Entity, ComponentType, Vector3 } from '../../types';
 import { engineInstance } from '../../services/engine';
 import { GizmoBasis, GizmoMath, GIZMO_COLORS, Axis, ColorUtils } from './GizmoUtils';
-import { EditorContext } from '../../contexts/EditorContext';
+import { EditorContext, SnapSettings } from '../../contexts/EditorContext';
 import { Mat4Utils, Vec3Utils } from '../../services/math';
 
 interface Props {
@@ -27,6 +26,14 @@ interface DragData {
     axisVector?: Vector3;      // Defined if dragging X, Y, or Z
 }
 
+// State container for event listeners to avoid stale closures
+interface GizmoState {
+    invViewProj: Float32Array;
+    cameraPosition: Vector3;
+    viewport: { width: number; height: number };
+    snapSettings: SnapSettings;
+}
+
 export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport, containerRef }) => {
     const { gizmoConfig, transformSpace, snapSettings } = useContext(EditorContext)!;
     const [hoverAxis, setHoverAxis] = useState<Axis | null>(null);
@@ -41,7 +48,8 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
     const dragRef = useRef<DragData | null>(null);
 
     // Stores the LATEST external props so the event listener can read them without re-bind
-    const stateRef = useRef({ 
+    // Explicitly typed to avoid mismatch between Float32Array<ArrayBuffer> and Mat4
+    const stateRef = useRef<GizmoState>({ 
         invViewProj: new Float32Array(16), 
         cameraPosition: basis.cameraPosition, 
         viewport,

@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import { Entity, Component, ComponentType, Vector3, RotationOrder, TransformSpace, Asset, PhysicsMaterialAsset } from '../types';
 import { engineInstance } from '../services/engine';
@@ -457,6 +456,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
                          onChange={handleNameChange}
                          onBlur={handleNameCommit}
                          className="w-full bg-transparent text-sm font-bold text-white outline-none border-b border-transparent focus:border-accent transition-colors truncate"
+                         aria-label="Asset Name"
                      />
                      <div className="text-[10px] text-text-secondary font-mono mt-0.5 truncate select-all opacity-50">
                          {asset.type}
@@ -531,6 +531,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
                      onChange={handleNameChange}
                      onBlur={handleNameCommit}
                      className="w-full bg-transparent text-sm font-bold text-white outline-none border-b border-transparent focus:border-accent transition-colors truncate"
+                     aria-label="Entity Name"
                  />
                  <div className="text-[10px] text-text-secondary font-mono mt-0.5 truncate select-all opacity-50">
                      {entity.id}

@@ -1,4 +1,3 @@
-
 import React, { useContext, useState, useMemo } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
 import { GizmoArrowShape, GizmoCenterShape, GizmoPlaneShape } from './gizmos/GizmoUtils';
@@ -99,7 +98,11 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                     autoFocus
                 />
                 {search && (
-                    <button onClick={() => setSearch('')} className="absolute right-3 top-2.5 text-text-secondary hover:text-white">
+                    <button 
+                        onClick={() => setSearch('')} 
+                        className="absolute right-3 top-2.5 text-text-secondary hover:text-white"
+                        aria-label="Clear search"
+                    >
                         <Icon name="X" size={14} />
                     </button>
                 )}
@@ -154,6 +157,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                                     className="w-full h-1"
                                     value={uiConfig.resizeHandleOpacity}
                                     onChange={(e) => updateUiConfig('resizeHandleOpacity', parseFloat(e.target.value))}
+                                    aria-label="Resize Handle Opacity"
                                 />
                             </div>
                         </div>
@@ -170,7 +174,13 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                     <div className="flex items-center justify-between bg-input-bg p-3 rounded border border-white/5">
                         <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Show Grid</span>
                         <label className="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" className="sr-only peer" checked={gridConfig.visible} onChange={(e) => updateGrid('visible', e.target.checked)} />
+                            <input 
+                                type="checkbox" 
+                                className="sr-only peer" 
+                                checked={gridConfig.visible} 
+                                onChange={(e) => updateGrid('visible', e.target.checked)} 
+                                aria-label="Show Grid"
+                            />
                             <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
                         </label>
                     </div>
@@ -193,6 +203,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                                     value={gridConfig.opacity} 
                                     onChange={(e) => updateGrid('opacity', parseFloat(e.target.value))}
                                     className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:bg-accent"
+                                    aria-label="Grid Opacity"
                                 />
                             </div>
                             <Slider 
@@ -215,7 +226,13 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                             <div className="flex items-center justify-between bg-input-bg p-3 rounded border border-white/5 col-span-2">
                                 <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Exclude from Post Process</span>
                                 <label className="relative inline-flex items-center cursor-pointer">
-                                    <input type="checkbox" className="sr-only peer" checked={gridConfig.excludeFromPostProcess} onChange={(e) => updateGrid('excludeFromPostProcess', e.target.checked)} />
+                                    <input 
+                                        type="checkbox" 
+                                        className="sr-only peer" 
+                                        checked={gridConfig.excludeFromPostProcess} 
+                                        onChange={(e) => updateGrid('excludeFromPostProcess', e.target.checked)} 
+                                        aria-label="Exclude from Post Process"
+                                    />
                                     <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
                                 </label>
                             </div>
@@ -233,7 +250,13 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                     <div className="flex items-center justify-between bg-input-bg p-3 rounded border border-white/5">
                         <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Master Switch</span>
                         <label className="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" className="sr-only peer" checked={ppConfig.enabled} onChange={(e) => updatePp('enabled', e.target.checked)} />
+                            <input 
+                                type="checkbox" 
+                                className="sr-only peer" 
+                                checked={ppConfig.enabled} 
+                                onChange={(e) => updatePp('enabled', e.target.checked)} 
+                                aria-label="Enable Post Processing"
+                            />
                             <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
                         </label>
                     </div>
@@ -257,6 +280,7 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                                     value={ppConfig.aberrationStrength} 
                                     onChange={(e) => updatePp('aberrationStrength', parseFloat(e.target.value))}
                                     className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:bg-accent"
+                                    aria-label="Chromatic Aberration Strength"
                                 />
                             </div>
                             
@@ -266,7 +290,13 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                                     <span className="text-[9px] text-text-secondary opacity-60">Filmic color grading curve</span>
                                 </div>
                                 <label className="relative inline-flex items-center cursor-pointer">
-                                    <input type="checkbox" className="sr-only peer" checked={ppConfig.toneMapping} onChange={(e) => updatePp('toneMapping', e.target.checked)} />
+                                    <input 
+                                        type="checkbox" 
+                                        className="sr-only peer" 
+                                        checked={ppConfig.toneMapping} 
+                                        onChange={(e) => updatePp('toneMapping', e.target.checked)} 
+                                        aria-label="Enable ACES Tone Mapping"
+                                    />
                                     <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
                                 </label>
                             </div>

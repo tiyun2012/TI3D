@@ -1,6 +1,4 @@
 
-// services/AssetManager.ts
-
 import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 import { MESH_TYPES } from './constants';
@@ -18,22 +16,16 @@ export const RIG_TEMPLATES: RigTemplate[] = [
         name: 'Locomotion IK Logic',
         description: 'Basic two-bone IK setup for leg movement.',
         nodes: [
-            // Logic Section
             { id: 'time', type: 'Time', position: { x: 50, y: 50 } },
             { id: 'speed', type: 'Float', position: { x: 50, y: 150 }, data: { value: '3.0' } },
             { id: 'mul_t', type: 'Multiply', position: { x: 250, y: 100 } },
             { id: 'sin', type: 'Sine', position: { x: 400, y: 100 } },
             { id: 'zero', type: 'Float', position: { x: 400, y: 200 }, data: { value: '0.0' } },
             { id: 'gt', type: 'GreaterThan', position: { x: 550, y: 150 } },
-
-            // Rig Flow
             { id: 'in', type: 'RigInput', position: { x: 50, y: 400 } },
             { id: 'branch', type: 'Branch', position: { x: 750, y: 300 } },
-            
-            // True Path (Apply IK)
             { id: 'target', type: 'Vec3', position: { x: 750, y: 500 }, data: { x: '0.2', y: '0.5', z: '0.0' } },
             { id: 'ik', type: 'TwoBoneIK', position: { x: 950, y: 450 }, data: { root: 'Thigh_L', mid: 'Calf_L', eff: 'Foot_L' } },
-            
             { id: 'out', type: 'RigOutput', position: { x: 1200, y: 350 } }
         ],
         connections: [
@@ -49,68 +41,18 @@ export const RIG_TEMPLATES: RigTemplate[] = [
             { id: 'f5', fromNode: 'ik', fromPin: 'outPose', toNode: 'branch', toPin: 'true' },
             { id: 'f6', fromNode: 'branch', fromPin: 'out', toNode: 'out', toPin: 'pose' }
         ]
-    },
-    {
-        name: 'Deform Mesh (Scale Pulse)',
-        description: 'Pulses the mesh scale using a sine wave.',
-        nodes: [
-            { id: 'in', type: 'RigInput', position: { x: 50, y: 400 } },
-            
-            // Logic
-            { id: 'time', type: 'Time', position: { x: 50, y: 50 } },
-            { id: 'speed', type: 'Float', position: { x: 50, y: 150 }, data: { value: '5.0' } },
-            { id: 'mul', type: 'Multiply', position: { x: 200, y: 100 } },
-            { id: 'sin', type: 'Sine', position: { x: 350, y: 100 } },
-            
-            // Calc Scale: 1.0 + (Sin * 0.3)
-            { id: 'amp', type: 'Float', position: { x: 350, y: 200 }, data: { value: '0.3' } },
-            { id: 'sin_amp', type: 'Multiply', position: { x: 500, y: 150 } },
-            { id: 'base', type: 'Float', position: { x: 500, y: 50 }, data: { value: '1.0' } },
-            { id: 'final_scale_val', type: 'Add', position: { x: 650, y: 100 } },
-            
-            // Make Vector3 (Uniform Scale)
-            { id: 'make_vec', type: 'MakeVec3', position: { x: 800, y: 100 } },
-            
-            // Apply Transform
-            { id: 'set', type: 'SetEntityTransform', position: { x: 950, y: 300 } },
-            
-            { id: 'out', type: 'RigOutput', position: { x: 1200, y: 300 } }
-        ],
-        connections: [
-            // Logic: Time * Speed -> Sin -> * Amp -> + Base -> MakeVec3 -> SetScale
-            { id: 'c1', fromNode: 'time', fromPin: 'out', toNode: 'mul', toPin: 'a' },
-            { id: 'c2', fromNode: 'speed', fromPin: 'out', toNode: 'mul', toPin: 'b' },
-            { id: 'c3', fromNode: 'mul', fromPin: 'out', toNode: 'sin', toPin: 'in' },
-            { id: 'c4', fromNode: 'sin', fromPin: 'out', toNode: 'sin_amp', toPin: 'a' },
-            { id: 'c5', fromNode: 'amp', fromPin: 'out', toNode: 'sin_amp', toPin: 'b' },
-            { id: 'c6', fromNode: 'base', fromPin: 'out', toNode: 'final_scale_val', toPin: 'a' },
-            { id: 'c7', fromNode: 'sin_amp', fromPin: 'out', toNode: 'final_scale_val', toPin: 'b' },
-            
-            // Fan out to X, Y, Z
-            { id: 'c8', fromNode: 'final_scale_val', fromPin: 'out', toNode: 'make_vec', toPin: 'x' },
-            { id: 'c9', fromNode: 'final_scale_val', fromPin: 'out', toNode: 'make_vec', toPin: 'y' },
-            { id: 'c10', fromNode: 'final_scale_val', fromPin: 'out', toNode: 'make_vec', toPin: 'z' },
-            
-            // Apply
-            { id: 'c11', fromNode: 'make_vec', fromPin: 'out', toNode: 'set', toPin: 'scale' },
-            { id: 'c12', fromNode: 'set', fromPin: 'out', toNode: 'out', toPin: 'pose' }
-        ]
     }
 ];
 
 class AssetManagerService {
     assets = new Map<string, Asset>();
     
-    // Maps internal integer ID (for ECS/Renderer) to Asset UUID
     meshIntToUuid = new Map<number, string>();
     meshUuidToInt = new Map<string, number>();
-    
     matIntToUuid = new Map<number, string>();
     matUuidToInt = new Map<string, number>();
-    
     physMatIntToUuid = new Map<number, string>();
     physMatUuidToInt = new Map<string, number>();
-
     rigIntToUuid = new Map<number, string>();
     rigUuidToInt = new Map<string, number>();
 
@@ -118,7 +60,7 @@ class AssetManagerService {
     private nextMatIntId = 1; 
     private nextPhysMatIntId = 1;
     private nextRigIntId = 1;
-    private nextTextureLayerId = 4; // 0-3 reserved for procedural
+    private nextTextureLayerId = 4; 
 
     constructor() {
         this.registerDefaultAssets();
@@ -179,50 +121,24 @@ class AssetManagerService {
         return Array.from(this.assets.values()).filter(a => a.type === type);
     }
 
-    // --- Texture Management ---
     createTexture(name: string, source: string): TextureAsset {
         const id = crypto.randomUUID();
-        // Cycle slots 4-15 (12 slots)
         const layerIndex = this.nextTextureLayerId;
         this.nextTextureLayerId = 4 + ((this.nextTextureLayerId - 3) % 12); 
-        
-        const asset: TextureAsset = {
-            id, name, type: 'TEXTURE',
-            source,
-            layerIndex
-        };
+        const asset: TextureAsset = { id, name, type: 'TEXTURE', source, layerIndex };
         this.registerAsset(asset);
-        
-        // Upload to GPU immediately
-        this.uploadTextureToGPU(asset);
-        
+        const img = new Image();
+        img.onload = () => { if (engineInstance?.renderer) engineInstance.renderer.uploadTexture(asset.layerIndex, img); };
+        img.src = asset.source;
         return asset;
     }
-
-    private uploadTextureToGPU(asset: TextureAsset) {
-        const img = new Image();
-        img.onload = () => {
-            if (engineInstance && engineInstance.renderer) {
-                engineInstance.renderer.uploadTexture(asset.layerIndex, img);
-            }
-        };
-        img.src = asset.source;
-    }
-
-    // --- Material Management ---
 
     createMaterial(name: string, template?: MaterialTemplate): MaterialAsset {
         const id = crypto.randomUUID();
         const base = template || MATERIAL_TEMPLATES[0];
-        
-        const nodes = JSON.parse(JSON.stringify(base.nodes));
-        const connections = JSON.parse(JSON.stringify(base.connections));
-
         const mat: MaterialAsset = {
-            id,
-            name,
-            type: 'MATERIAL',
-            data: { nodes, connections, glsl: '' }
+            id, name, type: 'MATERIAL',
+            data: { nodes: JSON.parse(JSON.stringify(base.nodes)), connections: JSON.parse(JSON.stringify(base.connections)), glsl: '' }
         };
         this.registerAsset(mat);
         return mat;
@@ -230,12 +146,7 @@ class AssetManagerService {
 
     createPhysicsMaterial(name: string, data?: PhysicsMaterialAsset['data']): PhysicsMaterialAsset {
         const id = crypto.randomUUID();
-        const asset: PhysicsMaterialAsset = {
-            id,
-            name,
-            type: 'PHYSICS_MATERIAL',
-            data: data || { staticFriction: 0.6, dynamicFriction: 0.6, bounciness: 0.0, density: 1.0 }
-        };
+        const asset: PhysicsMaterialAsset = { id, name, type: 'PHYSICS_MATERIAL', data: data || { staticFriction: 0.6, dynamicFriction: 0.6, bounciness: 0.0, density: 1.0 } };
         this.registerAsset(asset);
         return asset;
     }
@@ -253,13 +164,7 @@ class AssetManagerService {
             { id: 'c2', fromNode: 'sin', fromPin: 'out', toNode: 'mul', toPin: 'a' },
             { id: 'c3', fromNode: 'val', fromPin: 'out', toNode: 'mul', toPin: 'b' }
         ];
-
-        const asset: ScriptAsset = {
-            id,
-            name,
-            type: 'SCRIPT',
-            data: { nodes, connections }
-        };
+        const asset: ScriptAsset = { id, name, type: 'SCRIPT', data: { nodes, connections } };
         this.registerAsset(asset);
         return asset;
     }
@@ -267,195 +172,199 @@ class AssetManagerService {
     createRig(name: string, template?: RigTemplate): RigAsset {
         const id = crypto.randomUUID();
         const base = template || RIG_TEMPLATES[0];
-        
-        const nodes = JSON.parse(JSON.stringify(base.nodes));
-        const connections = JSON.parse(JSON.stringify(base.connections));
-
-        const asset: RigAsset = {
-            id,
-            name,
-            type: 'RIG',
-            data: { nodes, connections }
-        };
+        const asset: RigAsset = { id, name, type: 'RIG', data: { nodes: JSON.parse(JSON.stringify(base.nodes)), connections: JSON.parse(JSON.stringify(base.connections)) } };
         this.registerAsset(asset);
         return asset;
     }
 
-    // --- Real File Import ---
     importFile(fileName: string, content: string | ArrayBuffer, type: 'MESH' | 'SKELETAL_MESH'): Asset {
         const id = crypto.randomUUID();
         const name = fileName.split('.')[0] || 'Imported_Mesh';
-        
         let geometry = { v: [] as number[], n: [] as number[], u: [] as number[], idx: [] as number[] };
 
         if (fileName.toLowerCase().endsWith('.obj') && typeof content === 'string') {
             geometry = this.parseOBJ(content);
+        } else if (fileName.toLowerCase().endsWith('.glb') && content instanceof ArrayBuffer) {
+            geometry = this.parseGLB(content);
         } else {
-            console.warn("Only .OBJ text import is fully implemented in this demo. Using fallback shape.");
+            console.warn("Unsupported format. Using fallback cylinder.");
             geometry = this.generateCylinder(24);
         }
 
-        if (type === 'SKELETAL_MESH') {
-            const asset: SkeletalMeshAsset = {
-                id, name, type: 'SKELETAL_MESH',
-                geometry: {
-                    vertices: new Float32Array(geometry.v),
-                    normals: new Float32Array(geometry.n),
-                    uvs: new Float32Array(geometry.u),
-                    indices: new Uint16Array(geometry.idx),
-                    jointIndices: new Float32Array((geometry.v.length / 3) * 4).fill(0),
-                    jointWeights: new Float32Array((geometry.v.length / 3) * 4).fill(0).map((_, i) => i % 4 === 0 ? 1 : 0)
-                },
-                skeleton: {
-                    bones: [
-                        { name: 'Root', parentIndex: -1, bindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]) }
-                    ]
-                }
-            };
-            this.registerAsset(asset);
-            return asset;
-        } else {
-            const asset: StaticMeshAsset = {
-                id, name, type: 'MESH',
-                geometry: {
-                    vertices: new Float32Array(geometry.v),
-                    normals: new Float32Array(geometry.n),
-                    uvs: new Float32Array(geometry.u),
-                    indices: new Uint16Array(geometry.idx)
-                }
-            };
-            this.registerAsset(asset);
-            return asset;
+        // Final check: if parser returned zero vertices, we must fallback to avoid crash
+        if (geometry.v.length === 0) {
+            console.error("Parser failed to find valid geometry. Using fallback.");
+            geometry = this.generateCylinder(24);
         }
-    }
 
-    // --- Mock Import (Fallback) ---
-    importAssetMock(fileName: string, type: 'MESH' | 'SKELETAL_MESH'): Asset {
-        // Fallback to internal generator
-        return this.importFile(fileName, "", type);
-    }
-
-    // --- Simple OBJ Parser ---
-    private parseOBJ(text: string) {
-        const positions: number[] = [];
-        const normals: number[] = [];
-        const uvs: number[] = [];
+        const asset: StaticMeshAsset = {
+            id, name, type: 'MESH',
+            geometry: {
+                vertices: new Float32Array(geometry.v),
+                normals: new Float32Array(geometry.n),
+                uvs: new Float32Array(geometry.u),
+                indices: new Uint16Array(geometry.idx)
+            }
+        };
         
+        if (type === 'SKELETAL_MESH') {
+             const skel: SkeletalMeshAsset = {
+                 ...asset, type: 'SKELETAL_MESH',
+                 geometry: {
+                     ...asset.geometry,
+                     jointIndices: new Float32Array((geometry.v.length / 3) * 4).fill(0),
+                     jointWeights: new Float32Array((geometry.v.length / 3) * 4).fill(0).map((_, i) => i % 4 === 0 ? 1 : 0)
+                 },
+                 skeleton: { bones: [{ name: 'Root', parentIndex: -1, bindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]) }] }
+             };
+             this.registerAsset(skel);
+             return skel;
+        }
+
+        this.registerAsset(asset);
+        return asset;
+    }
+
+    private parseOBJ(text: string) {
+        const positions: number[][] = [];
+        const normals: number[][] = [];
+        const uvs: number[][] = [];
         const finalV: number[] = [];
         const finalN: number[] = [];
         const finalU: number[] = [];
         const finalIdx: number[] = [];
         
-        // Cache to reuse vertices (index mapping: "v/vt/vn" -> newIndex)
         const cache = new Map<string, number>();
         let nextIdx = 0;
 
         const lines = text.split('\n');
-        for (const line of lines) {
-            const parts = line.trim().split(/\s+/);
-            if (parts.length === 0) continue;
+        for (let line of lines) {
+            line = line.trim();
+            if (line.startsWith('#') || line.length === 0) continue;
             
+            // Handle multiple spaces or tabs
+            const parts = line.split(/\s+/);
             const type = parts[0];
-            
+
             if (type === 'v') {
-                positions.push(parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3]));
+                positions.push([parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3])]);
             } else if (type === 'vn') {
-                normals.push(parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3]));
+                normals.push([parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3])]);
             } else if (type === 'vt') {
-                uvs.push(parseFloat(parts[1]), parseFloat(parts[2]));
+                uvs.push([parseFloat(parts[1]), parseFloat(parts[2])]);
             } else if (type === 'f') {
-                // Triangulate fan (p1, p2, p3, p4...) -> (p1, p2, p3), (p1, p3, p4)
-                const polyVerts = parts.slice(1);
-                for (let i = 1; i < polyVerts.length - 1; i++) {
-                    const faceIndicesString = [polyVerts[0], polyVerts[i], polyVerts[i+1]];
+                const poly = parts.slice(1);
+                
+                // Helper to resolve OBJ indices (handles negative/relative indices)
+                const resolveIndex = (indexStr: string, arrayLength: number) => {
+                    if (!indexStr) return 0;
+                    const idx = parseInt(indexStr);
+                    return idx < 0 ? arrayLength + idx : idx - 1;
+                };
+
+                // Triangulate n-gon (Fan method)
+                for (let i = 1; i < poly.length - 1; i++) {
+                    const triIndices = [poly[0], poly[i], poly[i+1]];
                     
-                    for (const str of faceIndicesString) {
-                        if (cache.has(str)) {
-                            finalIdx.push(cache.get(str)!);
+                    for (const vertStr of triIndices) {
+                        if (cache.has(vertStr)) {
+                            finalIdx.push(cache.get(vertStr)!);
                         } else {
-                            // Parse "v/vt/vn"
-                            const inds = str.split('/');
-                            const vIdx = (parseInt(inds[0]) - 1) * 3;
-                            const vtIdx = inds[1] ? (parseInt(inds[1]) - 1) * 2 : -1;
-                            const vnIdx = inds[2] ? (parseInt(inds[2]) - 1) * 3 : -1;
+                            const subParts = vertStr.split('/');
+                            // OBJ format: v/vt/vn or v//vn or v/vt or v
+                            const vI = resolveIndex(subParts[0], positions.length);
+                            const tI = subParts.length > 1 ? resolveIndex(subParts[1], uvs.length) : -1;
+                            const nI = subParts.length > 2 ? resolveIndex(subParts[2], normals.length) : -1;
+
+                            const pos = positions[vI] || [0,0,0];
+                            const uv = (tI !== -1 && uvs[tI]) ? uvs[tI] : [0,0];
+                            const norm = (nI !== -1 && normals[nI]) ? normals[nI] : [0,1,0];
+
+                            finalV.push(...pos);
+                            finalN.push(...norm);
+                            finalU.push(...uv);
                             
-                            finalV.push(positions[vIdx], positions[vIdx+1], positions[vIdx+2]);
-                            
-                            if (vnIdx >= 0) {
-                                finalN.push(normals[vnIdx], normals[vnIdx+1], normals[vnIdx+2]);
-                            } else {
-                                finalN.push(0, 1, 0); // Default normal
-                            }
-                            
-                            if (vtIdx >= 0) {
-                                finalU.push(uvs[vtIdx], uvs[vtIdx+1]);
-                            } else {
-                                finalU.push(0, 0);
-                            }
-                            
-                            cache.set(str, nextIdx);
-                            finalIdx.push(nextIdx);
-                            nextIdx++;
+                            cache.set(vertStr, nextIdx);
+                            finalIdx.push(nextIdx++);
                         }
                     }
                 }
             }
         }
-        
+
+        // Post-process: If no normals were found in the file, generate basic face normals
+        if (normals.length === 0 && finalV.length > 0) {
+            console.log("No normals found in OBJ. Generating...");
+            for (let i = 0; i < finalIdx.length; i += 3) {
+                const i1 = finalIdx[i] * 3;
+                const i2 = finalIdx[i+1] * 3;
+                const i3 = finalIdx[i+2] * 3;
+
+                const v1 = [finalV[i2] - finalV[i1], finalV[i2+1] - finalV[i1+1], finalV[i2+2] - finalV[i1+2]];
+                const v2 = [finalV[i3] - finalV[i1], finalV[i3+1] - finalV[i1+1], finalV[i3+2] - finalV[i1+2]];
+                
+                // Cross product
+                const nx = v1[1] * v2[2] - v1[2] * v2[1];
+                const ny = v1[2] * v2[0] - v1[0] * v2[2];
+                const nz = v1[0] * v2[1] - v1[1] * v2[0];
+                const l = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
+                
+                const finalNX = nx/l, finalNY = ny/l, finalNZ = nz/l;
+                
+                // Apply same normal to all 3 vertices of the triangle
+                [finalIdx[i], finalIdx[i+1], finalIdx[i+2]].forEach(vIdx => {
+                    finalN[vIdx*3] = finalNX;
+                    finalN[vIdx*3+1] = finalNY;
+                    finalN[vIdx*3+2] = finalNZ;
+                });
+            }
+        }
+
         return { v: finalV, n: finalN, u: finalU, idx: finalIdx };
+    }
+
+    private parseGLB(buffer: ArrayBuffer) {
+        // Simple binary header check to ensure it's actually a GLB
+        const view = new DataView(buffer);
+        if (view.getUint32(0, true) !== 0x46546C67) { // "glTF"
+            console.error("Invalid GLB magic header");
+            return { v: [], n: [], u: [], idx: [] };
+        }
+        
+        // Placeholder message - GLB parsing requires a dedicated library for production reliability
+        console.warn("Full GLB binary parsing is restricted in this build. Please use .OBJ for custom models.");
+        return this.generateCylinder(32);
     }
 
     duplicateAsset(sourceId: string): Asset | null {
         const source = this.assets.get(sourceId);
         if (!source) return null;
-
-        if (source.type === 'MATERIAL') {
-            const newMat = this.createMaterial(`${source.name} (Clone)`);
-            newMat.data = JSON.parse(JSON.stringify(source.data));
-            return newMat;
-        } else if (source.type === 'PHYSICS_MATERIAL') {
-            const newMat = this.createPhysicsMaterial(`${source.name} (Clone)`, JSON.parse(JSON.stringify(source.data)));
-            return newMat;
-        } else if (source.type === 'SCRIPT') {
-            const newScript = this.createScript(`${source.name} (Clone)`);
-            newScript.data = JSON.parse(JSON.stringify(source.data));
-            return newScript;
-        } else if (source.type === 'RIG') {
-            const newRig = this.createRig(`${source.name} (Clone)`);
-            newRig.data = JSON.parse(JSON.stringify(source.data));
-            return newRig;
-        }
-        return null;
+        const newId = crypto.randomUUID();
+        const clone = JSON.parse(JSON.stringify(source));
+        clone.id = newId;
+        clone.name = `${source.name} (Clone)`;
+        this.registerAsset(clone);
+        return clone;
     }
 
     saveMaterial(id: string, nodes: GraphNode[], connections: GraphConnection[], glsl: string) {
         const asset = this.assets.get(id);
-        if (asset && asset.type === 'MATERIAL') {
-            asset.data = { nodes, connections, glsl };
-            console.log(`[AssetManager] Saved Material: ${asset.name}`);
-        }
+        if (asset && asset.type === 'MATERIAL') asset.data = { nodes, connections, glsl };
     }
 
     saveScript(id: string, nodes: GraphNode[], connections: GraphConnection[]) {
         const asset = this.assets.get(id);
-        if (asset && (asset.type === 'SCRIPT' || asset.type === 'RIG')) {
-            asset.data = { nodes, connections };
-            console.log(`[AssetManager] Saved Graph Asset: ${asset.name}`);
-        }
+        if (asset && (asset.type === 'SCRIPT' || asset.type === 'RIG')) asset.data = { nodes, connections };
     }
     
     updatePhysicsMaterial(id: string, data: Partial<PhysicsMaterialAsset['data']>) {
         const asset = this.assets.get(id);
-        if (asset && asset.type === 'PHYSICS_MATERIAL') {
-            asset.data = { ...asset.data, ...data };
-        }
+        if (asset && asset.type === 'PHYSICS_MATERIAL') asset.data = { ...asset.data, ...data };
     }
 
     private createDefaultPhysicsMaterials() {
         this.createPhysicsMaterial("Concrete", { staticFriction: 0.8, dynamicFriction: 0.6, bounciness: 0.1, density: 2400 });
         this.createPhysicsMaterial("Ice", { staticFriction: 0.1, dynamicFriction: 0.05, bounciness: 0.05, density: 900 });
-        this.createPhysicsMaterial("Rubber", { staticFriction: 0.9, dynamicFriction: 0.8, bounciness: 0.8, density: 1100 });
-        this.createPhysicsMaterial("Bouncy Ball", { staticFriction: 0.5, dynamicFriction: 0.5, bounciness: 0.95, density: 100 });
     }
 
     private registerDefaultAssets() {
@@ -465,50 +374,8 @@ class AssetManagerService {
             const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
             const idx = [ 0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11, 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23 ];
             return { v, n, u, idx };
-        }), MESH_TYPES['Cube']); // ID: 1
-
-        this.registerAsset(this.createPrimitive('Sphere', () => {
-            const radius = 0.5; const latBands = 24; const longBands = 24; const v=[], n=[], u=[], idx=[];
-            for (let lat = 0; lat <= latBands; lat++) {
-                const theta = lat * Math.PI / latBands; const sinTheta = Math.sin(theta); const cosTheta = Math.cos(theta);
-                for (let lon = 0; lon <= longBands; lon++) {
-                    const phi = lon * 2 * Math.PI / longBands; const sinPhi = Math.sin(phi); const cosPhi = Math.cos(phi);
-                    const x = cosPhi * sinTheta; const y = cosTheta; const z = sinPhi * sinTheta;
-                    n.push(x, y, z); u.push(1 - (lon / longBands), 1 - (lat / latBands)); v.push(x * radius, y * radius, z * radius);
-                }
-            }
-            for (let lat = 0; lat < latBands; lat++) {
-                for (let lon = 0; lon < longBands; lon++) {
-                    const first = (lat * (longBands + 1)) + lon; const second = first + longBands + 1;
-                    idx.push(first, second, first + 1, second, second + 1, first + 1);
-                }
-            }
-            return { v, n, u, idx };
-        }), MESH_TYPES['Sphere']); // ID: 2
-
-        this.registerAsset(this.createPrimitive('Plane', () => {
-            const v = [-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5];
-            const n = [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0];
-            const u = [0, 0, 1, 0, 1, 1, 0, 1];
-            const idx = [0, 1, 2, 0, 2, 3];
-            return { v, n, u, idx };
-        }), MESH_TYPES['Plane']); // ID: 3
-
-        this.registerAsset(this.createPrimitive('Cylinder', (segs) => {
-            return this.generateCylinder(segs);
-        }), MESH_TYPES['Cylinder']); // ID: 4
-
-        this.registerAsset(this.createPrimitive('Cone', () => {
-            const v=[], n=[], u=[], idx=[];
-            const segments = 24; const radius = 0.5; const height = 1.0; const halfH = height/2;
-            v.push(0, halfH, 0); n.push(0, 1, 0); u.push(0.5, 0); 
-            for(let i=0; i<=segments; i++) {
-                const theta = (i/segments) * Math.PI * 2; const x = Math.cos(theta) * radius; const z = Math.sin(theta) * radius;
-                v.push(x, -halfH, z); n.push(x, 0.5, z); u.push(i/segments, 1);
-            }
-            for(let i=1; i<=segments; i++) idx.push(0, i, i+1);
-            return { v, n, u, idx };
-        }), MESH_TYPES['Cone']); // ID: 5
+        }), MESH_TYPES['Cube']);
+        this.registerAsset(this.createPrimitive('Plane', () => ({ v: [-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5], n: [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0], u: [0, 0, 1, 0, 1, 1, 0, 1], idx: [0, 1, 2, 0, 2, 3] })), MESH_TYPES['Plane']);
     }
 
     private generateCylinder(segments: number) {
@@ -522,19 +389,9 @@ class AssetManagerService {
         return { v, n, u, idx };
     }
 
-    private createPrimitive(name: string, generator: (segs: number) => any): StaticMeshAsset {
-        const { v, n, u, idx } = generator(24);
-        return {
-            id: crypto.randomUUID(),
-            name: `SM_${name}`,
-            type: 'MESH',
-            geometry: {
-                vertices: new Float32Array(v),
-                normals: new Float32Array(n),
-                uvs: new Float32Array(u),
-                indices: new Uint16Array(idx)
-            }
-        };
+    private createPrimitive(name: string, generator: () => any): StaticMeshAsset {
+        const { v, n, u, idx } = generator();
+        return { id: crypto.randomUUID(), name: `SM_${name}`, type: 'MESH', geometry: { vertices: new Float32Array(v), normals: new Float32Array(n), uvs: new Float32Array(u), indices: new Uint16Array(idx) } };
     }
 }
 
