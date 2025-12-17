@@ -12,7 +12,8 @@ import { PhysicsSystem } from './systems/PhysicsSystem';
 import { HistorySystem } from './systems/HistorySystem';
 import { compileShader } from './ShaderCompiler';
 import { assetManager } from './AssetManager';
-import { MESH_TYPES, VIEW_MODES } from './constants';
+import { MESH_TYPES, VIEW_MODES, COMPONENT_MASKS } from './constants';
+import { GridConfiguration } from '../contexts/EditorContext';
 
 interface ExecutionStep {
     id: string;
@@ -121,6 +122,22 @@ export class Ti3DEngine {
       this.notifyUI();
   }
   
+  setGridConfig(config: GridConfiguration) {
+      this.renderer.showGrid = config.visible;
+      this.renderer.gridOpacity = config.opacity;
+      this.renderer.gridSize = config.size;
+      this.renderer.gridFadeDistance = config.fadeDistance;
+      
+      // Convert Hex to Vec3
+      const hex = config.color.replace('#', '');
+      const r = parseInt(hex.substring(0, 2), 16) / 255;
+      const g = parseInt(hex.substring(2, 4), 16) / 255;
+      const b = parseInt(hex.substring(4, 6), 16) / 255;
+      this.renderer.gridColor = [r, g, b];
+      
+      this.notifyUI();
+  }
+  
   cycleRenderMode() {
       // Cycle through available modes defined in constants
       const nextMode = (this.renderMode + 1) % VIEW_MODES.length;
@@ -155,8 +172,10 @@ export class Ti3DEngine {
       this.selectedIds.forEach(entityId => {
           const idx = this.ecs.idToIndex.get(entityId);
           if (idx !== undefined && this.ecs.store.isActive[idx]) {
-              // Set Material Index in ECS
-              this.ecs.store.materialIndex[idx] = matId;
+              // Ensure mask has MESH
+              if (this.ecs.store.componentMask[idx] & COMPONENT_MASKS.MESH) {
+                  this.ecs.store.materialIndex[idx] = matId;
+              }
           }
       });
       
@@ -242,6 +261,9 @@ export class Ti3DEngine {
 
       for (const [id, index] of this.ecs.idToIndex) {
           if (!this.ecs.store.isActive[index]) continue;
+          // Must have mesh to be selectable by raycast
+          if (!(this.ecs.store.componentMask[index] & COMPONENT_MASKS.MESH)) continue;
+          
           const meshType = this.ecs.store.meshType[index];
           if (meshType === 0) continue; 
 
@@ -274,7 +296,8 @@ export class Ti3DEngine {
 
       for (const [id, index] of this.ecs.idToIndex) {
           if (!this.ecs.store.isActive[index]) continue;
-          if (this.ecs.store.meshType[index] === 0) continue;
+          // Must have mesh to be selectable
+          if (!(this.ecs.store.componentMask[index] & COMPONENT_MASKS.MESH)) continue;
           
           const worldPos = this.sceneGraph.getWorldPosition(id);
           const screenPos = Mat4Utils.transformPoint(worldPos, this.viewProjectionMatrix, this.canvasWidth, this.canvasHeight);
@@ -302,11 +325,11 @@ export class Ti3DEngine {
       
       const meshId = assetManager.getMeshID(assetId);
       const e = this.createEntity(asset.name);
-      e.components[ComponentType.MESH].meshType = 'Custom'; // Placeholder string, actually sets int
       
       // Manually set integer mesh type bypassing string lookup
       const idx = this.ecs.idToIndex.get(e.id);
       if (idx !== undefined) {
+          this.ecs.addComponent(e.id, ComponentType.MESH);
           this.ecs.store.meshType[idx] = meshId;
           this.ecs.store.textureIndex[idx] = 1; // Default Grid texture
           if(position) {
@@ -318,27 +341,31 @@ export class Ti3DEngine {
 
   private initDemoScene() {
       const p = this.createEntity('Player Cube');
-      p.components[ComponentType.MESH].meshType = 'Cube';
-      p.components[ComponentType.MESH].color = '#3b82f6';
-      // Use 0 (White) instead of 1 (Grid) to avoid looking like the floor
-      p.components[ComponentType.MESH].textureIndex = 0; 
+      this.ecs.addComponent(p.id, ComponentType.MESH);
+      this.ecs.addComponent(p.id, ComponentType.PHYSICS);
+      p.components[ComponentType.MESH]!.meshType = 'Cube';
+      p.components[ComponentType.MESH]!.color = '#3b82f6';
+      p.components[ComponentType.MESH]!.textureIndex = 0; 
 
       const s = this.createEntity('Orbiting Satellite');
-      s.components[ComponentType.MESH].meshType = 'Sphere';
-      s.components[ComponentType.MESH].color = '#ef4444';
-      s.components[ComponentType.MESH].textureIndex = 2;
-      s.components[ComponentType.TRANSFORM].position = {x: 3, y: 0, z: 0};
-      s.components[ComponentType.TRANSFORM].scale = {x: 0.5, y: 0.5, z: 0.5};
+      this.ecs.addComponent(s.id, ComponentType.MESH);
+      s.components[ComponentType.MESH]!.meshType = 'Sphere';
+      s.components[ComponentType.MESH]!.color = '#ef4444';
+      s.components[ComponentType.MESH]!.textureIndex = 2;
+      s.components[ComponentType.TRANSFORM]!.position = {x: 3, y: 0, z: 0};
+      s.components[ComponentType.TRANSFORM]!.scale = {x: 0.5, y: 0.5, z: 0.5};
       this.sceneGraph.attach(s.id, p.id);
 
       const f = this.createEntity('Floor');
-      f.components[ComponentType.MESH].meshType = 'Plane';
-      f.components[ComponentType.MESH].color = '#ffffff';
-      f.components[ComponentType.MESH].textureIndex = 3;
-      f.components[ComponentType.TRANSFORM].position = {x: 0, y: -2, z: 0};
-      f.components[ComponentType.TRANSFORM].scale = {x: 10, y: 0.1, z: 10};
+      this.ecs.addComponent(f.id, ComponentType.MESH);
+      f.components[ComponentType.MESH]!.meshType = 'Plane';
+      f.components[ComponentType.MESH]!.color = '#ffffff';
+      f.components[ComponentType.MESH]!.textureIndex = 3;
+      f.components[ComponentType.TRANSFORM]!.position = {x: 0, y: -2, z: 0};
+      f.components[ComponentType.TRANSFORM]!.scale = {x: 10, y: 0.1, z: 10};
 
       const l = this.createEntity('Directional Light');
+      this.ecs.addComponent(l.id, ComponentType.LIGHT);
       l.components[ComponentType.LIGHT]!.intensity = 1.0;
   }
 

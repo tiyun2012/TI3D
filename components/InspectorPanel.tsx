@@ -4,7 +4,7 @@ import { Entity, Component, ComponentType, Vector3, RotationOrder, TransformSpac
 import { engineInstance } from '../services/engine';
 import { assetManager } from '../services/AssetManager';
 import { Icon } from './Icon';
-import { ROTATION_ORDERS } from '../services/constants';
+import { ROTATION_ORDERS, LIGHT_TYPES } from '../services/constants';
 import { EditorContext } from '../contexts/EditorContext';
 import { Select } from './ui/Select';
 
@@ -142,7 +142,7 @@ const ComponentCard: React.FC<{
   onUpdate: (field: string, value: any) => void;
   onStartUpdate?: () => void;
   onCommit: () => void;
-}> = ({ component, title, icon, onUpdate, onStartUpdate, onCommit }) => {
+}> = ({ component, title, icon, onRemove, onUpdate, onStartUpdate, onCommit }) => {
   const [open, setOpen] = useState(true);
   const editorCtx = useContext(EditorContext);
   const physicsMaterials = assetManager.getAssetsByType('PHYSICS_MATERIAL');
@@ -181,7 +181,16 @@ const ComponentCard: React.FC<{
         <span className="font-semibold text-xs text-gray-200 flex-1">{title}</span>
         <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
             <button className="p-1 hover:text-white text-text-secondary" title="Settings" aria-label="Settings"><Icon name="Settings2" size={12} /></button>
-            <button className="p-1 hover:text-white text-text-secondary" title="Remove Component" aria-label="Remove Component"><Icon name="Trash2" size={12} /></button>
+            {onRemove && (
+                <button 
+                    className="p-1 hover:text-white text-text-secondary" 
+                    title="Remove Component" 
+                    aria-label="Remove Component"
+                    onClick={(e) => { e.stopPropagation(); onRemove(); }}
+                >
+                    <Icon name="Trash2" size={12} />
+                </button>
+            )}
         </div>
       </div>
 
@@ -315,9 +324,9 @@ const ComponentCard: React.FC<{
                <span className="w-24 text-text-secondary">Type</span>
                <div className="flex-1">
                    <Select
-                      value="Directional"
-                      options={['Directional', 'Point', 'Spot'].map(v => ({ label: v, value: v }))}
-                      onChange={() => {}}
+                      value={component.lightType}
+                      options={LIGHT_TYPES.map(v => ({ label: v, value: v }))}
+                      onChange={(v) => handleAtomicChange('lightType', v)}
                    />
                </div>
             </div>
@@ -387,6 +396,7 @@ const ComponentCard: React.FC<{
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectionCount = 0, type = 'ENTITY' }) => {
   const [name, setName] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const [showAddComponent, setShowAddComponent] = useState(false);
 
   useEffect(() => {
     if (object) setName(object.name);
@@ -418,6 +428,21 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
       }
   };
   
+  const addComponent = (compType: ComponentType) => {
+      if (type !== 'ENTITY' || !object) return;
+      engineInstance.pushUndoState();
+      engineInstance.ecs.addComponent((object as Entity).id, compType);
+      engineInstance.notifyUI();
+      setShowAddComponent(false);
+  };
+
+  const removeComponent = (compType: ComponentType) => {
+      if (type !== 'ENTITY' || !object) return;
+      engineInstance.pushUndoState();
+      engineInstance.ecs.removeComponent((object as Entity).id, compType);
+      engineInstance.notifyUI();
+  };
+  
   const updateAssetData = (field: string, value: any) => {
       if (type !== 'ASSET' || !object) return;
       const asset = object as PhysicsMaterialAsset; // Safe cast contextually
@@ -445,6 +470,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
       const asset = object as Asset;
       return (
         <div className="h-full bg-panel flex flex-col font-sans border-l border-black/20">
+            {/* Same Asset Inspector Code... */}
             <div className="p-4 border-b border-black/20 bg-panel-header flex items-center gap-3">
                  <div className="w-8 h-8 bg-green-600 rounded flex items-center justify-center text-white shadow-sm shrink-0">
                      <Icon name={asset.type === 'PHYSICS_MATERIAL' ? 'Activity' : 'File'} size={16} />
@@ -497,12 +523,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
                 {asset.type === 'MATERIAL' && (
                     <div className="text-center text-text-secondary text-xs mt-10">
                         Use the Node Graph editor to modify Shader Materials.
-                        <button 
-                            className="block mx-auto mt-4 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded"
-                            onClick={() => { /* Handled via double click in project panel */ }}
-                        >
-                            Open Node Graph
-                        </button>
                     </div>
                 )}
             </div>
@@ -512,8 +532,17 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
 
   // --- ENTITY INSPECTOR ---
   const entity = object as Entity;
+  
+  // Available components to add
+  const availableComponents = [
+      { type: ComponentType.MESH, label: 'Mesh Renderer', icon: 'Box' },
+      { type: ComponentType.LIGHT, label: 'Light', icon: 'Sun' },
+      { type: ComponentType.PHYSICS, label: 'Physics Body', icon: 'Activity' },
+      { type: ComponentType.SCRIPT, label: 'Script', icon: 'FileCode' }
+  ].filter(c => !entity.components[c.type]);
+
   return (
-    <div className="h-full bg-panel flex flex-col font-sans border-l border-black/20">
+    <div className="h-full bg-panel flex flex-col font-sans border-l border-black/20" onClick={() => setShowAddComponent(false)}>
       {/* Header */}
       <div className="p-4 border-b border-black/20 bg-panel-header">
          <div className="flex items-center gap-3 mb-3">
@@ -567,6 +596,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
                   title="Mesh Renderer" 
                   icon="Box" 
                   component={entity.components[ComponentType.MESH]}
+                  onRemove={() => removeComponent(ComponentType.MESH)}
                   onUpdate={(f, v) => updateComponent(ComponentType.MESH, f, v)}
                   onStartUpdate={startUpdate}
                   onCommit={() => engineInstance.notifyUI()}
@@ -577,6 +607,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
                   title="Light Source" 
                   icon="Sun" 
                   component={entity.components[ComponentType.LIGHT]}
+                  onRemove={() => removeComponent(ComponentType.LIGHT)}
                   onUpdate={(f, v) => updateComponent(ComponentType.LIGHT, f, v)}
                   onStartUpdate={startUpdate}
                   onCommit={() => engineInstance.notifyUI()}
@@ -587,16 +618,43 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
                   title="Physics Body" 
                   icon="Activity" 
                   component={entity.components[ComponentType.PHYSICS]}
+                  onRemove={() => removeComponent(ComponentType.PHYSICS)}
                   onUpdate={(f, v) => updateComponent(ComponentType.PHYSICS, f, v)}
                   onStartUpdate={startUpdate}
                   onCommit={() => engineInstance.notifyUI()}
               />
           )}
 
-           <div className="p-4 flex justify-center pb-8">
-            <button className="bg-accent/20 hover:bg-accent/40 text-accent border border-accent/50 text-xs px-6 py-2 rounded-full font-semibold transition-all">
+           <div className="p-4 flex justify-center pb-8 relative">
+            <button 
+                className="bg-accent/20 hover:bg-accent/40 text-accent border border-accent/50 text-xs px-6 py-2 rounded-full font-semibold transition-all"
+                onClick={(e) => { e.stopPropagation(); setShowAddComponent(!showAddComponent); }}
+            >
                 Add Component
             </button>
+            
+            {/* Add Component Menu */}
+            {showAddComponent && (
+                <div className="absolute top-12 w-48 bg-[#252525] border border-white/10 shadow-xl rounded-md z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                    <div className="bg-black/20 p-2 border-b border-white/5 text-[10px] font-bold text-text-secondary uppercase">
+                        Add Component
+                    </div>
+                    {availableComponents.length > 0 ? (
+                        availableComponents.map(c => (
+                            <button
+                                key={c.type}
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-accent hover:text-white flex items-center gap-2 text-gray-300"
+                                onClick={() => addComponent(c.type)}
+                            >
+                                <Icon name={c.icon as any} size={12} />
+                                {c.label}
+                            </button>
+                        ))
+                    ) : (
+                        <div className="px-3 py-2 text-xs text-text-secondary italic">No components available</div>
+                    )}
+                </div>
+            )}
          </div>
       </div>
     </div>

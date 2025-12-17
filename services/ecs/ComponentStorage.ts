@@ -5,6 +5,9 @@ import { Mat4Utils } from '../math';
 export class ComponentStorage {
     capacity = INITIAL_CAPACITY;
 
+    // --- Component Mask (1=Transform, 2=Mesh, 4=Light, 8=Physics, 16=Script) ---
+    componentMask = new Uint32Array(this.capacity);
+
     // --- Transform (Decomposed - Local) ---
     posX = new Float32Array(this.capacity);
     posY = new Float32Array(this.capacity);
@@ -37,6 +40,10 @@ export class ComponentStorage {
     colorR = new Float32Array(this.capacity);
     colorG = new Float32Array(this.capacity);
     colorB = new Float32Array(this.capacity);
+
+    // --- Light ---
+    lightType = new Uint8Array(this.capacity); // 0=Directional, 1=Point, 2=Spot
+    lightIntensity = new Float32Array(this.capacity);
 
     // --- Physics ---
     mass = new Float32Array(this.capacity);
@@ -97,7 +104,6 @@ export class ComponentStorage {
         const cz = Math.cos(rz), sz_val = Math.sin(rz);
 
         // Rotation Matrix based on Order
-        // Default 0 = XYZ: R = Rz * Ry * Rx
         let r00, r01, r02, r10, r11, r12, r20, r21, r22;
         const order = this.rotationOrder[index];
 
@@ -161,6 +167,8 @@ export class ComponentStorage {
         const resizeUint8 = (old: Uint8Array) => { const n = new Uint8Array(newCapacity); n.set(old); return n; };
         const resizeUint32 = (old: Uint32Array) => { const n = new Uint32Array(newCapacity); n.set(old); return n; };
 
+        this.componentMask = resizeUint32(this.componentMask);
+
         this.posX = resizeFloat(this.posX); this.posY = resizeFloat(this.posY); this.posZ = resizeFloat(this.posZ);
         this.rotX = resizeFloat(this.rotX); this.rotY = resizeFloat(this.rotY); this.rotZ = resizeFloat(this.rotZ);
         this.scaleX = resizeFloat(this.scaleX); this.scaleY = resizeFloat(this.scaleY); this.scaleZ = resizeFloat(this.scaleZ);
@@ -182,6 +190,9 @@ export class ComponentStorage {
         this.colorG = resizeFloat(this.colorG);
         this.colorB = resizeFloat(this.colorB);
         
+        this.lightType = resizeUint8(this.lightType);
+        this.lightIntensity = resizeFloat(this.lightIntensity);
+
         this.mass = resizeFloat(this.mass);
         this.useGravity = resizeUint8(this.useGravity);
         this.physicsMaterialIndex = resizeInt32(this.physicsMaterialIndex);
@@ -203,17 +214,19 @@ export class ComponentStorage {
 
     snapshot() {
         return {
+            componentMask: new Uint32Array(this.componentMask),
             posX: new Float32Array(this.posX), posY: new Float32Array(this.posY), posZ: new Float32Array(this.posZ),
             rotX: new Float32Array(this.rotX), rotY: new Float32Array(this.rotY), rotZ: new Float32Array(this.rotZ),
             scaleX: new Float32Array(this.scaleX), scaleY: new Float32Array(this.scaleY), scaleZ: new Float32Array(this.scaleZ),
             rotationOrder: new Uint8Array(this.rotationOrder),
-            // World Matrix is cache, no need to save, will recompute on load
-            // Dirty flags can be reset to 1 on load
+            // World Matrix is cache
             meshType: new Int32Array(this.meshType),
             textureIndex: new Float32Array(this.textureIndex),
             materialIndex: new Int32Array(this.materialIndex),
             effectIndex: new Float32Array(this.effectIndex),
             colorR: new Float32Array(this.colorR), colorG: new Float32Array(this.colorG), colorB: new Float32Array(this.colorB),
+            lightType: new Uint8Array(this.lightType),
+            lightIntensity: new Float32Array(this.lightIntensity),
             mass: new Float32Array(this.mass),
             useGravity: new Uint8Array(this.useGravity),
             physicsMaterialIndex: new Int32Array(this.physicsMaterialIndex),
@@ -227,6 +240,8 @@ export class ComponentStorage {
     restore(snap: any) {
         if (snap.posX.length > this.capacity) this.resize(snap.posX.length);
         
+        if (snap.componentMask) this.componentMask.set(snap.componentMask);
+
         this.posX.set(snap.posX); this.posY.set(snap.posY); this.posZ.set(snap.posZ);
         this.rotX.set(snap.rotX); this.rotY.set(snap.rotY); this.rotZ.set(snap.rotZ);
         this.scaleX.set(snap.scaleX); this.scaleY.set(snap.scaleY); this.scaleZ.set(snap.scaleZ);
@@ -240,6 +255,9 @@ export class ComponentStorage {
         
         this.colorR.set(snap.colorR); this.colorG.set(snap.colorG); this.colorB.set(snap.colorB);
         
+        if (snap.lightType) this.lightType.set(snap.lightType);
+        if (snap.lightIntensity) this.lightIntensity.set(snap.lightIntensity);
+
         this.mass.set(snap.mass);
         this.useGravity.set(snap.useGravity);
         if(snap.physicsMaterialIndex) this.physicsMaterialIndex.set(snap.physicsMaterialIndex);
@@ -250,7 +268,7 @@ export class ComponentStorage {
         this.names = [...snap.names];
         this.ids = [...snap.ids];
         
-        // Mark all dirty on load to ensure world matrices are rebuilt
+        // Mark all dirty on load
         this.transformDirty.fill(1);
     }
 }

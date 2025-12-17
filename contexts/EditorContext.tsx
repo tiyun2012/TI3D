@@ -12,12 +12,28 @@ export interface UIConfiguration {
     resizeHandleLength: number;
 }
 
+export interface GridConfiguration {
+    visible: boolean;
+    size: number;     // Spacing of lines
+    opacity: number;  // Base alpha
+    fadeDistance: number;
+    color: string;
+}
+
 export const DEFAULT_UI_CONFIG: UIConfiguration = {
     windowBorderRadius: 8,
     resizeHandleThickness: 6,
     resizeHandleColor: '#4f80f8',
     resizeHandleOpacity: 0.2,
     resizeHandleLength: 1.0
+};
+
+export const DEFAULT_GRID_CONFIG: GridConfiguration = {
+    visible: true,
+    size: 10.0,
+    opacity: 0.3,
+    fadeDistance: 200.0,
+    color: '#808080'
 };
 
 export interface EditorContextType {
@@ -40,10 +56,15 @@ export interface EditorContextType {
   transformSpace: TransformSpace;
   setTransformSpace: (space: TransformSpace) => void;
   isPlaying: boolean;
+  
   gizmoConfig: GizmoConfiguration;
   setGizmoConfig: (config: GizmoConfiguration) => void;
+  
   uiConfig: UIConfiguration;
   setUiConfig: (config: UIConfiguration) => void;
+
+  gridConfig: GridConfiguration;
+  setGridConfig: (config: GridConfiguration) => void;
   
   // Asset Editing
   editingAssetId: string | null;

@@ -11,6 +11,18 @@ export const ROTATION_ORDER_ZY_MAP: Record<number, string> = {
     0: 'XYZ', 1: 'XZY', 2: 'YXZ', 3: 'YZX', 4: 'ZXY', 5: 'ZYX' 
 };
 
+export const LIGHT_TYPES: string[] = ['Directional', 'Point', 'Spot'];
+export const LIGHT_TYPE_MAP: Record<string, number> = { 'Directional': 0, 'Point': 1, 'Spot': 2 };
+export const LIGHT_TYPE_NAMES: Record<number, string> = { 0: 'Directional', 1: 'Point', 2: 'Spot' };
+
+export const COMPONENT_MASKS = {
+    TRANSFORM: 1,
+    MESH: 2,
+    LIGHT: 4,
+    PHYSICS: 8,
+    SCRIPT: 16
+};
+
 export const VIEW_MODES = [
     { id: 0, label: 'Lit', icon: 'Sun' },
     { id: 1, label: 'Normals', icon: 'BoxSelect' },

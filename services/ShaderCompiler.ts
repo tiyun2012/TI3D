@@ -93,15 +93,13 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     const fsInputConn = connections.find(c => c.toNode === outNode.id && c.toPin === 'rgb');
     const fsFinalAssignment = fsInputConn ? `vec3 finalColor = v_${fsInputConn.fromNode.replace(/-/g, '_')};` : 'vec3 finalColor = vec3(1.0, 0.0, 1.0);';
 
-    const vsSource = `
-    // --- Global Functions (VS) ---
-    ${vsData.functions.join('\n')}
+    // IMPORTANT: No indentation before separator comments to ensure exact string match for splitting
+    const vsSource = `// --- Global Functions (VS) ---
+${vsData.functions.join('\n')}
 
-    // --- Graph Body (VS) ---
-    ${vsData.body}
-    
-    ${vsFinalAssignment}
-    `;
+// --- Graph Body (VS) ---
+${vsData.body}
+${vsFinalAssignment}`;
 
     const fsSource = `#version 300 es
     precision mediump float;

@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import { engineInstance } from './services/engine';
 import { Entity, ToolType, TransformSpace, SelectionType } from './types';
-import { EditorContext, DEFAULT_UI_CONFIG, UIConfiguration } from './contexts/EditorContext';
+import { EditorContext, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG } from './contexts/EditorContext';
 import { assetManager } from './services/AssetManager';
 
 // Components
@@ -295,6 +295,7 @@ const App: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [gizmoConfig, setGizmoConfig] = useState<GizmoConfiguration>(DEFAULT_GIZMO_CONFIG);
   const [uiConfig, setUiConfig] = useState<UIConfiguration>(DEFAULT_UI_CONFIG);
+  const [gridConfig, setGridConfig] = useState<GridConfiguration>(DEFAULT_GRID_CONFIG);
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
 
   const refreshState = useCallback(() => {
@@ -346,6 +347,8 @@ const App: React.FC = () => {
       setGizmoConfig,
       uiConfig,
       setUiConfig,
+      gridConfig,
+      setGridConfig,
       editingAssetId,
       setEditingAssetId
     }}>

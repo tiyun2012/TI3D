@@ -4,7 +4,8 @@
 import { ComponentStorage } from '../ecs/ComponentStorage';
 import { SceneGraph } from '../SceneGraph';
 import { Mat4, Mat4Utils } from '../math';
-import { INITIAL_CAPACITY, MESH_TYPES } from '../constants';
+import { INITIAL_CAPACITY, MESH_TYPES, COMPONENT_MASKS } from '../constants';
+import { ComponentType } from '../../types';
 
 // --- CONFIGURATION INTERFACE ---
 export interface PostProcessConfig {
@@ -51,7 +52,8 @@ void main() {
     // These names must match what NodeRegistry uses. 
     vec3 v_pos_graph = a_position; 
     v_worldPos = (model * localPos).xyz;
-    v_normal = mat3(model) * a_normal;
+    v_normal = normalize(mat3(model) * a_normal);
+    v_objectPos = vec3(model[3][0], model[3][1], model[3][2]);
     v_uv = a_uv;
     v_color = a_color;
     v_isSelected = a_isSelected;
@@ -69,9 +71,9 @@ void main() {
     gl_Position = u_viewProjection * worldPos;
     
     // Update Varyings with final transformed data
-    v_normal = mat3(model) * a_normal; 
+    v_normal = normalize(mat3(model) * a_normal); 
     v_worldPos = worldPos.xyz;
-    v_objectPos = vec3(model[3][0], model[3][1], model[3][2]);
+    // v_objectPos remains the same (pivot)
 }`;
 
 const FS_DEFAULT_SOURCE = `#version 300 es
@@ -89,50 +91,91 @@ in highp float v_effectIndex;
 
 uniform sampler2DArray u_textures;
 uniform int u_renderMode; // 0=Lit, 1=Normals
+uniform vec3 u_cameraPos;
+
+// Lighting Uniforms
+uniform vec3 u_lightDir;
+uniform vec3 u_lightColor;
+uniform float u_lightIntensity;
 
 // MRT Output
 layout(location=0) out vec4 outColor;
 layout(location=1) out vec4 outData; // R=EffectID
 
+// --- STYLIZED LIGHTING FUNCTION ---
+vec3 getStylizedLighting(vec3 normal, vec3 viewDir, vec3 albedo) {
+    // 1. Directional Light (N dot L)
+    // We reverse lightDir because typically lightDir points FROM source TO world, 
+    // but dot product needs vectors pointing OUT from surface.
+    // However, u_lightDir here is extracted from the Forward vector of the object,
+    // which usually points IN the direction of the light rays.
+    // Standard Diffuse: dot(N, -LightDir) if LightDir is ray direction.
+    float NdotL = dot(normal, -u_lightDir);
+    
+    // 2. Toon Ramp (Hard edge)
+    // Smoothstep creates a soft band instead of a hard pixel line
+    // 0.0 to 0.05 creates a sharp transition at the terminator
+    float lightBand = smoothstep(0.0, 0.05, NdotL);
+    
+    // 3. Shadow Color (Ambient)
+    // Cool blue-ish shadow for artistic contrast
+    vec3 shadowColor = vec3(0.05, 0.05, 0.15); 
+    
+    // 4. Rim Light (Fresnel)
+    // Highlights edges to make object pop from background
+    float NdotV = 1.0 - max(dot(normal, viewDir), 0.0);
+    // Rim only appears on lit side or slightly wrapping? 
+    // Let's make it appear everywhere but masked slightly by light for style
+    float rim = pow(NdotV, 4.0);
+    float rimIntensity = 0.5;
+    
+    // Compose
+    vec3 litColor = albedo * u_lightColor * u_lightIntensity;
+    vec3 finalLight = mix(shadowColor * albedo, litColor, lightBand);
+    
+    // Add Rim (White/Light Color)
+    finalLight += vec3(rim) * rimIntensity * u_lightColor;
+
+    return finalLight;
+}
+
 void main() {
     vec3 normal = normalize(v_normal);
-    vec3 lightDir = normalize(vec3(0.5, 0.8, 0.5));
+    vec3 viewDir = normalize(u_cameraPos - v_worldPos);
     
-    // Default fallback color
-    vec4 texColor = vec4(1.0, 1.0, 1.0, 1.0);
+    // Default texture sampling
+    vec4 texColor = texture(u_textures, vec3(v_uv, v_texIndex));
+    vec3 albedo = v_color * texColor.rgb;
     
-    // v_texIndex: 0=White, 1=Grid, 2=Noise, 3=Brick
-    texColor = texture(u_textures, vec3(v_uv, v_texIndex));
-    
-    float diff = max(dot(normal, lightDir), 0.0);
-    vec3 ambient = vec3(0.3);
-    
-    vec3 finalAlbedo = v_color * texColor.rgb;
-    vec3 result = finalAlbedo * (ambient + diff); 
-    
-    // Render Mode Overrides
-    if (u_renderMode == 1) {
-        result = normal * 0.5 + 0.5; // Visualise Normals
+    vec3 result = vec3(0.0);
+
+    if (u_renderMode == 0) { // LIT
+        result = getStylizedLighting(normal, viewDir, albedo);
+    } else if (u_renderMode == 1) { // NORMALS
+        result = normal * 0.5 + 0.5;
+    } else if (u_renderMode == 2) { // UNLIT
+        result = albedo;
+    } else if (u_renderMode == 3) { // WIREFRAME (Simulated via barycentric in geo shader usually, here just color)
+        result = vec3(0.0, 1.0, 0.0); 
+    } else {
+        result = albedo;
     }
     
     if (v_isSelected > 0.5) {
-        result = mix(result, vec3(1.0, 1.0, 0.0), 0.3);
+        // Selection Highlight
+        result = mix(result, vec3(1.0, 0.8, 0.2), 0.3);
     }
     
     outColor = vec4(result, 1.0);
-    // Write Effect Index to Red channel of attachment 1. 
-    // Requires Floating Point Texture to store values > 1.0
     outData = vec4(v_effectIndex, 0.0, 0.0, 1.0);
 }`;
 
-// --- POST PROCESS SHADERS ---
-
 const PP_VS = `#version 300 es
-layout(location=0) in vec2 a_pos;
+layout(location=0) in vec2 a_position;
 out vec2 v_uv;
 void main() {
-    v_uv = a_pos * 0.5 + 0.5;
-    gl_Position = vec4(a_pos, 0.0, 1.0);
+    v_uv = a_position * 0.5 + 0.5;
+    gl_Position = vec4(a_position, 0.0, 1.0);
 }`;
 
 const PP_FS = `#version 300 es
@@ -351,6 +394,12 @@ export class WebGLRenderer {
     triangleCount = 0;
     showGrid = true;
     
+    // Grid Props
+    gridOpacity = 0.3;
+    gridSize = 10.0;
+    gridFadeDistance = 200.0;
+    gridColor = [0.5, 0.5, 0.5];
+    
     // 0 = Lit (Default), 1 = Normals (Debug)
     renderMode: number = 0;
     
@@ -417,9 +466,16 @@ export class WebGLRenderer {
         const gridFS = `#version 300 es
         precision mediump float;
         in vec3 v_worldPos;
-        layout(location=0) out vec4 outColor;
-        // No second output needed if we switch drawBuffers to [BACK] or [COLOR_ATTACHMENT0] only
         
+        // OUTPUTS MUST MATCH THE MRT CONFIGURATION (2 Buffers)
+        layout(location=0) out vec4 outColor;
+        layout(location=1) out vec4 outData; 
+        
+        uniform float u_opacity;
+        uniform float u_gridSize;
+        uniform float u_fadeDist;
+        uniform vec3 u_gridColor;
+
         void main() {
             vec2 coord = v_worldPos.xz;
             vec2 derivative = fwidth(coord);
@@ -427,8 +483,8 @@ export class WebGLRenderer {
             float line = min(grid.x, grid.y);
             float alpha = 1.0 - min(line, 1.0);
             
-            // Major grid lines (every 10 units)
-            vec2 grid10 = abs(fract(coord * 0.1 - 0.5) - 0.5) / (derivative * 0.1);
+            // Major grid lines
+            vec2 grid10 = abs(fract(coord * (1.0/u_gridSize) - 0.5) - 0.5) / (derivative * (1.0/u_gridSize));
             float line10 = min(grid10.x, grid10.y);
             float alpha10 = 1.0 - min(line10, 1.0);
             
@@ -438,14 +494,14 @@ export class WebGLRenderer {
 
             // Fade out distance
             float dist = length(v_worldPos.xz);
-            float fade = max(0.0, 1.0 - dist / 200.0);
+            float fade = max(0.0, 1.0 - dist / u_fadeDist);
 
-            vec3 color = vec3(0.5); // Default Grey
-            float finalAlpha = alpha * 0.3; // Base dim grid
+            vec3 color = u_gridColor; 
+            float finalAlpha = alpha * u_opacity; // Base dim grid
 
             if (alpha10 > 0.0) {
-                finalAlpha = max(finalAlpha, alpha10 * 0.5);
-                color = vec3(0.7); // Brighter major lines
+                finalAlpha = max(finalAlpha, alpha10 * (u_opacity * 1.5));
+                color = mix(color, vec3(1.0), 0.2); // Brighter major lines
             }
 
             if (xAxis > 0.0) {
@@ -459,6 +515,7 @@ export class WebGLRenderer {
 
             if (finalAlpha * fade <= 0.05) discard;
             outColor = vec4(color, finalAlpha * fade);
+            outData = vec4(0.0); // No effect ID for grid
         }`;
         
         this.gridProgram = this.createProgram(gl, gridVS, gridFS);
@@ -466,17 +523,14 @@ export class WebGLRenderer {
 
     initPostProcess(gl: WebGL2RenderingContext) {
         // Initialize with 1x1 to ensure FBO is complete immediately. 
-        // Real size comes in `resize()` later.
         this.fboWidth = 1;
         this.fboHeight = 1;
 
-        // 1. Create Framebuffer Resources
         this.fbo = gl.createFramebuffer();
         this.fboTexture = gl.createTexture();
-        this.fboDataTexture = gl.createTexture(); // MRT
+        this.fboDataTexture = gl.createTexture(); 
         this.depthRenderbuffer = gl.createRenderbuffer();
 
-        // Main Color Texture (Standard 8-bit RGBA)
         gl.bindTexture(gl.TEXTURE_2D, this.fboTexture);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -484,8 +538,6 @@ export class WebGLRenderer {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.fboWidth, this.fboHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 
-        // Data Texture (RGBA32F - Float Texture to support ID > 1.0)
-        // Using Nearest filter to strictly preserve integer IDs
         gl.bindTexture(gl.TEXTURE_2D, this.fboDataTexture);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
@@ -493,133 +545,139 @@ export class WebGLRenderer {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.fboWidth, this.fboHeight, 0, gl.RGBA, gl.FLOAT, null);
         
-        // Depth Renderbuffer
         gl.bindRenderbuffer(gl.RENDERBUFFER, this.depthRenderbuffer);
         gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, this.fboWidth, this.fboHeight);
         
-        // Attach to FBO
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.fboTexture, 0);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.fboDataTexture, 0); 
         gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.depthRenderbuffer);
-        
-        // Tell WebGL to draw to both attachments
         gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
-        
-        // Verify Status
-        const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-        if (status !== gl.FRAMEBUFFER_COMPLETE) {
-            console.error("FBO Incomplete at init:", status);
-        }
         
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-        // 2. Create Fullscreen Quad
         this.quadVAO = gl.createVertexArray();
         const quadVBO = gl.createBuffer();
         gl.bindVertexArray(this.quadVAO);
         gl.bindBuffer(gl.ARRAY_BUFFER, quadVBO);
-        const verts = new Float32Array([ -1, -1,  1, -1,  -1, 1,  1, 1 ]);
+        const verts = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
         gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
         gl.enableVertexAttribArray(0);
         gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
         gl.bindVertexArray(null);
 
-        // 3. Compile Post Process Shader
         this.ppProgram = this.createProgram(gl, PP_VS, PP_FS);
     }
 
-    resize(w: number, h: number) { 
-        if(!this.gl) return;
-        const gl = this.gl;
+    createProgram(gl: WebGL2RenderingContext, vsSrc: string, fsSrc: string): WebGLProgram | null {
+        const vs = gl.createShader(gl.VERTEX_SHADER);
+        const fs = gl.createShader(gl.FRAGMENT_SHADER);
+        const prog = gl.createProgram();
         
-        // Ensure valid positive dimensions
-        w = Math.max(1, w);
-        h = Math.max(1, h);
+        if (!vs || !fs || !prog) return null;
 
-        // Update Canvas size
-        if (gl.canvas.width !== w || gl.canvas.height !== h) {
-            gl.canvas.width = w;
-            gl.canvas.height = h;
+        gl.shaderSource(vs, vsSrc);
+        gl.compileShader(vs);
+        if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) {
+            console.error("VS Error:", gl.getShaderInfoLog(vs));
+            return null;
+        }
+
+        gl.shaderSource(fs, fsSrc);
+        gl.compileShader(fs);
+        if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
+            console.error("FS Error:", gl.getShaderInfoLog(fs));
+            return null;
+        }
+
+        gl.attachShader(prog, vs);
+        gl.attachShader(prog, fs);
+        gl.linkProgram(prog);
+        
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+            console.error("Link Error:", gl.getProgramInfoLog(prog));
+            return null;
         }
         
-        // Resize FBO attachments if dimensions changed
-        if (this.fboWidth !== w || this.fboHeight !== h) {
-            this.fboWidth = w;
-            this.fboHeight = h;
+        return prog;
+    }
 
-            if (this.fboTexture && this.fboDataTexture && this.depthRenderbuffer && this.fbo) {
-                // Resize Color
-                gl.bindTexture(gl.TEXTURE_2D, this.fboTexture);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-                
-                // Resize Data (Keep using Float32)
-                gl.bindTexture(gl.TEXTURE_2D, this.fboDataTexture);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, null);
-                
-                gl.bindRenderbuffer(gl.RENDERBUFFER, this.depthRenderbuffer);
-                gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
-                
-                // Re-validate just in case
-                gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
-                const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-                if (status !== gl.FRAMEBUFFER_COMPLETE) console.error("FBO Incomplete after resize", status);
-                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-            }
+    initTextureArray(gl: WebGL2RenderingContext) {
+        this.textureArray = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray);
+        gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, 1, 1, 4); // 4 layers
+        
+        // White
+        const white = new Uint8Array([255, 255, 255, 255]);
+        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, white);
+        
+        // Grid pattern (Layer 1)
+        const grid = new Uint8Array([200, 200, 200, 255]); 
+        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 1, 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, grid);
+        
+        // Noise (Layer 2)
+        // ... (placeholder)
+        
+        // Brick (Layer 3)
+        // ... (placeholder)
+        
+        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    }
+
+    resize(width: number, height: number) {
+        if (!this.gl) return;
+        this.gl.viewport(0, 0, width, height);
+        
+        if (this.fboWidth !== width || this.fboHeight !== height) {
+            this.fboWidth = width;
+            this.fboHeight = height;
+            
+            // Resize Textures
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.fboTexture);
+            this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, width, height, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
+            
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.fboDataTexture);
+            this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA32F, width, height, 0, this.gl.RGBA, this.gl.FLOAT, null);
+            
+            this.gl.bindRenderbuffer(this.gl.RENDERBUFFER, this.depthRenderbuffer);
+            this.gl.renderbufferStorage(this.gl.RENDERBUFFER, this.gl.DEPTH_COMPONENT16, width, height);
         }
     }
 
     updateMaterial(materialId: number, shaderData: { vs: string, fs: string } | string) {
         if (!this.gl) return;
-        
-        // If empty, delete
         if (!shaderData) {
             const p = this.materialPrograms.get(materialId);
             if (p) this.gl.deleteProgram(p);
             this.materialPrograms.delete(materialId);
             return;
         }
-
-        let vsSource = '';
-        let fsSource = '';
-
+        let vsSource = '', fsSource = '';
         if (typeof shaderData === 'string') {
-            // Legacy/Fallback for just Fragment shader
             vsSource = VS_TEMPLATE.replace('// %VERTEX_LOGIC%', '').replace('// %VERTEX_BODY%', '');
             fsSource = shaderData;
         } else {
-            // Full Compilation
             const parts = shaderData.vs.split('// --- Graph Body (VS) ---');
-            const functions = parts[0] || '';
-            const body = parts[1] || '';
-            
-            vsSource = VS_TEMPLATE.replace('// %VERTEX_LOGIC%', functions).replace('// %VERTEX_BODY%', body);
+            vsSource = VS_TEMPLATE.replace('// %VERTEX_LOGIC%', parts[0]||'').replace('// %VERTEX_BODY%', parts[1]||'');
             fsSource = shaderData.fs;
         }
-
         const program = this.createProgram(this.gl, vsSource, fsSource);
         if (program) {
-            // Delete old if exists
             const old = this.materialPrograms.get(materialId);
             if (old) this.gl.deleteProgram(old);
-            
             this.materialPrograms.set(materialId, program);
         }
     }
 
     ensureCapacity(count: number) {
-        // Stride is now 22 floats per instance (added effectIndex)
         const stride = 22;
         const requiredSize = count * stride;
-
         this.meshes.forEach(mesh => {
             if (mesh.cpuBuffer.length < requiredSize) {
-                // Grow buffer (1.5x)
                 const newSize = Math.max(requiredSize, mesh.cpuBuffer.length * 1.5);
                 const newBuffer = new Float32Array(newSize);
                 mesh.cpuBuffer = newBuffer;
-                
-                // Resize GPU buffer
                 const gl = this.gl;
                 if (gl) {
                     gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
@@ -629,391 +687,325 @@ export class WebGLRenderer {
         });
     }
 
-    initTextureArray(gl: WebGL2RenderingContext) {
-        const width = 64, height = 64, depth = 4;
-        const texture = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D_ARRAY, texture);
-        gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, width, height, depth);
-
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.REPEAT);
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.REPEAT);
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-
-        // 0: White
-        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, width, height, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(width*height*4).fill(255));
-
-        // 1: Grid
-        const gridData = new Uint8Array(width * height * 4);
-        for(let i=0; i<width*height; i++) {
-            const x = i % width, y = Math.floor(i / width);
-            const isLine = (x % 8 === 0) || (y % 8 === 0);
-            const c = isLine ? 180 : 255;
-            gridData.set([c,c,c,255], i*4);
-        }
-        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 1, width, height, 1, gl.RGBA, gl.UNSIGNED_BYTE, gridData);
-
-        // 2: Noise
-        const noiseData = new Uint8Array(width * height * 4);
-        for(let i=0; i<width*height*4; i++) noiseData[i] = Math.random() * 255;
-        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 2, width, height, 1, gl.RGBA, gl.UNSIGNED_BYTE, noiseData);
-
-        // 3: Brick
-        const brickData = new Uint8Array(width * height * 4);
-        for(let i=0; i<width*height; i++) {
-             const x = i % width, y = Math.floor(i / width);
-             const row = Math.floor(y / 16), offset = (row % 2) * 16;
-             const isMortar = (y % 16 < 2) || ((x + offset) % 32 < 2);
-             brickData.set(isMortar ? [200,200,200,255] : [180,80,60,255], i*4);
-        }
-        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 3, width, height, 1, gl.RGBA, gl.UNSIGNED_BYTE, brickData);
-
-        this.textureArray = texture;
-    }
-
-    registerMesh(typeId: number, data: { vertices: Float32Array | number[], normals: Float32Array | number[], uvs: Float32Array | number[], indices: Uint16Array | number[] }) {
+    registerMesh(id: number, geometry: { vertices: Float32Array|number[], normals: Float32Array|number[], uvs: Float32Array|number[], indices: Uint16Array|number[] }) {
         if (!this.gl) return;
         const gl = this.gl;
-
+        
         const vao = gl.createVertexArray();
+        if(!vao) return;
         gl.bindVertexArray(vao);
 
-        const createBuffer = (type: number, src: any) => {
+        const createBuffer = (data: Float32Array | Uint16Array, type: number) => {
             const buf = gl.createBuffer();
             gl.bindBuffer(type, buf);
-            const typedData = (type === gl.ELEMENT_ARRAY_BUFFER && !(src instanceof Uint16Array)) ? new Uint16Array(src) 
-                            : (type === gl.ARRAY_BUFFER && !(src instanceof Float32Array)) ? new Float32Array(src) 
-                            : src;
-            gl.bufferData(type, typedData, gl.STATIC_DRAW);
+            gl.bufferData(type, data, gl.STATIC_DRAW);
             return buf;
         };
 
-        createBuffer(gl.ARRAY_BUFFER, data.vertices);
-        gl.enableVertexAttribArray(0);
-        gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+        const v = geometry.vertices instanceof Float32Array ? geometry.vertices : new Float32Array(geometry.vertices);
+        const n = geometry.normals instanceof Float32Array ? geometry.normals : new Float32Array(geometry.normals);
+        const u = geometry.uvs instanceof Float32Array ? geometry.uvs : new Float32Array(geometry.uvs);
+        const i = geometry.indices instanceof Uint16Array ? geometry.indices : new Uint16Array(geometry.indices);
 
-        createBuffer(gl.ARRAY_BUFFER, data.normals);
-        gl.enableVertexAttribArray(1);
-        gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+        const vBuf = createBuffer(v, gl.ARRAY_BUFFER);
+        gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
 
-        createBuffer(gl.ARRAY_BUFFER, data.uvs);
-        gl.enableVertexAttribArray(8);
-        gl.vertexAttribPointer(8, 2, gl.FLOAT, false, 0, 0);
-
-        createBuffer(gl.ELEMENT_ARRAY_BUFFER, data.indices);
-
-        // Instance Buffer Setup
-        // Increased stride to 22 floats
-        const initialCapacity = INITIAL_CAPACITY * 22; 
-        const instBuf = gl.createBuffer();
-        const cpuBuffer = new Float32Array(initialCapacity);
+        const nBuf = createBuffer(n, gl.ARRAY_BUFFER);
+        gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
         
-        gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
-        gl.bufferData(gl.ARRAY_BUFFER, cpuBuffer.byteLength, gl.DYNAMIC_DRAW);
-        
+        const uBuf = createBuffer(u, gl.ARRAY_BUFFER);
+        gl.enableVertexAttribArray(8); gl.vertexAttribPointer(8, 2, gl.FLOAT, false, 0, 0); // Loc 8 for UV
+
+        const iBuf = createBuffer(i, gl.ELEMENT_ARRAY_BUFFER);
+
+        // Instance Buffer (Matrix + Color + Selection + TexIndex + EffectIndex)
+        // Matrix (4x4 = 16 floats), Color (3 floats), Sel (1), Tex (1), Eff (1) = 22 floats per instance
         const stride = 22 * 4; 
-        for (let i = 0; i < 4; i++) {
-            const loc = 2 + i;
-            gl.enableVertexAttribArray(loc);
-            gl.vertexAttribPointer(loc, 4, gl.FLOAT, false, stride, i * 16);
-            gl.vertexAttribDivisor(loc, 1);
+        const instanceBuffer = gl.createBuffer()!;
+        gl.bindBuffer(gl.ARRAY_BUFFER, instanceBuffer);
+        // Allocation for max instances happens in render loop if needed, or initial fixed size
+        gl.bufferData(gl.ARRAY_BUFFER, INITIAL_CAPACITY * stride, gl.DYNAMIC_DRAW);
+
+        // Matrix (Loc 2,3,4,5)
+        for(let k=0; k<4; k++) {
+            gl.enableVertexAttribArray(2+k);
+            gl.vertexAttribPointer(2+k, 4, gl.FLOAT, false, stride, k*16);
+            gl.vertexAttribDivisor(2+k, 1);
         }
         
-        // Color
+        // Color (Loc 6)
         gl.enableVertexAttribArray(6);
-        gl.vertexAttribPointer(6, 3, gl.FLOAT, false, stride, 16 * 4);
+        gl.vertexAttribPointer(6, 3, gl.FLOAT, false, stride, 16*4);
         gl.vertexAttribDivisor(6, 1);
-        
-        // isSelected
+
+        // Selection (Loc 7)
         gl.enableVertexAttribArray(7);
-        gl.vertexAttribPointer(7, 1, gl.FLOAT, false, stride, 19 * 4);
+        gl.vertexAttribPointer(7, 1, gl.FLOAT, false, stride, 19*4);
         gl.vertexAttribDivisor(7, 1);
         
-        // texIndex
+        // Texture Index (Loc 9)
         gl.enableVertexAttribArray(9);
-        gl.vertexAttribPointer(9, 1, gl.FLOAT, false, stride, 20 * 4);
+        gl.vertexAttribPointer(9, 1, gl.FLOAT, false, stride, 20*4);
         gl.vertexAttribDivisor(9, 1);
 
-        // effectIndex (Loc 10)
+        // Effect Index (Loc 10)
         gl.enableVertexAttribArray(10);
-        gl.vertexAttribPointer(10, 1, gl.FLOAT, false, stride, 21 * 4);
+        gl.vertexAttribPointer(10, 1, gl.FLOAT, false, stride, 21*4);
         gl.vertexAttribDivisor(10, 1);
 
         gl.bindVertexArray(null);
-        gl.bindBuffer(gl.ARRAY_BUFFER, null); 
 
-        this.meshes.set(typeId, { 
-            vao: vao!, 
-            count: data.indices.length, 
-            instanceBuffer: instBuf!,
-            cpuBuffer,
+        this.meshes.set(id, {
+            vao,
+            count: i.length,
+            instanceBuffer,
+            cpuBuffer: new Float32Array(INITIAL_CAPACITY * 22),
             instanceCount: 0
         });
     }
 
-    createCubeData() {
-        const v = [ -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,0.5,0.5, -0.5,0.5,0.5,  0.5,-0.5,-0.5, -0.5,-0.5,-0.5, -0.5,0.5,-0.5, 0.5,0.5,-0.5,  -0.5,0.5,0.5, 0.5,0.5,0.5, 0.5,0.5,-0.5, -0.5,0.5,-0.5,  -0.5,-0.5,-0.5, 0.5,-0.5,-0.5, 0.5,-0.5,0.5, -0.5,-0.5,0.5,  0.5,-0.5,0.5, 0.5,-0.5,-0.5, 0.5,0.5,-0.5, 0.5,0.5,0.5,  -0.5,-0.5,-0.5, -0.5,-0.5,0.5, -0.5,0.5,0.5, -0.5,0.5,-0.5 ];
-        const n = [ 0,0,1, 0,0,1, 0,0,1, 0,0,1,  0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,  0,1,0, 0,1,0, 0,1,0, 0,1,0,  0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0,  1,0,0, 1,0,0, 1,0,0, 1,0,0,  -1,0,0, -1,0,0, -1,0,0, -1,0,0 ];
-        const uv = [ 0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1,  0,0, 1,0, 1,1, 0,1 ];
-        const i = [ 0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11, 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23 ];
-        return { vertices: new Float32Array(v), normals: new Float32Array(n), uvs: new Float32Array(uv), indices: new Uint16Array(i) };
+    render(
+        store: ComponentStorage,
+        count: number,
+        selectedIndices: Set<number>,
+        viewProjection: Float32Array,
+        width: number,
+        height: number,
+        cameraPos: { x: number, y: number, z: number }
+    ) {
+        if (!this.gl || !this.defaultProgram) return;
+        const gl = this.gl;
+
+        // 1. Prepare Framebuffer
+        if (this.ppConfig.enabled && this.fbo) {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
+        } else {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        }
+
+        gl.viewport(0, 0, width, height);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        this.meshes.forEach(mesh => mesh.instanceCount = 0);
+        this.ensureCapacity(count);
+
+        this.buckets.clear();
+        
+        const { isActive, meshType, materialIndex } = store;
+        
+        for (let i = 0; i < count; i++) {
+            if (isActive[i] && meshType[i] !== 0) { 
+                const matId = materialIndex[i];
+                const mType = meshType[i];
+                const key = (matId << 16) | mType;
+                
+                if (!this.buckets.has(key)) this.buckets.set(key, []);
+                this.buckets.get(key)!.push(i);
+            }
+        }
+
+        this.drawCalls = 0;
+        this.triangleCount = 0;
+
+        const time = performance.now() / 1000;
+
+        this.buckets.forEach((indices, key) => {
+            const matId = key >> 16;
+            const mType = key & 0xFFFF;
+            
+            const mesh = this.meshes.get(mType);
+            if (!mesh) return;
+
+            let program = this.defaultProgram!;
+            if (matId > 0 && this.materialPrograms.has(matId)) {
+                program = this.materialPrograms.get(matId)!;
+            }
+            
+            gl.useProgram(program);
+            
+            const uVP = gl.getUniformLocation(program, 'u_viewProjection');
+            if (uVP) gl.uniformMatrix4fv(uVP, false, viewProjection);
+            
+            const uTime = gl.getUniformLocation(program, 'u_time');
+            if (uTime) gl.uniform1f(uTime, time);
+            
+            const uCam = gl.getUniformLocation(program, 'u_cameraPos');
+            if (uCam) gl.uniform3f(uCam, cameraPos.x, cameraPos.y, cameraPos.z);
+            
+            const uMode = gl.getUniformLocation(program, 'u_renderMode');
+            if (uMode) gl.uniform1i(uMode, this.renderMode);
+
+            if (this.textureArray) {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray);
+                const uTex = gl.getUniformLocation(program, 'u_textures');
+                if (uTex) gl.uniform1i(uTex, 0);
+            }
+            
+            let lightDir = [0.5, 1.0, 0.5];
+            let lightColor = [1, 1, 1];
+            let lightIntensity = 1.0;
+            
+            for(let i=0; i<count; i++) {
+                if(store.isActive[i] && (store.componentMask[i] & COMPONENT_MASKS.LIGHT)) {
+                    lightColor = [store.colorR[i], store.colorG[i], store.colorB[i]];
+                    lightIntensity = store.lightIntensity[i];
+                    break; 
+                }
+            }
+            
+            const len = Math.sqrt(lightDir[0]**2 + lightDir[1]**2 + lightDir[2]**2);
+            lightDir = [lightDir[0]/len, lightDir[1]/len, lightDir[2]/len];
+
+            const uLDir = gl.getUniformLocation(program, 'u_lightDir');
+            if (uLDir) gl.uniform3fv(uLDir, lightDir);
+            
+            const uLCol = gl.getUniformLocation(program, 'u_lightColor');
+            if (uLCol) gl.uniform3fv(uLCol, lightColor);
+            
+            const uLInt = gl.getUniformLocation(program, 'u_lightIntensity');
+            if (uLInt) gl.uniform1f(uLInt, lightIntensity);
+
+            let instanceCount = 0;
+            const stride = 22;
+            const buffer = mesh.cpuBuffer;
+            
+            for (let i = 0; i < indices.length; i++) {
+                const idx = indices[i];
+                const offset = instanceCount * stride;
+                
+                const wmIndex = idx * 16;
+                for (let k = 0; k < 16; k++) {
+                    buffer[offset + k] = store.worldMatrix[wmIndex + k];
+                }
+                
+                buffer[offset + 16] = store.colorR[idx];
+                buffer[offset + 17] = store.colorG[idx];
+                buffer[offset + 18] = store.colorB[idx];
+                
+                buffer[offset + 19] = selectedIndices.has(idx) ? 1.0 : 0.0;
+                buffer[offset + 20] = store.textureIndex[idx];
+                buffer[offset + 21] = store.effectIndex[idx];
+                
+                instanceCount++;
+            }
+
+            if (instanceCount > 0) {
+                gl.bindVertexArray(mesh.vao);
+                gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
+                gl.bufferSubData(gl.ARRAY_BUFFER, 0, buffer.subarray(0, instanceCount * stride));
+                
+                gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, instanceCount);
+                gl.bindVertexArray(null);
+                
+                this.drawCalls++;
+                this.triangleCount += (mesh.count / 3) * instanceCount;
+            }
+        });
+
+        if (this.showGrid && this.gridProgram) {
+            gl.enable(gl.BLEND);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            gl.depthMask(false); 
+            
+            gl.useProgram(this.gridProgram);
+            
+            const uVP = gl.getUniformLocation(this.gridProgram, 'u_viewProjection');
+            if (uVP) gl.uniformMatrix4fv(uVP, false, viewProjection);
+            
+            const uOp = gl.getUniformLocation(this.gridProgram, 'u_opacity');
+            if (uOp) gl.uniform1f(uOp, this.gridOpacity);
+            
+            const uSz = gl.getUniformLocation(this.gridProgram, 'u_gridSize');
+            if (uSz) gl.uniform1f(uSz, this.gridSize);
+            
+            const uFD = gl.getUniformLocation(this.gridProgram, 'u_fadeDist');
+            if (uFD) gl.uniform1f(uFD, this.gridFadeDistance);
+            
+            const uCol = gl.getUniformLocation(this.gridProgram, 'u_gridColor');
+            if (uCol) gl.uniform3fv(uCol, this.gridColor);
+
+            const planeMesh = this.meshes.get(MESH_TYPES['Plane']);
+            if (planeMesh) {
+                gl.bindVertexArray(planeMesh.vao);
+                gl.drawElements(gl.TRIANGLES, planeMesh.count, gl.UNSIGNED_SHORT, 0);
+                gl.bindVertexArray(null);
+            }
+            
+            gl.depthMask(true);
+            gl.disable(gl.BLEND);
+        }
+
+        if (this.ppConfig.enabled && this.ppProgram && this.quadVAO && this.fbo) {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.viewport(0, 0, width, height);
+            gl.clear(gl.COLOR_BUFFER_BIT); 
+            
+            gl.useProgram(this.ppProgram);
+            
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, this.fboTexture); 
+            const uScene = gl.getUniformLocation(this.ppProgram, 'u_scene');
+            if (uScene) gl.uniform1i(uScene, 0);
+            
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, this.fboDataTexture); 
+            const uData = gl.getUniformLocation(this.ppProgram, 'u_data');
+            if (uData) gl.uniform1i(uData, 1);
+            
+            const uRes = gl.getUniformLocation(this.ppProgram, 'u_resolution');
+            if (uRes) gl.uniform2f(uRes, width, height);
+            
+            const uTimePP = gl.getUniformLocation(this.ppProgram, 'u_time');
+            if (uTimePP) gl.uniform1f(uTimePP, time);
+            
+            const setUniform = (name: string, val: number) => {
+                const loc = gl.getUniformLocation(this.ppProgram!, name);
+                if (loc) gl.uniform1f(loc, val);
+            }
+            setUniform('u_enabled', 1.0);
+            setUniform('u_vignetteStrength', this.ppConfig.vignetteStrength);
+            setUniform('u_aberrationStrength', this.ppConfig.aberrationStrength);
+            setUniform('u_toneMapping', this.ppConfig.toneMapping ? 1.0 : 0.0);
+
+            gl.bindVertexArray(this.quadVAO);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            gl.bindVertexArray(null);
+        }
     }
 
-    createPlaneData() {
-        const v = [ -0.5,0,0.5, 0.5,0,0.5, 0.5,0,-0.5, -0.5,0,-0.5 ];
-        const n = [ 0,1,0, 0,1,0, 0,1,0, 0,1,0 ];
-        const uv = [ 0,0, 10,0, 10,10, 0,10 ];
-        const i = [ 0,1,2, 0,2,3 ];
-        return { vertices: new Float32Array(v), normals: new Float32Array(n), uvs: new Float32Array(uv), indices: new Uint16Array(i) };
+    createCubeData() {
+        const v = [ -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,0.5,0.5, -0.5,0.5,0.5, 0.5,-0.5,-0.5, -0.5,-0.5,-0.5, -0.5,0.5,-0.5, 0.5,0.5,-0.5, -0.5,0.5,0.5, 0.5,0.5,0.5, 0.5,0.5,-0.5, -0.5,0.5,-0.5, -0.5,-0.5,-0.5, 0.5,-0.5,-0.5, 0.5,-0.5,0.5, -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,-0.5,-0.5, 0.5,0.5,-0.5, 0.5,0.5,0.5, -0.5,-0.5,-0.5, -0.5,-0.5,0.5, -0.5,0.5,0.5, -0.5,0.5,-0.5 ];
+        const n = [ 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0 ];
+        const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
+        const idx = [ 0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11, 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23 ];
+        return { vertices: new Float32Array(v), normals: new Float32Array(n), uvs: new Float32Array(u), indices: new Uint16Array(idx) };
     }
 
     createSphereData(latBands: number, longBands: number) {
-        const v = [], n = [], u = [], idx = [];
+        const radius = 0.5; const v=[], n=[], u=[], idx=[];
         for (let lat = 0; lat <= latBands; lat++) {
-            const theta = lat * Math.PI / latBands;
-            const sinTheta = Math.sin(theta), cosTheta = Math.cos(theta);
+            const theta = lat * Math.PI / latBands; const sinTheta = Math.sin(theta); const cosTheta = Math.cos(theta);
             for (let lon = 0; lon <= longBands; lon++) {
-                const phi = lon * 2 * Math.PI / longBands;
-                const sinPhi = Math.sin(phi), cosPhi = Math.cos(phi);
-                const x = cosPhi * sinTheta, y = cosTheta, z = sinPhi * sinTheta;
-                n.push(x, y, z);
-                u.push(1 - (lon / longBands), 1 - (lat / latBands));
-                v.push(x * 0.5, y * 0.5, z * 0.5);
+                const phi = lon * 2 * Math.PI / longBands; const sinPhi = Math.sin(phi); const cosPhi = Math.cos(phi);
+                const x = cosPhi * sinTheta; const y = cosTheta; const z = sinPhi * sinTheta;
+                n.push(x, y, z); u.push(1 - (lon / longBands), 1 - (lat / latBands)); v.push(x * radius, y * radius, z * radius);
             }
         }
         for (let lat = 0; lat < latBands; lat++) {
             for (let lon = 0; lon < longBands; lon++) {
-                const first = (lat * (longBands + 1)) + lon;
-                const second = first + longBands + 1;
+                const first = (lat * (longBands + 1)) + lon; const second = first + longBands + 1;
                 idx.push(first, second, first + 1, second, second + 1, first + 1);
             }
         }
         return { vertices: new Float32Array(v), normals: new Float32Array(n), uvs: new Float32Array(u), indices: new Uint16Array(idx) };
     }
 
-    createProgram(gl: WebGL2RenderingContext, vsSource: string, fsSource: string) {
-        const vs = gl.createShader(gl.VERTEX_SHADER);
-        if (!vs) return null;
-        gl.shaderSource(vs, vsSource);
-        gl.compileShader(vs);
-        if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) {
-            console.error("VS Log:", gl.getShaderInfoLog(vs));
-            return null;
-        }
-
-        const fs = gl.createShader(gl.FRAGMENT_SHADER);
-        if (!fs) return null;
-        gl.shaderSource(fs, fsSource);
-        gl.compileShader(fs);
-        if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
-            console.error("FS Log:", gl.getShaderInfoLog(fs));
-            return null;
-        }
-
-        const p = gl.createProgram();
-        if (!p) return null;
-        gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
-        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
-            console.error("Link Log:", gl.getProgramInfoLog(p));
-            return null;
-        }
-        return p;
-    }
-
-    render(store: ComponentStorage, count: number, selectedIndices: Set<number>, viewProjection: Mat4, width: number, height: number, cameraPos: {x:number,y:number,z:number}) {
-        if (!this.gl || !this.defaultProgram || !this.fbo) return;
-        const gl = this.gl;
-        
-        // 1. Pass: Render Scene to Framebuffer
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
-        gl.viewport(0, 0, this.fboWidth, this.fboHeight); // Use FBO dims
-        
-        // Ensure both attachments are active for the opaque pass
-        gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
-
-        // Clear Color and Data buffers
-        gl.clearBufferfv(gl.COLOR, 0, [0.1, 0.1, 0.1, 1.0]); 
-        gl.clearBufferfv(gl.COLOR, 1, [0.0, 0.0, 0.0, 0.0]); 
-        gl.clear(gl.DEPTH_BUFFER_BIT);
-        
-        // --- 1. Bucket Sort Entities by Material ---
-        // Reuse map arrays to prevent GC
-        for (const arr of this.buckets.values()) arr.length = 0;
-        
-        for (let i = 0; i < count; i++) {
-            if (!store.isActive[i]) continue;
-            // Grid toggling is now handled in the dedicated grid pass, not here.
-
-            const matId = store.materialIndex[i];
-            // Use 0 as default key for no material
-            const key = matId || 0;
-            
-            if (!this.buckets.has(key)) this.buckets.set(key, []);
-            this.buckets.get(key)!.push(i);
-        }
-
-        // Ensure capacity
-        this.ensureCapacity(store.capacity);
-        this.drawCalls = 0; 
-        this.triangleCount = 0;
-
-        // --- 2. Render Each Material Group ---
-        this.buckets.forEach((indices, matId) => {
-            if (indices.length === 0) return;
-
-            // Pick Program
-            let program = this.defaultProgram!;
-            if (matId !== 0 && this.materialPrograms.has(matId)) {
-                program = this.materialPrograms.get(matId)!;
-            }
-            
-            gl.useProgram(program);
-            
-            // Set Common Uniforms
-            const uVP = gl.getUniformLocation(program, 'u_viewProjection');
-            if (uVP) gl.uniformMatrix4fv(uVP, false, viewProjection);
-            
-            const uTime = gl.getUniformLocation(program, 'u_time');
-            if (uTime) gl.uniform1f(uTime, performance.now() / 1000);
-
-            // Pass Render Mode
-            const uRenderMode = gl.getUniformLocation(program, 'u_renderMode');
-            if (uRenderMode) gl.uniform1i(uRenderMode, this.renderMode);
-
-            // Note: Use actual drawing resolution, which matches FBO size here
-            const uRes = gl.getUniformLocation(program, 'u_resolution');
-            if (uRes) gl.uniform2f(uRes, this.fboWidth, this.fboHeight);
-            
-            const uCam = gl.getUniformLocation(program, 'u_cameraPos');
-            if (uCam) gl.uniform3f(uCam, cameraPos.x, cameraPos.y, cameraPos.z);
-
-            const uTex = gl.getUniformLocation(program, 'u_textures');
-            if (uTex) {
-                if (this.textureArray) {
-                    gl.activeTexture(gl.TEXTURE0);
-                    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray);
-                    gl.uniform1i(uTex, 0);
-                }
-            }
-
-            // Reset mesh batch counts
-            this.meshes.forEach(mesh => mesh.instanceCount = 0);
-
-            // Fill Mesh Buffers for this Material
-            for (const index of indices) {
-                const type = store.meshType[index];
-                const mesh = this.meshes.get(type);
-                
-                if (mesh) {
-                    // Stride is 22 floats
-                    const ptr = mesh.instanceCount * 22;
-                    const start = index * 16;
-                    const buf = mesh.cpuBuffer;
-
-                    buf.set(store.worldMatrix.subarray(start, start + 16), ptr);
-                    
-                    buf[ptr + 16] = store.colorR[index];
-                    buf[ptr + 17] = store.colorG[index];
-                    buf[ptr + 18] = store.colorB[index];
-                    buf[ptr + 19] = selectedIndices.has(index) ? 1.0 : 0.0;
-                    buf[ptr + 20] = store.textureIndex[index];
-                    buf[ptr + 21] = store.effectIndex[index];
-                    
-                    mesh.instanceCount++;
-                }
-            }
-
-            // Draw Batches for this Material
-            this.meshes.forEach(mesh => {
-                if (mesh.instanceCount > 0) {
-                    gl.bindVertexArray(mesh.vao);
-                    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
-                    
-                    gl.bufferSubData(gl.ARRAY_BUFFER, 0, mesh.cpuBuffer.subarray(0, mesh.instanceCount * 22));
-                    
-                    gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, mesh.instanceCount);
-                    
-                    this.drawCalls++;
-                    this.triangleCount += (mesh.count / 3) * mesh.instanceCount;
-                }
-            });
-        });
-
-        // --- 3. Draw Infinite Grid (Transparent Pass) ---
-        if (this.showGrid && this.gridProgram) {
-            gl.bindVertexArray(null); // Safety clear
-            
-            // FIX: Set drawBuffers to ONLY Color0.
-            // The Grid Shader only has 1 output (outColor).
-            // Trying to draw with 2 active drawBuffers and 1 shader output triggers GL_INVALID_OPERATION.
-            gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
-
-            gl.enable(gl.BLEND);
-            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-            gl.depthMask(false); // Don't write to depth, but test against opaque objects
-            gl.useProgram(this.gridProgram);
-            
-            const uVP = gl.getUniformLocation(this.gridProgram, 'u_viewProjection');
-            if (uVP) gl.uniformMatrix4fv(uVP, false, viewProjection);
-            
-            // Reuse Plane VAO (MESH_TYPES['Plane'] = 3)
-            const planeMesh = this.meshes.get(3);
-            if (planeMesh) {
-                gl.bindVertexArray(planeMesh.vao);
-                gl.drawElements(gl.TRIANGLES, planeMesh.count, gl.UNSIGNED_SHORT, 0);
-            }
-            gl.depthMask(true);
-            gl.disable(gl.BLEND);
-            
-            // Restore MRT state for next frame/pass
-            gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
-        }
-
-        gl.bindVertexArray(null);
-        
-        // 4. Pass: Post Processing (Composite to Screen)
-        if (this.ppProgram && this.quadVAO && this.fboTexture && this.fboDataTexture) {
-            gl.bindFramebuffer(gl.FRAMEBUFFER, null); // Back to Screen
-            gl.viewport(0, 0, width, height); // Canvas size
-            gl.clearColor(0,0,0,1);
-            gl.clear(gl.COLOR_BUFFER_BIT); 
-            
-            gl.useProgram(this.ppProgram);
-            
-            // Pass Toggle State
-            const uEnabled = gl.getUniformLocation(this.ppProgram, 'u_enabled');
-            if (uEnabled) gl.uniform1f(uEnabled, this.ppConfig.enabled ? 1.0 : 0.0);
-            
-            const uTime = gl.getUniformLocation(this.ppProgram, 'u_time');
-            if (uTime) gl.uniform1f(uTime, performance.now() / 1000);
-            
-            const uVig = gl.getUniformLocation(this.ppProgram, 'u_vignetteStrength');
-            if (uVig) gl.uniform1f(uVig, this.ppConfig.vignetteStrength);
-            
-            const uAberration = gl.getUniformLocation(this.ppProgram, 'u_aberrationStrength');
-            if (uAberration) gl.uniform1f(uAberration, this.ppConfig.aberrationStrength);
-            
-            const uTone = gl.getUniformLocation(this.ppProgram, 'u_toneMapping');
-            if (uTone) gl.uniform1f(uTone, this.ppConfig.toneMapping ? 1.0 : 0.0);
-            
-            // Bind the FBO texture
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, this.fboTexture);
-            const uScene = gl.getUniformLocation(this.ppProgram, 'u_scene');
-            if (uScene) gl.uniform1i(uScene, 0);
-            
-            // Bind Data Texture
-            gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, this.fboDataTexture);
-            const uData = gl.getUniformLocation(this.ppProgram, 'u_data');
-            if (uData) gl.uniform1i(uData, 1);
-            
-            const uRes = gl.getUniformLocation(this.ppProgram, 'u_resolution');
-            if (uRes) gl.uniform2f(uRes, width, height);
-
-            gl.bindVertexArray(this.quadVAO);
-            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-            gl.bindVertexArray(null);
-        }
+    createPlaneData() {
+        const v = [-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5];
+        const n = [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0];
+        const u = [0, 0, 1, 0, 1, 1, 0, 1];
+        const idx = [0, 1, 2, 0, 2, 3];
+        return { vertices: new Float32Array(v), normals: new Float32Array(n), uvs: new Float32Array(u), indices: new Uint16Array(idx) };
     }
 }
