@@ -211,6 +211,14 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                                     aria-label="Grid Color"
                                 />
                             </div>
+                            
+                            <div className="flex items-center justify-between bg-input-bg p-3 rounded border border-white/5 col-span-2">
+                                <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Exclude from Post Process</span>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" className="sr-only peer" checked={gridConfig.excludeFromPostProcess} onChange={(e) => updateGrid('excludeFromPostProcess', e.target.checked)} />
+                                    <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
+                                </label>
+                            </div>
                         </div>
                     )}
                 </div>

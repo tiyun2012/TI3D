@@ -18,6 +18,7 @@ export interface GridConfiguration {
     opacity: number;  // Base alpha
     fadeDistance: number;
     color: string;
+    excludeFromPostProcess: boolean; // New option
 }
 
 export const DEFAULT_UI_CONFIG: UIConfiguration = {
@@ -33,7 +34,8 @@ export const DEFAULT_GRID_CONFIG: GridConfiguration = {
     size: 10.0,
     opacity: 0.3,
     fadeDistance: 200.0,
-    color: '#808080'
+    color: '#808080',
+    excludeFromPostProcess: false
 };
 
 export interface EditorContextType {

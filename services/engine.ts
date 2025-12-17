@@ -127,6 +127,7 @@ export class Ti3DEngine {
       this.renderer.gridOpacity = config.opacity;
       this.renderer.gridSize = config.size;
       this.renderer.gridFadeDistance = config.fadeDistance;
+      this.renderer.gridExcludePP = config.excludeFromPostProcess;
       
       // Convert Hex to Vec3
       const hex = config.color.replace('#', '');

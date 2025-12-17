@@ -399,6 +399,7 @@ export class WebGLRenderer {
     gridSize = 10.0;
     gridFadeDistance = 200.0;
     gridColor = [0.5, 0.5, 0.5];
+    gridExcludePP = false; // New Option
     
     // 0 = Lit (Default), 1 = Normals (Debug)
     renderMode: number = 0;
@@ -627,6 +628,14 @@ export class WebGLRenderer {
 
     resize(width: number, height: number) {
         if (!this.gl) return;
+        
+        // Ensure the canvas buffer matches the display size
+        const canvas = this.gl.canvas as HTMLCanvasElement;
+        if (canvas.width !== width || canvas.height !== height) {
+            canvas.width = width;
+            canvas.height = height;
+        }
+
         this.gl.viewport(0, 0, width, height);
         
         if (this.fboWidth !== width || this.fboHeight !== height) {
@@ -776,8 +785,10 @@ export class WebGLRenderer {
         if (!this.gl || !this.defaultProgram) return;
         const gl = this.gl;
 
-        // 1. Prepare Framebuffer
-        if (this.ppConfig.enabled && this.fbo) {
+        const ppEnabled = this.ppConfig.enabled;
+
+        // 1. Prepare Framebuffer & Clear
+        if (ppEnabled && this.fbo) {
             gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
         } else {
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -786,6 +797,7 @@ export class WebGLRenderer {
         gl.viewport(0, 0, width, height);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
+        // --- RENDER SCENE ---
         this.meshes.forEach(mesh => mesh.instanceCount = 0);
         this.ensureCapacity(count);
 
@@ -903,43 +915,18 @@ export class WebGLRenderer {
             }
         });
 
-        if (this.showGrid && this.gridProgram) {
-            gl.enable(gl.BLEND);
-            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-            gl.depthMask(false); 
-            
-            gl.useProgram(this.gridProgram);
-            
-            const uVP = gl.getUniformLocation(this.gridProgram, 'u_viewProjection');
-            if (uVP) gl.uniformMatrix4fv(uVP, false, viewProjection);
-            
-            const uOp = gl.getUniformLocation(this.gridProgram, 'u_opacity');
-            if (uOp) gl.uniform1f(uOp, this.gridOpacity);
-            
-            const uSz = gl.getUniformLocation(this.gridProgram, 'u_gridSize');
-            if (uSz) gl.uniform1f(uSz, this.gridSize);
-            
-            const uFD = gl.getUniformLocation(this.gridProgram, 'u_fadeDist');
-            if (uFD) gl.uniform1f(uFD, this.gridFadeDistance);
-            
-            const uCol = gl.getUniformLocation(this.gridProgram, 'u_gridColor');
-            if (uCol) gl.uniform3fv(uCol, this.gridColor);
-
-            const planeMesh = this.meshes.get(MESH_TYPES['Plane']);
-            if (planeMesh) {
-                gl.bindVertexArray(planeMesh.vao);
-                gl.drawElements(gl.TRIANGLES, planeMesh.count, gl.UNSIGNED_SHORT, 0);
-                gl.bindVertexArray(null);
-            }
-            
-            gl.depthMask(true);
-            gl.disable(gl.BLEND);
+        // --- RENDER GRID (Mode A: Included in PP) ---
+        if (this.showGrid && !this.gridExcludePP && this.gridProgram) {
+            this.renderGrid(gl, viewProjection);
         }
 
-        if (this.ppConfig.enabled && this.ppProgram && this.quadVAO && this.fbo) {
+        // --- POST PROCESS PASS ---
+        if (ppEnabled && this.ppProgram && this.quadVAO && this.fbo) {
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             gl.viewport(0, 0, width, height);
             gl.clear(gl.COLOR_BUFFER_BIT); 
+            // NOTE: Usually we don't clear depth here if we want to keep scene depth,
+            // but the PP pass is a full screen quad.
             
             gl.useProgram(this.ppProgram);
             
@@ -972,6 +959,60 @@ export class WebGLRenderer {
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
             gl.bindVertexArray(null);
         }
+
+        // --- RENDER GRID (Mode B: Excluded from PP) ---
+        if (this.showGrid && this.gridExcludePP && this.gridProgram) {
+            // If PP was active, we are currently bound to Default FB.
+            // But we need the depth buffer from the FBO to handle occlusion correctly.
+            if (ppEnabled && this.fbo) {
+                // Copy depth from FBO to Default FB
+                gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.fbo);
+                gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+                gl.blitFramebuffer(
+                    0, 0, width, height,
+                    0, 0, width, height,
+                    gl.DEPTH_BUFFER_BIT,
+                    gl.NEAREST
+                );
+                // Bind Default FB again for drawing
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            }
+            
+            this.renderGrid(gl, viewProjection);
+        }
+    }
+
+    private renderGrid(gl: WebGL2RenderingContext, viewProjection: Float32Array) {
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(false); 
+        
+        gl.useProgram(this.gridProgram);
+        
+        const uVP = gl.getUniformLocation(this.gridProgram!, 'u_viewProjection');
+        if (uVP) gl.uniformMatrix4fv(uVP, false, viewProjection);
+        
+        const uOp = gl.getUniformLocation(this.gridProgram!, 'u_opacity');
+        if (uOp) gl.uniform1f(uOp, this.gridOpacity);
+        
+        const uSz = gl.getUniformLocation(this.gridProgram!, 'u_gridSize');
+        if (uSz) gl.uniform1f(uSz, this.gridSize);
+        
+        const uFD = gl.getUniformLocation(this.gridProgram!, 'u_fadeDist');
+        if (uFD) gl.uniform1f(uFD, this.gridFadeDistance);
+        
+        const uCol = gl.getUniformLocation(this.gridProgram!, 'u_gridColor');
+        if (uCol) gl.uniform3fv(uCol, this.gridColor);
+
+        const planeMesh = this.meshes.get(MESH_TYPES['Plane']);
+        if (planeMesh) {
+            gl.bindVertexArray(planeMesh.vao);
+            gl.drawElements(gl.TRIANGLES, planeMesh.count, gl.UNSIGNED_SHORT, 0);
+            gl.bindVertexArray(null);
+        }
+        
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
     }
 
     createCubeData() {
