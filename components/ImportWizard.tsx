@@ -13,7 +13,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
     const [file, setFile] = useState<File | null>(null);
     const [importType, setImportType] = useState<'MESH' | 'SKELETAL_MESH'>('MESH');
     const [settings, setSettings] = useState({
-        scale: 1.0,
+        scale: 0.01, // Default to 0.01 (Maya/FBX standard to Meter)
         convertAxis: true,
         generateNormals: true,
     });
@@ -33,6 +33,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
             if (name.includes('skel') || name.includes('anim') || name.includes('character')) {
                 setImportType('SKELETAL_MESH');
             }
+            // Auto-detect Blender (typically 1.0) vs Maya (typically 0.01)
+            // For now, let user toggle manually
         }
     };
 
@@ -47,12 +49,9 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
             
             await new Promise(r => setTimeout(r, 100)); 
             
-            // Fix: Await the import because parsing is now async (for decompression)
-            const asset = await assetManager.importFile(file.name, content, importType);
+            const asset = await assetManager.importFile(file.name, content, importType, settings.scale);
             
-            // CRITICAL: Immediately register with GPU so viewport can display it
             engineInstance.registerAssetWithGPU(asset);
-            
             setProgress(100);
             
             setTimeout(() => {
@@ -74,7 +73,6 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
             reader.onerror = (e) => reject(e);
             
             const ext = file.name.toLowerCase();
-            // FBX and GLB require ArrayBuffer for binary detection/parsing
             if (ext.endsWith('.obj')) {
                 reader.readAsText(file);
             } else {
@@ -148,16 +146,38 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
                 </div>
 
                 <div className="space-y-3 pt-2 border-t border-white/5">
-                    <div className="flex items-center justify-between">
-                        <span className="text-text-secondary">Uniform Scale</span>
-                        <input 
-                            type="number" 
-                            value={settings.scale}
-                            onChange={(e) => setSettings({...settings, scale: parseFloat(e.target.value)})}
-                            className="w-20 bg-input-bg rounded px-2 py-1 text-white border border-transparent focus:border-accent outline-none text-right"
-                            disabled={isImporting}
-                            aria-label="Uniform Scale"
-                        />
+                    <div className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-2">Import Settings</div>
+                    
+                    <div className="flex items-center justify-between gap-4">
+                        <div className="flex flex-col">
+                            <span className="text-white">Uniform Scale</span>
+                            <span className="text-[9px] text-text-secondary">Maya/FBX usually needs 0.01</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button 
+                                className={`px-2 py-0.5 rounded text-[9px] border ${settings.scale === 0.01 ? 'bg-accent text-white border-accent' : 'border-white/20 text-text-secondary'}`}
+                                onClick={() => setSettings({...settings, scale: 0.01})}
+                                title="Maya Scale (CM to M)"
+                            >
+                                Maya
+                            </button>
+                            <button 
+                                className={`px-2 py-0.5 rounded text-[9px] border ${settings.scale === 1.0 ? 'bg-accent text-white border-accent' : 'border-white/20 text-text-secondary'}`}
+                                onClick={() => setSettings({...settings, scale: 1.0})}
+                                title="Standard Scale (1:1)"
+                            >
+                                1:1
+                            </button>
+                            <input 
+                                type="number" 
+                                value={settings.scale}
+                                step="0.001"
+                                onChange={(e) => setSettings({...settings, scale: parseFloat(e.target.value)})}
+                                className="w-20 bg-input-bg rounded px-2 py-1 text-white border border-transparent focus:border-accent outline-none text-right"
+                                disabled={isImporting}
+                                aria-label="Custom Scale"
+                            />
+                        </div>
                     </div>
                     
                     <label className="flex items-center justify-between cursor-pointer group">

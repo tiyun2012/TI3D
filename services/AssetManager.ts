@@ -177,7 +177,7 @@ class AssetManagerService {
         return asset;
     }
 
-    async importFile(fileName: string, content: string | ArrayBuffer, type: 'MESH' | 'SKELETAL_MESH'): Promise<Asset> {
+    async importFile(fileName: string, content: string | ArrayBuffer, type: 'MESH' | 'SKELETAL_MESH', importScale: number = 1.0): Promise<Asset> {
         const id = crypto.randomUUID();
         const name = fileName.split('.')[0] || 'Imported_Mesh';
         let geometry = { v: [] as number[], n: [] as number[], u: [] as number[], idx: [] as number[] };
@@ -185,11 +185,11 @@ class AssetManagerService {
         const ext = fileName.toLowerCase();
 
         if (ext.endsWith('.obj')) {
-            geometry = this.parseOBJ(typeof content === 'string' ? content : new TextDecoder().decode(content));
+            geometry = this.parseOBJ(typeof content === 'string' ? content : new TextDecoder().decode(content), importScale);
         } else if (ext.endsWith('.glb')) {
             geometry = this.parseGLB(content instanceof ArrayBuffer ? content : new ArrayBuffer(0));
         } else if (ext.endsWith('.fbx')) {
-            geometry = await this.parseFBX(content);
+            geometry = await this.parseFBX(content, importScale);
         } else {
             console.warn("Unsupported format. Using fallback cylinder.");
             geometry = this.generateCylinder(24);
@@ -228,7 +228,7 @@ class AssetManagerService {
         return asset;
     }
 
-    private parseOBJ(text: string) {
+    private parseOBJ(text: string, scale: number) {
         const positions: number[][] = [];
         const normals: number[][] = [];
         const uvs: number[][] = [];
@@ -244,7 +244,7 @@ class AssetManagerService {
             if (line.startsWith('#') || line.length === 0) continue;
             const parts = line.split(/\s+/);
             const type = parts[0];
-            if (type === 'v') positions.push([parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3])]);
+            if (type === 'v') positions.push([parseFloat(parts[1]) * scale, parseFloat(parts[2]) * scale, parseFloat(parts[3]) * scale]);
             else if (type === 'vn') normals.push([parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3])]);
             else if (type === 'vt') uvs.push([parseFloat(parts[1]), parseFloat(parts[2])]);
             else if (type === 'f') {
@@ -278,20 +278,19 @@ class AssetManagerService {
         return { v: finalV, n: finalN, u: finalU, idx: finalIdx };
     }
 
-    private async parseFBX(content: string | ArrayBuffer) {
+    private async parseFBX(content: string | ArrayBuffer, importScale: number) {
         if (content instanceof ArrayBuffer) {
             const header = new Uint8Array(content.slice(0, 18));
             const headerStr = new TextDecoder().decode(header);
             if (headerStr.includes("Kaydara FBX Binary")) {
-                return await this.parseFBXBinary(content);
+                return await this.parseFBXBinary(content, importScale);
             }
-            return this.parseFBXASCII(new TextDecoder().decode(content));
+            return this.parseFBXASCII(new TextDecoder().decode(content), importScale);
         }
-        return this.parseFBXASCII(content);
+        return this.parseFBXASCII(content, importScale);
     }
 
     private async inflate(data: Uint8Array): Promise<Uint8Array> {
-        // High-performance browser native decompression
         const ds = new DecompressionStream('deflate');
         const writer = ds.writable.getWriter();
         writer.write(data);
@@ -313,8 +312,8 @@ class AssetManagerService {
         return result;
     }
 
-    private async parseFBXBinary(buffer: ArrayBuffer) {
-        console.log("Starting Binary FBX Import (Async/Decompression Ready)...");
+    private async parseFBXBinary(buffer: ArrayBuffer, importScale: number) {
+        console.log(`Starting Binary FBX Import with scale: ${importScale}`);
         const view = new DataView(buffer);
         let offset = 27; 
         const version = view.getUint32(23, true);
@@ -322,7 +321,6 @@ class AssetManagerService {
         let finalV: number[] = [];
         let finalIdx: number[] = [];
 
-        // Helper to read property arrays (handles compression)
         const readArrayProp = async (typeCode: string) => {
             const arrLen = view.getUint32(offset, true);
             const encoding = view.getUint32(offset + 4, true);
@@ -335,7 +333,6 @@ class AssetManagerService {
                 data = new Uint8Array(buffer.slice(offset, offset + byteLen));
                 offset += byteLen;
             } else {
-                // Handle FBX Compression using browser native DecompressionStream
                 const compressed = new Uint8Array(buffer.slice(offset, offset + compLen));
                 data = await this.inflate(compressed);
                 offset += compLen;
@@ -349,51 +346,39 @@ class AssetManagerService {
 
         const readNode = async (): Promise<any> => {
             if (offset >= buffer.byteLength) return null;
-
             const is75 = version >= 7500;
             const endOffset = is75 ? Number(view.getBigUint64(offset, true)) : view.getUint32(offset, true);
             const numProps = is75 ? Number(view.getBigUint64(offset + 8, true)) : view.getUint32(offset + 4, true);
             const nameLen = view.getUint8(offset + (is75 ? 24 : 12));
             const headerSize = (is75 ? 25 : 13);
-            
-            if (endOffset === 0) {
-                offset += headerSize;
-                return null;
-            }
-
+            if (endOffset === 0) { offset += headerSize; return null; }
             const name = new TextDecoder().decode(new Uint8Array(buffer, offset + headerSize, nameLen));
             offset += headerSize + nameLen;
-
             const props: any[] = [];
             for (let i = 0; i < numProps; i++) {
                 const typeCode = String.fromCharCode(view.getUint8(offset));
                 offset++;
-                if ('dfilb'.includes(typeCode)) {
-                    props.push(await readArrayProp(typeCode));
-                } else if (typeCode === 'D') { props.push(view.getFloat64(offset, true)); offset += 8; }
+                if ('dfilb'.includes(typeCode)) props.push(await readArrayProp(typeCode));
+                else if (typeCode === 'D') { props.push(view.getFloat64(offset, true)); offset += 8; }
                 else if (typeCode === 'F') { props.push(view.getFloat32(offset, true)); offset += 4; }
                 else if (typeCode === 'I') { props.push(view.getInt32(offset, true)); offset += 4; }
                 else if (typeCode === 'L') { props.push(Number(view.getBigInt64(offset, true))); offset += 8; }
                 else if (typeCode === 'Y') { props.push(view.getInt16(offset, true)); offset += 2; }
                 else if (typeCode === 'C') { props.push(view.getUint8(offset) !== 0); offset += 1; }
                 else if (typeCode === 'S' || typeCode === 'R') {
-                    const len = view.getUint32(offset, true);
-                    offset += 4;
+                    const len = view.getUint32(offset, true); offset += 4;
                     const d = new Uint8Array(buffer, offset, len);
                     props.push(typeCode === 'S' ? new TextDecoder().decode(d) : d);
                     offset += len;
                 }
             }
-
             while (offset < endOffset) {
                 const child = await readNode();
                 if (!child) break;
                 if (child.name === 'Vertices') finalV = child.props[0];
                 if (child.name === 'PolygonVertexIndex') finalIdx = child.props[0];
-                // Support multiple meshes by grabbing the first one with data if we haven't yet
                 if (finalV.length > 0 && finalIdx.length > 0) break;
             }
-            
             offset = endOffset;
             return { name, props };
         };
@@ -403,12 +388,10 @@ class AssetManagerService {
                 const node = await readNode();
                 if (!node) break;
             }
-        } catch (e) {
-            console.error("Binary FBX Parse Failed", e);
-        }
+        } catch (e) { console.error("Binary FBX Parse Failed", e); }
 
         if (finalV.length > 0) {
-            const scaledV = finalV.map(v => v * 0.01);
+            const scaledV = finalV.map(v => v * importScale);
             const triangulatedIdx: number[] = [];
             let polygon: number[] = [];
             for (let rawIdx of finalIdx) {
@@ -425,12 +408,10 @@ class AssetManagerService {
             this.generateMissingNormals(scaledV, finalN, triangulatedIdx);
             return { v: scaledV, n: finalN, u: finalU, idx: triangulatedIdx };
         }
-
-        console.error("Binary FBX: Still no valid mesh geometry found. The file structure might be unsupported.");
         return this.generateCylinder(24);
     }
 
-    private parseFBXASCII(text: string) {
+    private parseFBXASCII(text: string, importScale: number) {
         const finalV: number[] = [];
         const finalN: number[] = [];
         const finalU: number[] = [];
@@ -439,7 +420,7 @@ class AssetManagerService {
             const vMatch = text.match(/Vertices:\s*\*(\d+)\s*{([^}]*)}/);
             const iMatch = text.match(/PolygonVertexIndex:\s*\*(\d+)\s*{([^}]*)}/);
             if (vMatch && iMatch) {
-                const verts = vMatch[2].split(',').map(s => parseFloat(s.trim()) * 0.01);
+                const verts = vMatch[2].split(',').map(s => parseFloat(s.trim()) * importScale);
                 const indices = iMatch[2].split(',').map(s => parseInt(s.trim()));
                 let polygon: number[] = [];
                 for (let rawIdx of indices) {

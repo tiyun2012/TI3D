@@ -14,8 +14,9 @@ export interface UIConfiguration {
 
 export interface GridConfiguration {
     visible: boolean;
-    size: number;     // Spacing of lines
-    opacity: number;  // Base alpha
+    size: number;            // Spacing of main lines (meters)
+    subdivisions: number;    // Number of cells inside a main line
+    opacity: number;         // Base alpha
     fadeDistance: number;
     color: string;
     excludeFromPostProcess: boolean;
@@ -38,9 +39,10 @@ export const DEFAULT_UI_CONFIG: UIConfiguration = {
 
 export const DEFAULT_GRID_CONFIG: GridConfiguration = {
     visible: true,
-    size: 10.0,
-    opacity: 0.3,
-    fadeDistance: 200.0,
+    size: 1.0,         // 1 Meter primary lines
+    subdivisions: 10,  // 10cm sub-divisions (Maya style)
+    opacity: 0.25,
+    fadeDistance: 300.0,
     color: '#808080',
     excludeFromPostProcess: false
 };
