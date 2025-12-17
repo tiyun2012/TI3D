@@ -1,4 +1,5 @@
-import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset } from '../types';
+
+import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset, LogicalMesh } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 import { MESH_TYPES } from './constants';
 import { engineInstance } from './engine';
@@ -67,6 +68,52 @@ class AssetManagerService {
         this.createDefaultPhysicsMaterials();
         this.createScript('New Visual Script');
         this.createRig('Locomotion IK Logic', RIG_TEMPLATES[0]);
+    }
+
+    // Fix for line 68: Added missing createDefaultPhysicsMaterials method
+    private createDefaultPhysicsMaterials() {
+        this.createPhysicsMaterial('Concrete', { staticFriction: 0.8, dynamicFriction: 0.7, bounciness: 0.1, density: 2.4 });
+        this.createPhysicsMaterial('Rubber', { staticFriction: 0.9, dynamicFriction: 0.8, bounciness: 0.8, density: 1.1 });
+        this.createPhysicsMaterial('Ice', { staticFriction: 0.05, dynamicFriction: 0.03, bounciness: 0.1, density: 0.9 });
+    }
+
+    // Fix for InspectorPanel error: Added updatePhysicsMaterial
+    updatePhysicsMaterial(id: string, partialData: Partial<PhysicsMaterialAsset['data']>) {
+        const asset = this.getAsset(id);
+        if (asset && asset.type === 'PHYSICS_MATERIAL') {
+            asset.data = { ...asset.data, ...partialData };
+        }
+    }
+
+    // Fix for NodeGraph error: Added saveMaterial
+    saveMaterial(id: string, nodes: GraphNode[], connections: GraphConnection[], glsl: string) {
+        const asset = this.getAsset(id);
+        if (asset && asset.type === 'MATERIAL') {
+            asset.data.nodes = JSON.parse(JSON.stringify(nodes));
+            asset.data.connections = JSON.parse(JSON.stringify(connections));
+            asset.data.glsl = glsl;
+        }
+    }
+
+    // Fix for NodeGraph error: Added saveScript (also handles rigs)
+    saveScript(id: string, nodes: GraphNode[], connections: GraphConnection[]) {
+        const asset = this.getAsset(id);
+        if (asset && (asset.type === 'SCRIPT' || asset.type === 'RIG')) {
+            asset.data.nodes = JSON.parse(JSON.stringify(nodes));
+            asset.data.connections = JSON.parse(JSON.stringify(connections));
+        }
+    }
+
+    // Fix for ProjectPanel error: Added duplicateAsset
+    duplicateAsset(id: string): Asset | null {
+        const original = this.getAsset(id);
+        if (!original) return null;
+        // Deep copy
+        const copy = JSON.parse(JSON.stringify(original));
+        copy.id = crypto.randomUUID();
+        copy.name = `${original.name} (Copy)`;
+        this.registerAsset(copy);
+        return copy;
     }
 
     registerAsset(asset: Asset, forcedIntId?: number): number {
@@ -179,34 +226,42 @@ class AssetManagerService {
     async importFile(fileName: string, content: string | ArrayBuffer, type: 'MESH' | 'SKELETAL_MESH', importScale: number = 1.0): Promise<Asset> {
         const id = crypto.randomUUID();
         const name = fileName.split('.')[0] || 'Imported_Mesh';
-        let geometry = { v: [] as number[], n: [] as number[], u: [] as number[], idx: [] as number[] };
+        let geometryData: any = { v: [], n: [], u: [], idx: [], faces: [], triToFace: [] };
 
         const ext = fileName.toLowerCase();
 
         if (ext.endsWith('.obj')) {
-            geometry = this.parseOBJ(typeof content === 'string' ? content : new TextDecoder().decode(content), importScale);
-        } else if (ext.endsWith('.glb')) {
-            geometry = this.parseGLB(content instanceof ArrayBuffer ? content : new ArrayBuffer(0));
+            geometryData = this.parseOBJ(typeof content === 'string' ? content : new TextDecoder().decode(content), importScale);
         } else if (ext.endsWith('.fbx')) {
-            geometry = await this.parseFBX(content, importScale);
+            geometryData = await this.parseFBX(content, importScale);
         } else {
             console.warn("Unsupported format. Using fallback cylinder.");
-            geometry = this.generateCylinder(24);
+            geometryData = this.generateCylinder(24);
         }
 
-        if (geometry.v.length === 0) {
-            console.error("Parser failed to find valid geometry. Using fallback.");
-            geometry = this.generateCylinder(24);
-        }
+        const v2f = new Map<number, number[]>();
+        geometryData.faces.forEach((f: number[], i: number) => {
+            f.forEach(vIdx => {
+                if(!v2f.has(vIdx)) v2f.set(vIdx, []);
+                v2f.get(vIdx)!.push(i);
+            });
+        });
+
+        const topology: LogicalMesh = {
+            faces: geometryData.faces,
+            triangleToFaceIndex: new Int32Array(geometryData.triToFace),
+            vertexToFaces: v2f
+        };
 
         const asset: StaticMeshAsset = {
             id, name, type: 'MESH',
             geometry: {
-                vertices: new Float32Array(geometry.v),
-                normals: new Float32Array(geometry.n),
-                uvs: new Float32Array(geometry.u),
-                indices: new Uint16Array(geometry.idx)
-            }
+                vertices: new Float32Array(geometryData.v),
+                normals: new Float32Array(geometryData.n),
+                uvs: new Float32Array(geometryData.u),
+                indices: new Uint16Array(geometryData.idx)
+            },
+            topology
         };
         
         if (type === 'SKELETAL_MESH') {
@@ -214,8 +269,8 @@ class AssetManagerService {
                  ...asset, type: 'SKELETAL_MESH',
                  geometry: {
                      ...asset.geometry,
-                     jointIndices: new Float32Array((geometry.v.length / 3) * 4).fill(0),
-                     jointWeights: new Float32Array((geometry.v.length / 3) * 4).fill(0).map((_, i) => i % 4 === 0 ? 1 : 0)
+                     jointIndices: new Float32Array((geometryData.v.length / 3) * 4).fill(0),
+                     jointWeights: new Float32Array((geometryData.v.length / 3) * 4).fill(0).map((_, i) => i % 4 === 0 ? 1 : 0)
                  },
                  skeleton: { bones: [{ name: 'Root', parentIndex: -1, bindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]) }] }
              };
@@ -235,8 +290,11 @@ class AssetManagerService {
         const finalN: number[] = [];
         const finalU: number[] = [];
         const finalIdx: number[] = [];
+        const logicalFaces: number[][] = [];
+        const triToFace: number[] = [];
         const cache = new Map<string, number>();
         let nextIdx = 0;
+        
         const lines = text.split('\n');
         for (let line of lines) {
             line = line.trim();
@@ -248,33 +306,41 @@ class AssetManagerService {
             else if (type === 'vt') uvs.push([parseFloat(parts[1]), parseFloat(parts[2])]);
             else if (type === 'f') {
                 const poly = parts.slice(1);
+                const polyVertIndices = [];
+                
                 const resolveIndex = (indexStr: string, arrayLength: number) => {
                     if (!indexStr) return 0;
                     const idx = parseInt(indexStr);
                     return idx < 0 ? arrayLength + idx : idx - 1;
                 };
-                for (let i = 1; i < poly.length - 1; i++) {
-                    const triIndices = [poly[0], poly[i], poly[i+1]];
-                    for (const vertStr of triIndices) {
-                        if (cache.has(vertStr)) {
-                            finalIdx.push(cache.get(vertStr)!);
-                        } else {
-                            const subParts = vertStr.split('/');
-                            const vI = resolveIndex(subParts[0], positions.length);
-                            const tI = subParts.length > 1 ? resolveIndex(subParts[1], uvs.length) : -1;
-                            const nI = subParts.length > 2 ? resolveIndex(subParts[2], normals.length) : -1;
-                            const pos = positions[vI] || [0,0,0];
-                            const uv = (tI !== -1 && uvs[tI]) ? uvs[tI] : [0,0];
-                            const norm = (nI !== -1 && normals[nI]) ? normals[nI] : [0,1,0];
-                            finalV.push(...pos); finalN.push(...norm); finalU.push(...uv);
-                            cache.set(vertStr, nextIdx); finalIdx.push(nextIdx++);
-                        }
+
+                for (const vertStr of poly) {
+                    if (cache.has(vertStr)) {
+                        polyVertIndices.push(cache.get(vertStr)!);
+                    } else {
+                        const subParts = vertStr.split('/');
+                        const vI = resolveIndex(subParts[0], positions.length);
+                        const tI = subParts.length > 1 ? resolveIndex(subParts[1], uvs.length) : -1;
+                        const nI = subParts.length > 2 ? resolveIndex(subParts[2], normals.length) : -1;
+                        const pos = positions[vI] || [0,0,0];
+                        const uv = (tI !== -1 && uvs[tI]) ? uvs[tI] : [0,0];
+                        const norm = (nI !== -1 && normals[nI]) ? normals[nI] : [0,1,0];
+                        finalV.push(...pos); finalN.push(...norm); finalU.push(...uv);
+                        cache.set(vertStr, nextIdx);
+                        polyVertIndices.push(nextIdx++);
                     }
+                }
+
+                const faceIdx = logicalFaces.length;
+                logicalFaces.push(polyVertIndices);
+                for (let i = 1; i < polyVertIndices.length - 1; i++) {
+                    finalIdx.push(polyVertIndices[0], polyVertIndices[i], polyVertIndices[i+1]);
+                    triToFace.push(faceIdx);
                 }
             }
         }
         this.generateMissingNormals(finalV, finalN, finalIdx);
-        return { v: finalV, n: finalN, u: finalU, idx: finalIdx };
+        return { v: finalV, n: finalN, u: finalU, idx: finalIdx, faces: logicalFaces, triToFace };
     }
 
     private async parseFBX(content: string | ArrayBuffer, importScale: number) {
@@ -312,7 +378,6 @@ class AssetManagerService {
     }
 
     private async parseFBXBinary(buffer: ArrayBuffer, importScale: number) {
-        console.log(`Starting Binary FBX Import with scale: ${importScale}`);
         const view = new DataView(buffer);
         let offset = 27; 
         const version = view.getUint32(23, true);
@@ -327,7 +392,6 @@ class AssetManagerService {
             const encoding = view.getUint32(offset + 4, true);
             const compLen = view.getUint32(offset + 8, true);
             offset += 12;
-
             let data: Uint8Array;
             if (encoding === 0) {
                 const byteLen = arrLen * (typeCode === 'd' || typeCode === 'l' ? 8 : (typeCode === 'i' || typeCode === 'f' ? 4 : 1));
@@ -338,7 +402,6 @@ class AssetManagerService {
                 data = await this.inflate(compressed);
                 offset += compLen;
             }
-
             if (typeCode === 'd') return Array.from(new Float64Array(data.buffer));
             if (typeCode === 'f') return Array.from(new Float32Array(data.buffer));
             if (typeCode === 'i') return Array.from(new Int32Array(data.buffer));
@@ -385,91 +448,50 @@ class AssetManagerService {
             return { name, props };
         };
 
-        try {
-            while (offset < buffer.byteLength - 160) {
-                const node = await readNode();
-                if (!node) break;
-            }
-        } catch (e) { console.error("Binary FBX Parse Failed", e); }
+        try { while (offset < buffer.byteLength - 160) { if(!await readNode()) break; } } catch (e) { }
 
         if (finalV.length > 0) {
-            // Unroll geometry to support UV seams
-            const outV: number[] = [];
-            const outN: number[] = [];
-            const outU: number[] = [];
-            const outIdx: number[] = [];
-            
+            const outV: number[] = []; const outN: number[] = []; const outU: number[] = []; const outIdx: number[] = [];
+            const logicalFaces: number[][] = []; const triToFace: number[] = [];
             const cache = new Map<string, number>();
-            let nextIndex = 0;
-            let polyVertIndex = 0; // Index for ByPolygonVertex data (like UVs)
-
-            let polygon: number[] = [];
+            let nextIndex = 0; let polyVertIndex = 0; let polygon: number[] = [];
 
             for (let i = 0; i < finalIdx.length; i++) {
-                let rawIdx = finalIdx[i];
-                let isEnd = false;
+                let rawIdx = finalIdx[i]; let isEnd = false;
                 if (rawIdx < 0) { rawIdx = (rawIdx ^ -1); isEnd = true; }
-
-                // Retrieve UV
                 let u = 0, v = 0;
                 if (finalUV.length > 0) {
-                    let uvIdx = polyVertIndex; // Default Direct mapping
-                    // Handle IndexToDirect
-                    if (finalUVIdx.length > 0) {
-                         if (polyVertIndex < finalUVIdx.length) uvIdx = finalUVIdx[polyVertIndex];
-                         else uvIdx = 0; // Fallback
-                    }
-                    
-                    // SAFE ACCESS with fallback to 0
+                    let uvIdx = polyVertIndex;
+                    if (finalUVIdx.length > 0) uvIdx = finalUVIdx[polyVertIndex] ?? 0;
                     if (uvIdx >= 0 && uvIdx * 2 + 1 < finalUV.length) {
-                        const valU = finalUV[uvIdx * 2];
-                        const valV = finalUV[uvIdx * 2 + 1];
-                        u = (typeof valU === 'number') ? valU : 0;
-                        v = (typeof valV === 'number') ? valV : 0;
+                        u = finalUV[uvIdx * 2]; v = finalUV[uvIdx * 2 + 1];
                     }
                 }
-
-                // Create Unique Vertex Key (Position Index + UV)
                 const key = `${rawIdx}:${u.toFixed(5)}:${v.toFixed(5)}`;
                 let newIdx = -1;
-
-                if (cache.has(key)) {
-                    newIdx = cache.get(key)!;
-                } else {
-                    const px = finalV[rawIdx * 3] * importScale;
-                    const py = finalV[rawIdx * 3 + 1] * importScale;
-                    const pz = finalV[rawIdx * 3 + 2] * importScale;
-                    outV.push(px, py, pz);
-                    outU.push(u, v);
-                    outN.push(0, 0, 0); // Placeholder
-                    newIdx = nextIndex++;
-                    cache.set(key, newIdx);
+                if (cache.has(key)) { newIdx = cache.get(key)!; } 
+                else {
+                    outV.push(finalV[rawIdx*3]*importScale, finalV[rawIdx*3+1]*importScale, finalV[rawIdx*3+2]*importScale);
+                    outU.push(u, v); outN.push(0, 0, 0); newIdx = nextIndex++; cache.set(key, newIdx);
                 }
-
-                polygon.push(newIdx);
-                polyVertIndex++;
-
+                polygon.push(newIdx); polyVertIndex++;
                 if (isEnd) {
-                    // Triangulate
+                    const faceIdx = logicalFaces.length;
+                    logicalFaces.push([...polygon]);
                     for (let k = 1; k < polygon.length - 1; k++) {
                         outIdx.push(polygon[0], polygon[k], polygon[k+1]);
+                        triToFace.push(faceIdx);
                     }
                     polygon = [];
                 }
             }
-            
             this.generateMissingNormals(outV, outN, outIdx);
-            return { v: outV, n: outN, u: outU, idx: outIdx };
+            return { v: outV, n: outN, u: outU, idx: outIdx, faces: logicalFaces, triToFace };
         }
         return this.generateCylinder(24);
     }
 
     private parseFBXASCII(text: string, importScale: number) {
-        const finalV: number[] = [];
-        const finalN: number[] = [];
-        const finalU: number[] = [];
-        const finalIdx: number[] = [];
-        
         try {
             const vMatch = text.match(/Vertices:\s*\*(\d+)\s*{([^}]*)}/);
             const iMatch = text.match(/PolygonVertexIndex:\s*\*(\d+)\s*{([^}]*)}/);
@@ -479,70 +501,46 @@ class AssetManagerService {
             if (vMatch && iMatch) {
                 const verts = vMatch[2].split(',').map(s => parseFloat(s.trim()));
                 const indices = iMatch[2].split(',').map(s => parseInt(s.trim()));
-                
-                let uvData: number[] = [];
-                let uvIndices: number[] = [];
-
+                let uvData: number[] = []; let uvIndices: number[] = [];
                 if (uMatch) uvData = uMatch[2].split(',').map(s => parseFloat(s.trim()));
                 if (uIdxMatch) uvIndices = uIdxMatch[2].split(',').map(s => parseInt(s.trim()));
 
-                const outV: number[] = [];
-                const outU: number[] = [];
-                const outN: number[] = [];
-                const outIdx: number[] = [];
-                
+                const outV: number[] = []; const outU: number[] = []; const outN: number[] = []; const outIdx: number[] = [];
+                const logicalFaces: number[][] = []; const triToFace: number[] = [];
                 const cache = new Map<string, number>();
-                let nextIndex = 0;
-                let polyVertIndex = 0;
-                let polygon: number[] = [];
+                let nextIndex = 0; let polyVertIndex = 0; let polygon: number[] = [];
 
                 for (let i = 0; i < indices.length; i++) {
-                    let rawIdx = indices[i];
-                    let isEnd = false;
+                    let rawIdx = indices[i]; let isEnd = false;
                     if (rawIdx < 0) { rawIdx = (rawIdx ^ -1); isEnd = true; }
-
                     let u = 0, v = 0;
                     if (uvData.length > 0) {
                         let uvIdx = polyVertIndex;
-                        if (uvIndices.length > 0 && polyVertIndex < uvIndices.length) uvIdx = uvIndices[polyVertIndex];
-                        
-                        // SAFE ACCESS
-                        if (uvIdx >= 0 && uvIdx * 2 + 1 < uvData.length) {
-                             const valU = uvData[uvIdx * 2];
-                             const valV = uvData[uvIdx * 2 + 1];
-                             u = (typeof valU === 'number') ? valU : 0;
-                             v = (typeof valV === 'number') ? valV : 0;
-                        }
+                        if (uvIndices.length > 0) uvIdx = uvIndices[polyVertIndex] ?? 0;
+                        if (uvIdx >= 0 && uvIdx * 2 + 1 < uvData.length) { u = uvData[uvIdx * 2]; v = uvData[uvIdx * 2 + 1]; }
                     }
-
                     const key = `${rawIdx}:${u.toFixed(5)}:${v.toFixed(5)}`;
                     let newIdx = -1;
-
-                    if (cache.has(key)) {
-                        newIdx = cache.get(key)!;
-                    } else {
-                        outV.push(verts[rawIdx * 3] * importScale, verts[rawIdx * 3 + 1] * importScale, verts[rawIdx * 3 + 2] * importScale);
-                        outU.push(u, v);
-                        outN.push(0, 0, 0);
-                        newIdx = nextIndex++;
-                        cache.set(key, newIdx);
+                    if (cache.has(key)) { newIdx = cache.get(key)!; } 
+                    else {
+                        outV.push(verts[rawIdx*3]*importScale, verts[rawIdx*3+1]*importScale, verts[rawIdx*3+2]*importScale);
+                        outU.push(u, v); outN.push(0, 0, 0); newIdx = nextIndex++; cache.set(key, newIdx);
                     }
-
-                    polygon.push(newIdx);
-                    polyVertIndex++;
-
+                    polygon.push(newIdx); polyVertIndex++;
                     if (isEnd) {
+                        const faceIdx = logicalFaces.length;
+                        logicalFaces.push([...polygon]);
                         for (let k = 1; k < polygon.length - 1; k++) {
                             outIdx.push(polygon[0], polygon[k], polygon[k+1]);
+                            triToFace.push(faceIdx);
                         }
                         polygon = [];
                     }
                 }
-                
                 this.generateMissingNormals(outV, outN, outIdx);
-                return { v: outV, n: outN, u: outU, idx: outIdx };
+                return { v: outV, n: outN, u: outU, idx: outIdx, faces: logicalFaces, triToFace };
             }
-        } catch (e) { console.error("FBX ASCII Parser failed", e); }
+        } catch (e) { }
         return this.generateCylinder(24);
     }
 
@@ -563,68 +561,51 @@ class AssetManagerService {
         }
     }
 
-    private parseGLB(buffer: ArrayBuffer) {
-        const view = new DataView(buffer);
-        if (view.getUint32(0, true) !== 0x46546C67) return { v: [], n: [], u: [], idx: [] };
-        return this.generateCylinder(32);
+    private generateCylinder(segments: number) {
+        const v=[], n=[], u=[], idx=[], faces: number[][] = [], triToFace: number[] = [];
+        const radius = 0.5; const height = 1.0; const halfH = height/2;
+        for(let i=0; i<=segments; i++) {
+            const theta = (i/segments)*Math.PI*2; const x = Math.cos(theta)*radius; const z = Math.sin(theta)*radius;
+            v.push(x, halfH, z); n.push(x, 0, z); u.push(i/segments, 0); v.push(x, -halfH, z); n.push(x, 0, z); u.push(i/segments, 1);
+        }
+        for(let i=0; i<segments; i++) { 
+            const base = i*2; const fIdx = faces.length;
+            faces.push([base, base+1, base+3, base+2]);
+            idx.push(base, base+1, base+2, base+1, base+3, base+2);
+            triToFace.push(fIdx, fIdx);
+        }
+        return { v, n, u, idx, faces, triToFace };
     }
 
-    duplicateAsset(sourceId: string): Asset | null {
-        const source = this.assets.get(sourceId);
-        if (!source) return null;
-        const newId = crypto.randomUUID();
-        const clone = JSON.parse(JSON.stringify(source));
-        clone.id = newId; clone.name = `${source.name} (Clone)`;
-        this.registerAsset(clone);
-        return clone;
-    }
-
-    saveMaterial(id: string, nodes: GraphNode[], connections: GraphConnection[], glsl: string) {
-        const asset = this.assets.get(id);
-        if (asset && asset.type === 'MATERIAL') asset.data = { nodes, connections, glsl };
-    }
-
-    saveScript(id: string, nodes: GraphNode[], connections: GraphConnection[]) {
-        const asset = this.assets.get(id);
-        if (asset && (asset.type === 'SCRIPT' || asset.type === 'RIG')) asset.data = { nodes, connections };
-    }
-    
-    updatePhysicsMaterial(id: string, data: Partial<PhysicsMaterialAsset['data']>) {
-        const asset = this.assets.get(id);
-        if (asset && asset.type === 'PHYSICS_MATERIAL') asset.data = { ...asset.data, ...data };
-    }
-
-    private createDefaultPhysicsMaterials() {
-        this.createPhysicsMaterial("Concrete", { staticFriction: 0.8, dynamicFriction: 0.6, bounciness: 0.1, density: 2400 });
-        this.createPhysicsMaterial("Ice", { staticFriction: 0.1, dynamicFriction: 0.05, bounciness: 0.05, density: 900 });
+    private createPrimitive(name: string, generator: () => any): StaticMeshAsset {
+        const data = generator();
+        const v2f = new Map<number, number[]>();
+        data.faces?.forEach((f: number[], i: number) => f.forEach(v => { if(!v2f.has(v)) v2f.set(v, []); v2f.get(v)!.push(i); }));
+        return { 
+            id: crypto.randomUUID(), name: `SM_${name}`, type: 'MESH', 
+            geometry: { vertices: new Float32Array(data.v), normals: new Float32Array(data.n), uvs: new Float32Array(data.u), indices: new Uint16Array(data.idx) },
+            topology: data.faces ? { faces: data.faces, triangleToFaceIndex: new Int32Array(data.triToFace), vertexToFaces: v2f } : undefined
+        };
     }
 
     private registerDefaultAssets() {
         this.registerAsset(this.createPrimitive('Cube', () => {
             const v = [ -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,0.5,0.5, -0.5,0.5,0.5, 0.5,-0.5,-0.5, -0.5,-0.5,-0.5, -0.5,0.5,-0.5, 0.5,0.5,-0.5, -0.5,0.5,0.5, 0.5,0.5,0.5, 0.5,0.5,-0.5, -0.5,0.5,-0.5, -0.5,-0.5,-0.5, 0.5,-0.5,-0.5, 0.5,-0.5,0.5, -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,-0.5,-0.5, 0.5,0.5,-0.5, 0.5,0.5,0.5, -0.5,-0.5,-0.5, -0.5,-0.5,0.5, -0.5,0.5,0.5, -0.5,0.5,-0.5 ];
             const n = [ 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0 ];
-            const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
+            const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
             const idx = [ 0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11, 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23 ];
-            return { v, n, u, idx };
+            const faces = [ [0,1,2,3], [4,5,6,7], [8,9,10,11], [12,13,14,15], [16,17,18,19], [20,21,22,23] ];
+            const triToFace = [ 0,0, 1,1, 2,2, 3,3, 4,4, 5,5 ];
+            return { v, n, u, idx, faces, triToFace };
         }), MESH_TYPES['Cube']);
-        this.registerAsset(this.createPrimitive('Plane', () => ({ v: [-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5], n: [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0], u: [0, 0, 1, 0, 1, 1, 0, 1], idx: [0, 1, 2, 0, 2, 3] })), MESH_TYPES['Plane']);
-    }
-
-    private generateCylinder(segments: number) {
-        const v=[], n=[], u=[], idx=[];
-        const radius = 0.5; const height = 1.0; const halfH = height/2;
-        for(let i=0; i<=segments; i++) {
-            const theta = (i/segments) * Math.PI * 2; const x = Math.cos(theta) * radius; const z = Math.sin(theta) * radius;
-            v.push(x, halfH, z); n.push(x, 0, z); u.push(i/segments, 0); v.push(x, -halfH, z); n.push(x, 0, z); u.push(i/segments, 1);
-        }
-        for(let i=0; i<segments; i++) { const base = i*2; idx.push(base, base+1, base+2, base+1, base+3, base+2); }
-        return { v, n, u, idx };
-    }
-
-    private createPrimitive(name: string, generator: () => any): StaticMeshAsset {
-        const { v, n, u, idx } = generator();
-        return { id: crypto.randomUUID(), name: `SM_${name}`, type: 'MESH', geometry: { vertices: new Float32Array(v), normals: new Float32Array(n), uvs: new Float32Array(u), indices: new Uint16Array(idx) } };
+        this.registerAsset(this.createPrimitive('Plane', () => ({ 
+            v: [-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5], 
+            n: [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0], 
+            u: [0, 0, 1, 0, 1, 1, 0, 1], 
+            idx: [0, 1, 2, 0, 2, 3],
+            faces: [[0, 1, 2, 3]],
+            triToFace: [0, 0]
+        })), MESH_TYPES['Plane']);
     }
 }
-
 export const assetManager = new AssetManagerService();

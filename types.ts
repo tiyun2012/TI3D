@@ -58,6 +58,21 @@ export interface PerformanceMetrics {
   entityCount: number;
 }
 
+// Mesh Topology Types
+export interface LogicalMesh {
+    // Defines the original Faces (Quads/Polygons)
+    // e.g. [0, 1, 2, 3] is one face
+    faces: number[][]; 
+    
+    // Map: Which Render Triangle belongs to which Logical Face?
+    // index 0 (Triangle A) -> Face 0
+    // index 1 (Triangle B) -> Face 0
+    triangleToFaceIndex: Int32Array;
+
+    // Connectivity maps for fast lookups
+    vertexToFaces: Map<number, number[]>;
+}
+
 // Asset Types
 export type AssetType = 'MESH' | 'SKELETAL_MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'TEXTURE' | 'SCRIPT' | 'RIG';
 
@@ -65,13 +80,14 @@ export interface StaticMeshAsset {
     id: string;
     name: string;
     type: 'MESH';
-    thumbnail?: string; // Optional Base64 or Icon name
+    thumbnail?: string; 
     geometry: {
-        vertices: Float32Array | number[];
-        normals: Float32Array | number[];
-        uvs: Float32Array | number[];
-        indices: Uint16Array | number[];
+        vertices: Float32Array;
+        normals: Float32Array;
+        uvs: Float32Array;
+        indices: Uint16Array;
     };
+    topology?: LogicalMesh; // Optional CPU-side topology data
 }
 
 export interface SkeletalMeshAsset {
@@ -80,16 +96,17 @@ export interface SkeletalMeshAsset {
     type: 'SKELETAL_MESH';
     thumbnail?: string;
     geometry: {
-        vertices: Float32Array | number[];
-        normals: Float32Array | number[];
-        uvs: Float32Array | number[];
-        indices: Uint16Array | number[];
-        jointIndices: Float32Array | number[]; // 4 weights per vertex
-        jointWeights: Float32Array | number[]; // 4 weights per vertex
+        vertices: Float32Array;
+        normals: Float32Array;
+        uvs: Float32Array;
+        indices: Uint16Array;
+        jointIndices: Float32Array;
+        jointWeights: Float32Array;
     };
     skeleton: {
         bones: Array<{ name: string; parentIndex: number; bindPose: Float32Array }>;
     };
+    topology?: LogicalMesh;
 }
 
 export interface MaterialAsset {
@@ -99,7 +116,7 @@ export interface MaterialAsset {
     data: {
         nodes: GraphNode[];
         connections: GraphConnection[];
-        glsl: string; // Compiled Source
+        glsl: string; 
     };
 }
 
@@ -110,7 +127,7 @@ export interface PhysicsMaterialAsset {
     data: {
         staticFriction: number;
         dynamicFriction: number;
-        bounciness: number; // Restitution (0-1)
+        bounciness: number; 
         density: number;
     };
 }
@@ -139,8 +156,8 @@ export interface TextureAsset {
     id: string;
     name: string;
     type: 'TEXTURE';
-    source: string; // Base64 or URL
-    layerIndex: number; // Internal GPU Array Layer
+    source: string; 
+    layerIndex: number; 
 }
 
 export type Asset = StaticMeshAsset | SkeletalMeshAsset | MaterialAsset | PhysicsMaterialAsset | ScriptAsset | RigAsset | TextureAsset;
