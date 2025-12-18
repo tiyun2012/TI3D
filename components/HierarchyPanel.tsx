@@ -1,8 +1,10 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Entity, ComponentType } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
 import { Icon } from './Icon';
+import { engineInstance } from '../services/engine';
 
 interface HierarchyPanelProps {
   entities: Entity[];
@@ -13,7 +15,7 @@ interface HierarchyPanelProps {
 
 const getEntityIcon = (entity: Entity) => {
     if (entity.components[ComponentType.LIGHT]) return 'Sun';
-    if (entity.components[ComponentType.TRANSFORM] && Object.keys(entity.components).length === 1) return 'Circle'; // Empty
+    if (entity.components[ComponentType.TRANSFORM] && Object.keys(entity.components).length === 1) return 'Circle'; 
     if (entity.name.includes('Camera')) return 'Video';
     return 'Box';
 };
@@ -24,8 +26,9 @@ const HierarchyItem: React.FC<{
   sceneGraph: SceneGraph;
   selectedIds: string[];
   onSelect: (ids: string[]) => void;
+  onContextMenu: (e: React.MouseEvent, id: string) => void;
   depth: number;
-}> = ({ entityId, entities, sceneGraph, selectedIds, onSelect, depth }) => {
+}> = ({ entityId, entities, sceneGraph, selectedIds, onSelect, onContextMenu, depth }) => {
   const [expanded, setExpanded] = useState(true);
   const entity = entities.find(e => e.id === entityId);
   if (!entity) return null;
@@ -36,14 +39,9 @@ const HierarchyItem: React.FC<{
 
   const handleClick = (e: React.MouseEvent) => {
       if (e.ctrlKey || e.metaKey) {
-          // Toggle selection
-          if (isSelected) {
-              onSelect(selectedIds.filter(id => id !== entity.id));
-          } else {
-              onSelect([...selectedIds, entity.id]);
-          }
+          if (isSelected) onSelect(selectedIds.filter(id => id !== entity.id));
+          else onSelect([...selectedIds, entity.id]);
       } else if (e.shiftKey && selectedIds.length > 0) {
-          // Simplistic Shift Select: just add to current for now (range select requires flattened list logic)
            onSelect([...new Set([...selectedIds, entity.id])]);
       } else {
           onSelect([entity.id]);
@@ -54,6 +52,7 @@ const HierarchyItem: React.FC<{
     <div>
       <div 
         onClick={handleClick}
+        onContextMenu={(e) => onContextMenu(e, entity.id)}
         className={`group flex items-center gap-1.5 py-1 pr-2 cursor-pointer text-xs select-none transition-colors border-l-2
             ${isSelected 
                 ? 'bg-accent/20 border-accent text-white' 
@@ -74,11 +73,6 @@ const HierarchyItem: React.FC<{
             className={isSelected ? 'text-accent' : (entity.components[ComponentType.LIGHT] ? 'text-yellow-500' : 'text-blue-400')} 
         />
         <span className="flex-1 truncate">{entity.name}</span>
-        
-        {/* Hover Actions */}
-        <div className={`flex gap-1 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-            <Icon name="Eye" size={12} className="text-text-secondary hover:text-white" />
-        </div>
       </div>
 
       {hasChildren && expanded && (
@@ -91,6 +85,7 @@ const HierarchyItem: React.FC<{
               sceneGraph={sceneGraph}
               selectedIds={selectedIds}
               onSelect={onSelect}
+              onContextMenu={onContextMenu}
               depth={depth + 1}
             />
           ))}
@@ -103,10 +98,29 @@ const HierarchyItem: React.FC<{
 export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneGraph, selectedIds, onSelect }) => {
   const rootIds = sceneGraph.getRootIds();
   const [searchTerm, setSearchTerm] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, id: string, visible: boolean } | null>(null);
+
+  useEffect(() => {
+    const close = () => setContextMenu(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, []);
+
+  const handleContextMenu = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, id, visible: true });
+    if (!selectedIds.includes(id)) onSelect([id]);
+  };
+
+  const deleteEntity = (id: string) => {
+    engineInstance.deleteEntity(id);
+    onSelect([]);
+    setContextMenu(null);
+  };
 
   return (
     <div className="h-full flex flex-col font-sans">
-      {/* Compact Toolbar Header */}
       <div className="p-2 border-b border-white/5 bg-black/20 flex items-center gap-2 shrink-0">
         <div className="relative flex-1">
             <Icon name="Search" size={12} className="absolute left-2 top-1.5 text-text-secondary" />
@@ -120,25 +134,19 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
                 onChange={(e) => setSearchTerm(e.target.value)}
             />
         </div>
-        <div className="flex gap-0.5">
-            <button 
-                className="p-1.5 hover:bg-white/10 rounded text-text-secondary hover:text-white transition-colors"
-                title="Create Entity"
-                aria-label="Create Entity"
-            >
-                <Icon name="Plus" size={14} />
-            </button>
-            <button 
-                className="p-1.5 hover:bg-white/10 rounded text-text-secondary hover:text-white transition-colors"
-                title="Options"
-                aria-label="Options"
-            >
-                <Icon name="MoreHorizontal" size={14} />
-            </button>
-        </div>
+        <button 
+            className="p-1.5 hover:bg-white/10 rounded text-text-secondary hover:text-white transition-colors"
+            title="Create Empty Entity"
+            onClick={() => {
+                const id = engineInstance.ecs.createEntity('New Object');
+                engineInstance.sceneGraph.registerEntity(id);
+                engineInstance.notifyUI();
+            }}
+        >
+            <Icon name="Plus" size={14} />
+        </button>
       </div>
 
-      {/* Tree List */}
       <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
         <div 
             className="flex items-center gap-2 text-xs text-text-primary px-3 py-1 font-semibold opacity-70 cursor-default"
@@ -157,17 +165,35 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
                   sceneGraph={sceneGraph}
                   selectedIds={selectedIds}
                   onSelect={onSelect}
+                  onContextMenu={handleContextMenu}
                   depth={0}
                 />
             ))}
         </div>
       </div>
       
-      {/* Footer Info */}
       <div className="px-2 py-1 text-[9px] text-text-secondary bg-black/20 border-t border-white/5 flex justify-between items-center shrink-0">
         <span>{entities.length} Objects</span>
-        <span className="opacity-50">Read-only</span>
       </div>
+
+      {contextMenu && contextMenu.visible && createPortal(
+        <div 
+            className="fixed bg-[#252525] border border-white/10 shadow-2xl rounded py-1 min-w-[140px] text-xs z-[10000]"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+            <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2">
+                <Icon name="Copy" size={12} /> Duplicate
+            </div>
+            <div className="border-t border-white/10 my-1"></div>
+            <div 
+                className="px-3 py-1.5 hover:bg-red-500/20 hover:text-red-400 cursor-pointer flex items-center gap-2"
+                onClick={() => deleteEntity(contextMenu.id)}
+            >
+                <Icon name="Trash2" size={12} /> Delete
+            </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

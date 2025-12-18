@@ -81,6 +81,7 @@ export interface StaticMeshAsset {
     name: string;
     type: 'MESH';
     thumbnail?: string; 
+    isProtected?: boolean;
     geometry: {
         vertices: Float32Array;
         normals: Float32Array;
@@ -95,6 +96,7 @@ export interface SkeletalMeshAsset {
     name: string;
     type: 'SKELETAL_MESH';
     thumbnail?: string;
+    isProtected?: boolean;
     geometry: {
         vertices: Float32Array;
         normals: Float32Array;
@@ -113,6 +115,7 @@ export interface MaterialAsset {
     id: string;
     name: string;
     type: 'MATERIAL';
+    isProtected?: boolean;
     data: {
         nodes: GraphNode[];
         connections: GraphConnection[];
@@ -124,6 +127,7 @@ export interface PhysicsMaterialAsset {
     id: string;
     name: string;
     type: 'PHYSICS_MATERIAL';
+    isProtected?: boolean;
     data: {
         staticFriction: number;
         dynamicFriction: number;
@@ -136,6 +140,7 @@ export interface ScriptAsset {
     id: string;
     name: string;
     type: 'SCRIPT';
+    isProtected?: boolean;
     data: {
         nodes: GraphNode[];
         connections: GraphConnection[];
@@ -146,6 +151,7 @@ export interface RigAsset {
     id: string;
     name: string;
     type: 'RIG';
+    isProtected?: boolean;
     data: {
         nodes: GraphNode[];
         connections: GraphConnection[];
@@ -156,6 +162,7 @@ export interface TextureAsset {
     id: string;
     name: string;
     type: 'TEXTURE';
+    isProtected?: boolean;
     source: string; 
     layerIndex: number; 
 }

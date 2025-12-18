@@ -15,7 +15,6 @@ export class SceneNode {
   }
 }
 
-// Reusable stack item interface to avoid allocation
 interface StackItem {
     id: string;
     mat: Float32Array | null;
@@ -27,21 +26,43 @@ export class SceneGraph {
   private rootIds: Set<string> = new Set();
   private ecs: SoAEntitySystem | null = null;
   
-  // Reusable stack to reduce GC pressure in update loop
   private updateStack: StackItem[] = [];
 
   registerEntity(entityId: string) {
     if (!this.nodes.has(entityId)) {
-      // Resolve index immediately if ECS is available
       const idx = this.ecs ? (this.ecs.idToIndex.get(entityId) ?? -1) : -1;
       this.nodes.set(entityId, new SceneNode(entityId, idx));
       this.rootIds.add(entityId);
     }
   }
 
+  unregisterEntity(entityId: string) {
+    const node = this.nodes.get(entityId);
+    if (!node) return;
+
+    // Detach children (make them roots)
+    for (const childId of node.childrenIds) {
+        const childNode = this.nodes.get(childId);
+        if (childNode) {
+            childNode.parentId = null;
+            this.rootIds.add(childId);
+        }
+    }
+
+    // Remove from parent
+    if (node.parentId) {
+        const parentNode = this.nodes.get(node.parentId);
+        if (parentNode) {
+            parentNode.childrenIds = parentNode.childrenIds.filter(id => id !== entityId);
+        }
+    }
+
+    this.nodes.delete(entityId);
+    this.rootIds.delete(entityId);
+  }
+
   setContext(ecs: SoAEntitySystem) { 
       this.ecs = ecs; 
-      // Refresh indices for existing nodes
       this.nodes.forEach(node => {
           node.index = ecs.idToIndex.get(node.entityId) ?? -1;
       });
@@ -78,19 +99,15 @@ export class SceneGraph {
   setDirty(entityId: string) {
     if (!this.ecs) return;
     
-    // Use cached index if available, fallback to map
     const node = this.nodes.get(entityId);
     let idx = node ? node.index : this.ecs.idToIndex.get(entityId);
     
-    // Safety check if index wasn't cached yet
     if (idx === undefined || idx === -1) idx = this.ecs.idToIndex.get(entityId);
     
     if (idx !== undefined && idx !== -1) {
         this.ecs.store.transformDirty[idx] = 1;
     }
 
-    // Iterative dirty propagation (Stack)
-    // We can use a local stack here as this isn't called as frequently as update()
     const stack = [entityId];
     while(stack.length > 0) {
         const currId = stack.pop()!;
@@ -137,16 +154,13 @@ export class SceneGraph {
       return { x: m[12], y: m[13], z: m[14] };
   }
 
-  // OPTIMIZATION: Iterative Update with cached indices and reused stack
   update() {
     if (!this.ecs) return;
     const store = this.ecs.store;
     
-    // Clear and reuse stack
     const stack = this.updateStack;
     stack.length = 0;
     
-    // Push roots
     this.rootIds.forEach(id => stack.push({ id, mat: null, pDirty: false }));
 
     while(stack.length > 0) {

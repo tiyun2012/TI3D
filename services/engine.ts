@@ -30,7 +30,6 @@ export class Engine {
     private listeners: (() => void)[] = [];
     currentShaderSource: string = '';
 
-    // Camera State
     private currentViewProj: Float32Array | null = null;
     private currentCameraPos: {x:number, y:number, z:number} = {x:0,y:0,z:0};
     private currentWidth: number = 1;
@@ -53,7 +52,6 @@ export class Engine {
             entityCount: 0
         };
 
-        // Create default scene
         setTimeout(() => {
             try {
                 this.createEntityFromAsset('SM_Cube', { x: 0, y: 0, z: 0 });
@@ -140,6 +138,17 @@ export class Engine {
         });
     }
 
+    deleteEntity(id: string) {
+        this.pushUndoState();
+        this.ecs.deleteEntity(id, this.sceneGraph);
+        this.notifyUI();
+    }
+
+    deleteAsset(id: string) {
+        assetManager.deleteAsset(id);
+        this.notifyUI();
+    }
+
     notifyUI() {
         this.listeners.forEach(l => l());
     }
@@ -149,9 +158,6 @@ export class Engine {
         return () => { this.listeners = this.listeners.filter(l => l !== cb); };
     }
 
-    /**
-     * Uploads an asset's data to the GPU via the renderer.
-     */
     registerAssetWithGPU(asset: Asset) {
         if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
             const internalId = assetManager.getMeshID(asset.id);
@@ -169,7 +175,6 @@ export class Engine {
 
         if (!asset) return;
 
-        // Ensure renderer knows about this mesh (important for imported assets)
         this.registerAssetWithGPU(asset);
 
         const id = this.ecs.createEntity(asset.name);

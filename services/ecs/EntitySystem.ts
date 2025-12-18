@@ -11,14 +11,10 @@ export class SoAEntitySystem {
     count = 0;
     freeIndices: number[] = [];
     
-    // Map string UUID to SoA Index
     idToIndex = new Map<string, number>();
-    
-    // Cache for Entity Proxy Objects to reduce GC
     private proxyCache: (Entity | null)[] = [];
 
     constructor() {
-        // Initialize cache
         this.proxyCache = new Array(this.store.capacity).fill(null);
     }
 
@@ -33,7 +29,6 @@ export class SoAEntitySystem {
             index = this.count++;
         }
         
-        // Clear cache for this index as it's a new entity
         this.proxyCache[index] = null;
         
         const id = crypto.randomUUID();
@@ -42,29 +37,46 @@ export class SoAEntitySystem {
         this.store.names[index] = name;
         this.store.ids[index] = id;
         
-        // Set Default Mask (Transform only)
         this.store.componentMask[index] = COMPONENT_MASKS.TRANSFORM;
 
-        // Defaults
         this.store.posX[index] = 0; this.store.posY[index] = 0; this.store.posZ[index] = 0;
         this.store.rotX[index] = 0; this.store.rotY[index] = 0; this.store.rotZ[index] = 0;
         this.store.scaleX[index] = 1; this.store.scaleY[index] = 1; this.store.scaleZ[index] = 1;
-        this.store.rotationOrder[index] = 0; // Default XYZ
+        this.store.rotationOrder[index] = 0; 
         this.store.meshType[index] = 0;
         this.store.textureIndex[index] = 0;
-        this.store.effectIndex[index] = 0; // None
+        this.store.effectIndex[index] = 0; 
         this.store.colorR[index] = 1; this.store.colorG[index] = 1; this.store.colorB[index] = 1;
         
-        this.store.lightType[index] = 0; // Directional
+        this.store.lightType[index] = 0; 
         this.store.lightIntensity[index] = 1.0; 
 
         this.store.physicsMaterialIndex[index] = 0;
         this.store.materialIndex[index] = 0;
         this.store.rigIndex[index] = 0;
-        this.store.mass[index] = 1.0; // Default Mass
+        this.store.mass[index] = 1.0; 
         
         this.idToIndex.set(id, index);
         return id;
+    }
+
+    deleteEntity(id: string, sceneGraph: SceneGraph) {
+        const idx = this.idToIndex.get(id);
+        if (idx === undefined) return;
+
+        // Mark as inactive and unregister from scene graph
+        this.store.isActive[idx] = 0;
+        this.store.ids[idx] = '';
+        this.store.names[idx] = '';
+        this.store.componentMask[idx] = 0;
+        
+        // Remove from lookup
+        this.idToIndex.delete(id);
+        this.proxyCache[idx] = null;
+        this.freeIndices.push(idx);
+
+        // Tell scene graph to unregister and handle children (optional: simple engine might just detach them)
+        sceneGraph.unregisterEntity(id);
     }
     
     addComponent(id: string, type: ComponentType) {
@@ -79,8 +91,6 @@ export class SoAEntitySystem {
         else if (type === ComponentType.SCRIPT) mask = COMPONENT_MASKS.SCRIPT;
         
         this.store.componentMask[idx] |= mask;
-        // Invalidate proxy cache to ensure next access gets updated components list (if we were caching component objects)
-        // But our proxy is dynamic, so it's fine.
     }
 
     removeComponent(id: string, type: ComponentType) {
@@ -116,8 +126,6 @@ export class SoAEntitySystem {
         
         const store = this.store;
         const setDirty = () => { sceneGraph.setDirty(id); };
-        
-        // Component Proxies (Defined once to avoid garbage, but checking mask inside getters)
         
         const transformProxy = {
             type: ComponentType.TRANSFORM,
@@ -227,7 +235,6 @@ export class SoAEntitySystem {
             set name(v) { store.names[index] = v; },
             get isActive() { return !!store.isActive[index]; },
             set isActive(v) { store.isActive[index] = v ? 1 : 0; },
-            // Use getters to return undefined if mask is not set
             components: {
                 get [ComponentType.TRANSFORM]() { return (store.componentMask[index] & COMPONENT_MASKS.TRANSFORM) ? transformProxy : undefined; },
                 get [ComponentType.MESH]() { return (store.componentMask[index] & COMPONENT_MASKS.MESH) ? meshProxy : undefined; },

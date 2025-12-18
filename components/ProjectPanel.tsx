@@ -7,7 +7,7 @@ import { EditorContext } from '../contexts/EditorContext';
 import { WindowManagerContext } from './WindowManager';
 import { MATERIAL_TEMPLATES } from '../services/MaterialTemplates';
 import { engineInstance } from '../services/engine';
-import { NodeGraph } from './NodeGraph'; // Import NodeGraph to embed in windows
+import { NodeGraph } from './NodeGraph'; 
 import { ImportWizard } from './ImportWizard';
 import { consoleService, LogEntry } from '../services/Console';
 
@@ -23,12 +23,10 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({ initialTab = 'PROJEC
     const { setSelectedAssetIds, selectedAssetIds, setSelectionType } = useContext(EditorContext)!;
     const wm = useContext(WindowManagerContext);
     
-    // UI State
     const [showCreateMenu, setShowCreateMenu] = useState(false);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, assetId: string, visible: boolean } | null>(null);
     const [refresh, setRefresh] = useState(0);
     
-    // Console State
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -43,7 +41,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({ initialTab = 'PROJEC
         const unsubscribe = consoleService.subscribe(() => {
             setLogs([...consoleService.getLogs()]);
         });
-        setLogs([...consoleService.getLogs()]); // Init
+        setLogs([...consoleService.getLogs()]); 
         return unsubscribe;
     }, []);
 
@@ -74,7 +72,6 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({ initialTab = 'PROJEC
         setSelectionType('ASSET');
     };
 
-    // Open a new Graph Window for the asset
     const openAssetEditor = (assetId: string) => {
         const asset = assetManager.getAsset(assetId);
         if (asset && (asset.type === 'MATERIAL' || asset.type === 'SCRIPT' || asset.type === 'RIG')) {
@@ -106,7 +103,6 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({ initialTab = 'PROJEC
         handleClick(assetId);
     };
 
-    // Actions
     const createMaterial = (templateIndex?: number) => {
         const tpl = templateIndex !== undefined ? MATERIAL_TEMPLATES[templateIndex] : undefined;
         const asset = assetManager.createMaterial(`New Material ${Math.floor(Math.random() * 1000)}`, tpl);
@@ -158,6 +154,13 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({ initialTab = 'PROJEC
         }
     };
 
+    const deleteAsset = (id: string) => {
+        engineInstance.deleteAsset(id);
+        setSelectedAssetIds([]);
+        setRefresh(r => r + 1);
+        consoleService.warn("Deleted asset");
+    };
+
     const applyMaterial = (assetId: string) => {
         engineInstance.applyMaterialToSelected(assetId);
         consoleService.info(`Applied material to selection`);
@@ -174,7 +177,6 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({ initialTab = 'PROJEC
 
     return (
         <div className="h-full bg-panel flex flex-col font-sans border-t border-black/20" onContextMenu={(e) => e.preventDefault()}>
-            {/* Toolbar / Tabs */}
             <div className="flex items-center justify-between bg-panel-header px-2 py-1 border-b border-black/20">
                 <div className="flex gap-2">
                     <button 
@@ -202,7 +204,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({ initialTab = 'PROJEC
                             <span>Import</span>
                         </button>
 
-                        <div className="h-4 w-px bg-white/10"></div>
+                        <div className="h-4 w-px bg-white/10 mx-2"></div>
 
                         <div className="relative">
                             <button 
@@ -215,40 +217,26 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({ initialTab = 'PROJEC
                                 <Icon name="ChevronDown" size={10} />
                             </button>
                             
-                            {/* Create Menu */}
                             {showCreateMenu && (
                                 <div className="absolute top-full right-0 mt-1 w-40 bg-[#252525] border border-white/10 shadow-xl rounded z-50 py-1 text-xs">
                                     <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => createScript()}>
                                         Visual Script
                                     </div>
-                                    
                                     <div className="border-t border-white/10 my-1"></div>
                                     <div className="px-3 py-1 text-[9px] text-text-secondary uppercase font-bold tracking-wider opacity-50">Rig Graphs</div>
                                     {RIG_TEMPLATES.map((tpl, i) => (
-                                        <div 
-                                            key={i}
-                                            className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" 
-                                            onClick={() => createRig(i)}
-                                        >
+                                        <div key={i} className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => createRig(i)}>
                                             {tpl.name}
                                         </div>
                                     ))}
-
                                     <div className="border-t border-white/10 my-1"></div>
                                     <div className="px-3 py-1 text-[9px] text-text-secondary uppercase font-bold tracking-wider opacity-50">Materials</div>
                                     {MATERIAL_TEMPLATES.map((tpl, i) => (
-                                        <div 
-                                            key={i} 
-                                            className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer"
-                                            onClick={() => createMaterial(i)}
-                                        >
+                                        <div key={i} className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => createMaterial(i)}>
                                             {tpl.name}
                                         </div>
                                     ))}
-                                    <div 
-                                        className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer"
-                                        onClick={() => createPhysicsMaterial()}
-                                    >
+                                    <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => createPhysicsMaterial()}>
                                         Physics Material
                                     </div>
                                 </div>
@@ -287,7 +275,6 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({ initialTab = 'PROJEC
                 )}
             </div>
 
-            {/* Breadcrumbs / Filters (Project Mode) */}
             {tab === 'PROJECT' && (
                 <div className="bg-panel flex items-center gap-2 px-3 py-1.5 text-xs border-b border-black/10 overflow-x-auto">
                     <button onClick={() => setFilter('ALL')} className={`hover:text-white whitespace-nowrap ${filter === 'ALL' ? 'text-white font-bold' : 'text-text-secondary'}`}>All</button>
@@ -306,7 +293,6 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({ initialTab = 'PROJEC
                 </div>
             )}
 
-            {/* Content Area */}
             <div className="flex-1 overflow-y-auto p-2 bg-[#1a1a1a]">
                 {tab === 'PROJECT' && (
                     <div className="grid grid-cols-[repeat(auto-fill,minmax(80px,1fr))] gap-2 pb-20">
@@ -385,7 +371,6 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({ initialTab = 'PROJEC
                 )}
             </div>
 
-            {/* Context Menu Portal */}
             {contextMenu && contextMenu.visible && createPortal(
                 <div 
                     className="fixed bg-[#252525] border border-white/10 shadow-2xl rounded py-1 min-w-[160px] text-xs"
@@ -420,9 +405,14 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({ initialTab = 'PROJEC
                             <div className="border-t border-white/10 my-1"></div>
                         </>
                     )}
-                    <div className="px-3 py-1.5 hover:bg-red-500/20 hover:text-red-400 cursor-pointer flex items-center gap-2">
-                        <Icon name="Trash2" size={12} /> Delete
-                    </div>
+                    
+                    {/* Only show Delete if the asset is not protected (e.g. not a system primitive) */}
+                    {!assetManager.getAsset(contextMenu.assetId)?.isProtected && (
+                        <div className="px-3 py-1.5 hover:bg-red-500/20 hover:text-red-400 cursor-pointer flex items-center gap-2"
+                            onClick={() => { deleteAsset(contextMenu.assetId); setContextMenu(null); }}>
+                            <Icon name="Trash2" size={12} /> Delete
+                        </div>
+                    )}
                 </div>,
                 document.body
             )}

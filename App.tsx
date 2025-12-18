@@ -62,11 +62,6 @@ const InspectorWrapper = () => {
 const SceneWrapper = () => {
   const ctx = useContext(EditorContext);
   if (!ctx) return null;
-  
-  // NOTE: We ALWAYS pass the entity selection to the SceneView, 
-  // even if the user is currently inspecting an Asset. 
-  // This allows the user to see what they are applying the asset TO.
-  
   return (
     <SceneView 
       entities={ctx.entities}
@@ -82,7 +77,6 @@ const SceneWrapper = () => {
 };
 
 const ProjectWrapper = () => <ProjectPanel />;
-
 const ConsoleWrapper = () => <ProjectPanel initialTab="CONSOLE" />;
 
 const StatsContent = () => {
@@ -116,18 +110,15 @@ const StatsContent = () => {
     );
 };
 
-// --- Main Editor UI ---
 const EditorInterface: React.FC = () => {
     const wm = useContext(WindowManagerContext);
     const editor = useContext(EditorContext);
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
     const initialized = useRef(false);
 
-    // Initial Registration of Windows
     useEffect(() => {
         if (!wm) return;
 
-        // Register all available tool windows with shifted positions to avoid left dock overlap
         wm.registerWindow({
             id: 'hierarchy', title: 'Hierarchy', icon: 'ListTree', content: <HierarchyWrapper />, 
             width: 280, height: 500, initialPosition: { x: 80, y: 100 }
@@ -161,19 +152,31 @@ const EditorInterface: React.FC = () => {
             width: 500, height: 500, initialPosition: { x: 200, y: 200 }
         });
 
-        // Open Default Layout only once
         if (!initialized.current) {
             wm.openWindow('hierarchy');
             wm.openWindow('inspector');
             wm.openWindow('project');
             initialized.current = true;
-            
-            // Log startup
             consoleService.success('Ti3D Engine Editor Initialized');
-            consoleService.info(`Loaded ${assetManager.getAllAssets().length} assets from AssetManager`);
         }
-        
     }, [wm]);
+
+    // Keyboard Shortcuts (Delete Object)
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                const active = document.activeElement;
+                const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
+                if (!isInput && editor?.selectedIds.length && editor.selectionType === 'ENTITY') {
+                    e.preventDefault();
+                    editor.selectedIds.forEach(id => engineInstance.deleteEntity(id));
+                    editor.setSelectedIds([]);
+                }
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [editor?.selectedIds, editor?.selectionType]);
 
     if (!editor) return <div className="flex h-screen items-center justify-center text-white">Initializing...</div>;
 
@@ -200,10 +203,7 @@ const EditorInterface: React.FC = () => {
 
     return (
         <div className="flex flex-col h-screen bg-[#101010] text-text-primary overflow-hidden font-sans relative" onClick={() => setActiveMenu(null)}>
-            
-            {/* Top Bar (Header + Toolbar) */}
             <div className="flex flex-col z-50 pointer-events-auto shadow-xl">
-                {/* Menu Bar */}
                 <div className="h-8 bg-panel-header flex items-center px-3 text-[11px] select-none border-b border-white/5 gap-4">
                     <div className="font-bold text-white tracking-wide flex items-center gap-2 pr-4 border-r border-white/5">
                         <div className="w-4 h-4 bg-accent rounded-sm shadow-[0_0_8px_rgba(79,128,248,0.6)]"></div>
@@ -217,9 +217,7 @@ const EditorInterface: React.FC = () => {
                                 <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={handleLoad}>Load Scene</div>
                             </div>
                         )}
-                        
                         <span className="hover:bg-white/10 px-2 py-1 rounded cursor-pointer transition-colors" onClick={(e) => toggleMenu(e, 'Edit')}>Edit</span>
-                        
                         <div className="relative">
                             <span className={`hover:bg-white/10 px-2 py-1 rounded cursor-pointer transition-colors ${activeMenu === 'Window' ? 'bg-white/10' : ''}`} onClick={(e) => toggleMenu(e, 'Window')}>Window</span>
                             {activeMenu === 'Window' && (
@@ -250,7 +248,6 @@ const EditorInterface: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Toolbar */}
                 <Toolbar 
                     isPlaying={editor.isPlaying}
                     onPlay={() => { engineInstance.start(); }}
@@ -263,12 +260,10 @@ const EditorInterface: React.FC = () => {
                 />
             </div>
 
-            {/* FULL SCREEN VIEWPORT BACKGROUND */}
             <div className="absolute inset-0 top-[64px] bottom-[24px] z-0">
                 <SceneWrapper />
             </div>
 
-            {/* Status Bar */}
             <div className="absolute bottom-0 w-full h-6 bg-panel-header/90 backdrop-blur flex items-center px-4 justify-between text-[10px] text-text-secondary shrink-0 select-none z-50 border-t border-white/5">
                 <div className="flex items-center gap-4">
                     {editor.isPlaying ? <span className="text-emerald-500 animate-pulse font-bold">● PLAYING</span> : <span>Ready</span>}
@@ -282,9 +277,7 @@ const EditorInterface: React.FC = () => {
     );
 };
 
-// --- Root Application with Providers ---
 const App: React.FC = () => {
-    // Editor State
     const [entities, setEntities] = useState<Entity[]>([]);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
@@ -294,23 +287,18 @@ const App: React.FC = () => {
     const [transformSpace, setTransformSpace] = useState<TransformSpace>('World');
     const [isPlaying, setIsPlaying] = useState(false);
     
-    // Config State
     const [gizmoConfig, setGizmoConfig] = useState<GizmoConfiguration>(DEFAULT_GIZMO_CONFIG);
     const [uiConfig, setUiConfig] = useState<UIConfiguration>(DEFAULT_UI_CONFIG);
     const [gridConfig, setGridConfig] = useState<GridConfiguration>(DEFAULT_GRID_CONFIG);
     const [snapSettings, setSnapSettings] = useState<SnapSettings>(DEFAULT_SNAP_CONFIG);
 
-    // Sync with Engine
     useEffect(() => {
         const updateState = () => {
             setEntities(engineInstance.ecs.getAllProxies(engineInstance.sceneGraph));
             setIsPlaying(engineInstance.isPlaying);
         };
         const unsubscribe = engineInstance.subscribe(updateState);
-        
-        // Initial Fetch
         updateState();
-        
         return unsubscribe;
     }, []);
 

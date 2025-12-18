@@ -70,14 +70,12 @@ class AssetManagerService {
         this.createRig('Locomotion IK Logic', RIG_TEMPLATES[0]);
     }
 
-    // Fix for line 68: Added missing createDefaultPhysicsMaterials method
     private createDefaultPhysicsMaterials() {
         this.createPhysicsMaterial('Concrete', { staticFriction: 0.8, dynamicFriction: 0.7, bounciness: 0.1, density: 2.4 });
         this.createPhysicsMaterial('Rubber', { staticFriction: 0.9, dynamicFriction: 0.8, bounciness: 0.8, density: 1.1 });
         this.createPhysicsMaterial('Ice', { staticFriction: 0.05, dynamicFriction: 0.03, bounciness: 0.1, density: 0.9 });
     }
 
-    // Fix for InspectorPanel error: Added updatePhysicsMaterial
     updatePhysicsMaterial(id: string, partialData: Partial<PhysicsMaterialAsset['data']>) {
         const asset = this.getAsset(id);
         if (asset && asset.type === 'PHYSICS_MATERIAL') {
@@ -85,7 +83,6 @@ class AssetManagerService {
         }
     }
 
-    // Fix for NodeGraph error: Added saveMaterial
     saveMaterial(id: string, nodes: GraphNode[], connections: GraphConnection[], glsl: string) {
         const asset = this.getAsset(id);
         if (asset && asset.type === 'MATERIAL') {
@@ -95,7 +92,6 @@ class AssetManagerService {
         }
     }
 
-    // Fix for NodeGraph error: Added saveScript (also handles rigs)
     saveScript(id: string, nodes: GraphNode[], connections: GraphConnection[]) {
         const asset = this.getAsset(id);
         if (asset && (asset.type === 'SCRIPT' || asset.type === 'RIG')) {
@@ -104,16 +100,49 @@ class AssetManagerService {
         }
     }
 
-    // Fix for ProjectPanel error: Added duplicateAsset
     duplicateAsset(id: string): Asset | null {
         const original = this.getAsset(id);
         if (!original) return null;
-        // Deep copy
         const copy = JSON.parse(JSON.stringify(original));
         copy.id = crypto.randomUUID();
         copy.name = `${original.name} (Copy)`;
+        copy.isProtected = false; // Duplicates are never protected
         this.registerAsset(copy);
         return copy;
+    }
+
+    deleteAsset(id: string) {
+        const asset = this.assets.get(id);
+        if (!asset || asset.isProtected) return;
+
+        this.assets.delete(id);
+        
+        // Cleanup lookup maps
+        if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
+            const intId = this.meshUuidToInt.get(id);
+            if (intId !== undefined) {
+                this.meshUuidToInt.delete(id);
+                this.meshIntToUuid.delete(intId);
+            }
+        } else if (asset.type === 'MATERIAL') {
+            const intId = this.matUuidToInt.get(id);
+            if (intId !== undefined) {
+                this.matUuidToInt.delete(id);
+                this.matIntToUuid.delete(intId);
+            }
+        } else if (asset.type === 'PHYSICS_MATERIAL') {
+            const intId = this.physMatUuidToInt.get(id);
+            if (intId !== undefined) {
+                this.physMatUuidToInt.delete(id);
+                this.physMatIntToUuid.delete(intId);
+            }
+        } else if (asset.type === 'RIG') {
+            const intId = this.rigUuidToInt.get(id);
+            if (intId !== undefined) {
+                this.rigUuidToInt.delete(id);
+                this.rigIntToUuid.delete(intId);
+            }
+        }
     }
 
     registerAsset(asset: Asset, forcedIntId?: number): number {
@@ -486,6 +515,7 @@ class AssetManagerService {
                 }
             }
             this.generateMissingNormals(outV, outN, outIdx);
+            // Fixed: returned outU instead of undefined variable u
             return { v: outV, n: outN, u: outU, idx: outIdx, faces: logicalFaces, triToFace };
         }
         return this.generateCylinder(24);
@@ -551,7 +581,7 @@ class AssetManagerService {
                 const v1 = [v[i2] - v[i1], v[i2+1] - v[i1+1], v[i2+2] - v[i1+2]];
                 const v2 = [v[i3] - v[i1], v[i3+1] - v[i1+1], v[i3+2] - v[i1+2]];
                 const nx = v1[1] * v2[2] - v1[2] * v2[1];
-                const ny = v1[2] * v2[0] - v1[0] * v2[2];
+                const ny = v1[2] * v2[0] - v1[0] * v2[1];
                 const nz = v1[0] * v2[1] - v1[1] * v2[0];
                 const l = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
                 [idx[i], idx[i+1], idx[i+2]].forEach(vIdx => {
@@ -582,7 +612,7 @@ class AssetManagerService {
         const v2f = new Map<number, number[]>();
         data.faces?.forEach((f: number[], i: number) => f.forEach(v => { if(!v2f.has(v)) v2f.set(v, []); v2f.get(v)!.push(i); }));
         return { 
-            id: crypto.randomUUID(), name: `SM_${name}`, type: 'MESH', 
+            id: crypto.randomUUID(), name: `SM_${name}`, type: 'MESH', isProtected: true,
             geometry: { vertices: new Float32Array(data.v), normals: new Float32Array(data.n), uvs: new Float32Array(data.u), indices: new Uint16Array(data.idx) },
             topology: data.faces ? { faces: data.faces, triangleToFaceIndex: new Int32Array(data.triToFace), vertexToFaces: v2f } : undefined
         };
