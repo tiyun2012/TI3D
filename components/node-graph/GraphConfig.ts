@@ -2,26 +2,33 @@
 export const LayoutConfig = {
     GRID_SIZE: 20,
     NODE_WIDTH: 180,
-    PREVIEW_NODE_WIDTH: 240, 
-    CODE_NODE_WIDTH: 300, 
     REROUTE_SIZE: 12,
-    HEADER_HEIGHT: 36, 
+    HEADER_HEIGHT: 30, 
     ITEM_HEIGHT: 24,   
-    PIN_RADIUS: 6,
+    PIN_RADIUS: 5,
     BORDER: 1,         
-    GAP: 4,            
-    PADDING_TOP: 8,    
+    GAP: 0,            
+    PADDING_TOP: 4,    
     WIRE_GAP: 0,
 
+    // Vertical Spacing for internal elements
+    TEXTURE_PREVIEW_HEIGHT: 140,
+    TEXTURE_SPACING: 12, // Fixed spacing around texture preview
+    OUTPUTS_OFFSET: 8,   // Additional space before the outputs section starts
+
     // Precise dimensions for Code/ForLoop Nodes
-    // These act as the Single Source of Truth for both rendering and wire calculation
-    CODE_BLOCK_HEIGHT: 128, // Matches h-32
-    CODE_LABEL_HEIGHT: 14,  // Height for the "GLSL Code Body" label
-    CODE_FOOTER_HEIGHT: 12, // Height for the variable list footer
-    CODE_GAP: 4,            // Matches gap-1
-    CODE_MARGIN_BOTTOM: 8,  // Matches mb-2
+    CODE_NODE_WIDTH: 280,
+    CODE_BLOCK_HEIGHT: 128, 
+    CODE_LABEL_HEIGHT: 14,  
+    CODE_FOOTER_HEIGHT: 12, 
+    CODE_GAP: 4,            
+    CODE_MARGIN_BOTTOM: 8,  
+
+    // Comment Box Settings
+    COMMENT_MIN_WIDTH: 200,
+    COMMENT_MIN_HEIGHT: 120,
+    COMMENT_HEADER_HEIGHT: 28,
     
-    // Texture Preview
-    // 160px height matches the inner width of a 180px node (minus padding), creating a square UV viewport
-    TEXTURE_PREVIEW_HEIGHT: 160
+    // Interaction
+    SNAP_TO_GRID: true
 };

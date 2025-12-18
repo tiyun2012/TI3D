@@ -1,6 +1,4 @@
 
-// services/ShaderCompiler.ts
-
 import { GraphNode, GraphConnection } from '../types';
 import { NodeRegistry } from './NodeRegistry';
 
@@ -9,65 +7,76 @@ interface CompileResult {
     fs: string;
 }
 
-export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]): CompileResult | string => {
-    // 1. Find Output Node (Only one shader output supported for now)
-    const outNode = nodes.find(n => n.type === 'ShaderOutput');
-    if (!outNode) {
-        return ''; // No shader logic detected
-    }
+const safeFloat = (val: any): string => {
+    if (val === undefined || val === null || val === '') return '0.0';
+    const num = parseFloat(val);
+    if (isNaN(num)) return '0.0';
+    const str = num.toString();
+    return str.includes('.') ? str : str + '.0';
+};
 
-    // --- Helper for traversing graph from a specific input pin ---
+const toFloat = (v: string | null, def = "0.0") => {
+    if (!v) return def;
+    if (v.includes('_') && v.startsWith('vec')) return `${v}.x`;
+    return `float(${v})`;
+};
+
+const toVec3 = (v: string | null, def = "vec3(1.0)") => {
+    if (!v) return def;
+    if (!v.includes('vec')) return `vec3(${v})`;
+    return v;
+};
+
+export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]): CompileResult | string => {
+    const outNode = nodes.find(n => n.type === 'StandardMaterial' || n.type === 'ShaderOutput');
+    if (!outNode) return '';
+
+    const isPBR = outNode.type === 'StandardMaterial';
+
     const generateGraphFromInput = (startPin: string): { body: string; functions: string[]; finalVar: string | null } => {
         const lines: string[] = [];
         const globalFunctions: string[] = [];
         const visited = new Set<string>();
         const varMap = new Map<string, string>(); 
 
-        // Recursive traversal
         const visit = (nodeId: string): string => {
-            if (visited.has(nodeId)) return varMap.get(nodeId) || 'vec3(0.0)';
-            
+            if (visited.has(nodeId)) return varMap.get(nodeId) || '0.0';
             const node = nodes.find(n => n.id === nodeId);
-            if (!node) return 'vec3(0.0)';
-
+            if (!node) return '0.0';
             const def = NodeRegistry[node.type];
-            if (!def || !def.glsl) return 'vec3(0.0)'; 
+            if (!def || !def.glsl) return '0.0'; 
 
-            // Gather Inputs
             const inputVars = def.inputs.map(input => {
                 const conn = connections.find(c => c.toNode === nodeId && c.toPin === input.id);
                 if (conn) {
                     const sourceVar = visit(conn.fromNode);
                     const sourceNode = nodes.find(n => n.id === conn.fromNode);
-                    // Handle Split outputs (append component suffix)
-                    if (sourceNode && sourceNode.type === 'Split') {
-                        return `${sourceVar}_${conn.fromPin}`; // e.g. vec3_ID_x
-                    }
-                    if (sourceNode && sourceNode.type === 'SplitVec2') {
+                    if (sourceNode && (sourceNode.type === 'Split' || sourceNode.type === 'SplitVec2')) {
                         return `${sourceVar}_${conn.fromPin}`;
+                    }
+                    if (sourceNode && sourceNode.type === 'TextureSample' && conn.fromPin === 'a') {
+                        return `${sourceVar}_a`;
                     }
                     return sourceVar;
                 }
-                // Defaults
                 if (node.data && node.data[input.id] !== undefined) {
-                     const val = node.data[input.id];
-                     if (def.type === 'Float' || input.type === 'float') {
-                         const s = val.toString();
-                         return s.includes('.') ? s : s + '.0';
+                     const val = node.data[input.id].toString();
+                     if (val.startsWith('#')) {
+                        const r = parseInt(val.slice(1, 3), 16) / 255;
+                        const g = parseInt(val.slice(3, 5), 16) / 255;
+                        const b = parseInt(val.slice(5, 7), 16) / 255;
+                        return `vec3(${r.toFixed(3)}, ${g.toFixed(3)}, ${b.toFixed(3)})`;
                      }
-                     return val;
+                     return safeFloat(val);
                 }
-                return null;
+                return '0.0';
             });
 
-            // Determine Variable Type Prefix
-            // This is critical for generic nodes (Add, Sub) to know if they are working with floats or vecs
             const outputType = def.outputs[0]?.type || 'vec3';
             const safeId = nodeId.replace(/-/g, '_');
             const varName = `${outputType}_${safeId}`;
 
             const result = def.glsl(inputVars as string[], varName, node.data);
-            
             if (typeof result === 'string') {
                 lines.push(result);
             } else {
@@ -80,87 +89,187 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
             return varName;
         };
 
-        // Start traversal if connected
         const rootConn = connections.find(c => c.toNode === outNode.id && c.toPin === startPin);
         let finalVar = null;
         if (rootConn) {
             finalVar = visit(rootConn.fromNode);
+        } else if (outNode.data && outNode.data[startPin] !== undefined) {
+            const val = outNode.data[startPin].toString();
+            if (val.startsWith('#')) {
+                const r = parseInt(val.slice(1, 3), 16) / 255;
+                const g = parseInt(val.slice(3, 5), 16) / 255;
+                const b = parseInt(val.slice(5, 7), 16) / 255;
+                finalVar = `vec3(${r.toFixed(3)}, ${g.toFixed(3)}, ${b.toFixed(3)})`;
+            } else {
+                finalVar = safeFloat(val);
+            }
         }
         
         return {
             body: lines.join('\n        '),
-            functions: [...new Set(globalFunctions)], // Deduplicate functions
+            functions: [...new Set(globalFunctions)],
             finalVar
         };
     };
 
-    // 2. Generate Vertex Shader Logic (from 'offset' pin)
     const vsData = generateGraphFromInput('offset');
-    // Ensure we cast to the expected type if necessary (though simple assignment usually works if types match)
     const vsFinalAssignment = vsData.finalVar ? `vertexOffset = vec3(${vsData.finalVar});` : '';
 
-    // 3. Generate Fragment Shader Logic (from 'rgb' pin)
-    const fsData = generateGraphFromInput('rgb');
-    const fsFinalAssignment = fsData.finalVar ? `vec3 finalColor = vec3(${fsData.finalVar});` : 'vec3 finalColor = vec3(1.0, 0.0, 1.0);';
+    let fsSource = '';
+    const fsGlobals: string[] = [`
+    const float PI = 3.14159265359;
+    
+    float DistributionGGX(vec3 N, vec3 H, float roughness) {
+        float a = roughness*roughness;
+        float a2 = a*a;
+        float NdotH = max(dot(N, H), 0.0);
+        float NdotH2 = NdotH*NdotH;
+        float num = a2;
+        float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+        denom = PI * denom * denom;
+        return num / max(denom, 0.0000001);
+    }
+    
+    float GeometrySchlickGGX(float NdotV, float roughness) {
+        float r = (roughness + 1.0);
+        float k = (r*r) / 8.0;
+        float num = NdotV;
+        float denom = NdotV * (1.0 - k) + k;
+        return num / denom;
+    }
+    
+    float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+        float NdotV = max(dot(N, V), 0.0);
+        float NdotL = max(dot(N, L), 0.0);
+        float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+        float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+        return ggx1 * ggx2;
+    }
+    
+    vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+        return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+    }
 
-    // IMPORTANT: No indentation before separator comments to ensure exact string match for splitting
+    vec3 getFakeIBL(vec3 N, vec3 V, float roughness, vec3 F0, vec3 albedo, float metallic) {
+        vec3 R = reflect(-V, N);
+        float skyMix = smoothstep(-0.2, 0.2, R.y);
+        vec3 skyColor = vec3(0.3, 0.5, 0.8) * 1.2; 
+        vec3 groundColor = vec3(0.1, 0.1, 0.1);    
+        vec3 envColor = mix(groundColor, skyColor, skyMix);
+        envColor *= (1.0 - roughness * 0.5);
+        vec3 F = fresnelSchlick(max(dot(N, V), 0.0), F0);
+        vec3 kS = F;
+        vec3 kD = (1.0 - kS) * (1.0 - metallic);
+        vec3 diffuse = envColor * albedo * kD * 0.2; 
+        vec3 specular = envColor * kS * (1.0 - roughness); 
+        return diffuse + specular;
+    }
+    `];
+
+    const fsBody: string[] = [];
+
+    if (isPBR) {
+        const albedo = generateGraphFromInput('albedo');
+        const metallic = generateGraphFromInput('metallic');
+        const smoothness = generateGraphFromInput('smoothness');
+        const emission = generateGraphFromInput('emission');
+        const normal = generateGraphFromInput('normal');
+        const alpha = generateGraphFromInput('alpha');
+        const alphaClip = generateGraphFromInput('alphaClip');
+        const rim = generateGraphFromInput('rim');
+        const clearcoat = generateGraphFromInput('clearcoat');
+
+        fsGlobals.push(...albedo.functions, ...metallic.functions, ...smoothness.functions, ...emission.functions, ...normal.functions, ...alpha.functions, ...alphaClip.functions, ...rim.functions, ...clearcoat.functions);
+        fsBody.push(albedo.body, metallic.body, smoothness.body, emission.body, normal.body, alpha.body, alphaClip.body, rim.body, clearcoat.body);
+
+        fsSource = `
+        void main() {
+            ${fsBody.join('\n        ')}
+            
+            vec3 N = normalize(${normal.finalVar ? toVec3(normal.finalVar) : 'v_normal'});
+            vec3 V = normalize(u_cameraPos - v_worldPos);
+            vec3 L = normalize(-u_lightDir);
+            vec3 H = normalize(V + L);
+            
+            vec3 albedoVal = ${toVec3(albedo.finalVar, 'vec3(1.0)')};
+            float metallicVal = clamp(${toFloat(metallic.finalVar, '0.0')}, 0.0, 1.0);
+            float roughnessVal = 1.0 - clamp(${toFloat(smoothness.finalVar, '0.5')}, 0.0, 1.0);
+            vec3 emissionVal = ${toVec3(emission.finalVar, 'vec3(0.0)')};
+            float alphaVal = clamp(${toFloat(alpha.finalVar, '1.0')}, 0.0, 1.0);
+            float alphaClipVal = ${toFloat(alphaClip.finalVar, '0.0')};
+            float rimStrengthVal = ${toFloat(rim.finalVar, '0.0')};
+            float ccStrengthVal = clamp(${toFloat(clearcoat.finalVar, '0.0')}, 0.0, 1.0);
+
+            if (alphaVal < alphaClipVal) discard;
+
+            vec3 F0 = vec3(0.04); 
+            F0 = mix(F0, albedoVal, metallicVal);
+            
+            float NDF = DistributionGGX(N, H, roughnessVal);
+            float G = GeometrySmith(N, V, L, roughnessVal);
+            vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+            
+            vec3 numerator = NDF * G * F;
+            float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+            vec3 specular = numerator / denominator;
+            
+            vec3 kS = F;
+            vec3 kD = vec3(1.0) - kS;
+            kD *= (1.0 - metallicVal);
+            
+            float NdotL = max(dot(N, L), 0.0);
+            vec3 diffuse = kD * albedoVal / PI;
+            
+            vec3 directLight = (diffuse + specular) * u_lightColor * u_lightIntensity * NdotL;
+            vec3 indirectLight = getFakeIBL(N, V, roughnessVal, F0, albedoVal, metallicVal);
+            
+            vec3 finalColor = directLight + indirectLight + emissionVal;
+
+            // Rim Light
+            float rim = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+            finalColor += vec3(rim) * rimStrengthVal * u_lightColor;
+            
+            if (u_renderMode == 1) finalColor = N * 0.5 + 0.5;
+            if (v_isSelected > 0.5) finalColor = mix(finalColor, vec3(1.0, 0.8, 0.2), 0.2);
+            
+            outColor = vec4(finalColor, alphaVal);
+            outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0);
+        }`;
+    } else {
+        const rgb = generateGraphFromInput('rgb');
+        fsGlobals.push(...rgb.functions);
+        const rgbVar = rgb.finalVar ? toVec3(rgb.finalVar) : 'vec3(1.0, 0.0, 1.0)';
+        fsSource = `
+        void main() {
+            ${rgb.body}
+            vec3 finalColor = ${rgbVar};
+            if (u_renderMode == 1) finalColor = normalize(v_normal) * 0.5 + 0.5;
+            if (v_isSelected > 0.5) finalColor = mix(finalColor, vec3(1.0, 1.0, 0.0), 0.3);
+            outColor = vec4(finalColor, 1.0);
+            outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0);
+        }`;
+    }
+
     const vsSource = `// --- Global Functions (VS) ---
 ${vsData.functions.join('\n')}
-
 // --- Graph Body (VS) ---
 ${vsData.body}
 ${vsFinalAssignment}`;
 
-    const fsSource = `#version 300 es
-    precision mediump float;
-    precision mediump sampler2DArray;
-    
-    uniform highp float u_time;
-    uniform vec2 u_resolution;
+    const fullFs = `#version 300 es
+    precision highp float;
+    precision highp sampler2DArray;
+    uniform float u_time;
     uniform vec3 u_cameraPos;
     uniform sampler2DArray u_textures;
-    uniform int u_renderMode; // 0=Lit, 1=Normals
-    
-    // Varyings
-    in highp vec3 v_normal;
-    in highp vec3 v_worldPos;
-    in highp vec3 v_objectPos;
-    in highp vec3 v_color;
-    in highp float v_isSelected;
-    in highp vec2 v_uv;
-    in highp float v_texIndex;
-    in highp float v_effectIndex;
+    uniform int u_renderMode;
+    uniform vec3 u_lightDir;
+    uniform vec3 u_lightColor;
+    uniform float u_lightIntensity;
+    in vec3 v_normal; in vec3 v_worldPos; in vec3 v_objectPos; in vec3 v_color; in float v_isSelected; in vec2 v_uv; in float v_texIndex; in float v_effectIndex;
+    layout(location=0) out vec4 outColor; layout(location=1) out vec4 outData;
+    ${[...new Set(fsGlobals)].join('\n')}
+    ${fsSource}`;
 
-    // MRT Outputs
-    layout(location=0) out vec4 outColor;
-    layout(location=1) out vec4 outData; // R=EffectID
-
-    // --- Global Functions (FS) ---
-    ${fsData.functions.join('\n')}
-
-    void main() {
-        vec4 fragColor;
-        ${fsData.body}
-        
-        ${fsFinalAssignment}
-        
-        // Debug Override
-        if (u_renderMode == 1) {
-            finalColor = normalize(v_normal) * 0.5 + 0.5;
-        }
-        
-        if (v_isSelected > 0.5) {
-            finalColor = mix(finalColor, vec3(1.0, 1.0, 0.0), 0.3);
-        }
-        
-        outColor = vec4(finalColor, 1.0);
-        // Write Effect Index to Data Buffer to satisfy MRT requirements (Normalized to 0..1 for safety)
-        outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0);
-    }
-    `;
-
-    return {
-        vs: vsSource,
-        fs: fsSource
-    };
+    return { vs: vsSource, fs: fullFs };
 };

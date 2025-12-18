@@ -52,7 +52,8 @@ export class SoAEntitySystem {
         this.store.lightIntensity[index] = 1.0; 
 
         this.store.physicsMaterialIndex[index] = 0;
-        this.store.materialIndex[index] = 0;
+        // Default to Material ID 1 (Standard PBR) instead of 0 (Internal Fallback)
+        this.store.materialIndex[index] = 1; 
         this.store.rigIndex[index] = 0;
         this.store.mass[index] = 1.0; 
         

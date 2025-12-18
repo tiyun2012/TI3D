@@ -484,16 +484,37 @@ export class WebGLRenderer {
                 else { if(!this.buckets.has(key)) this.buckets.set(key, []); this.buckets.get(key)!.push(i); }
             }
         }
+
+        // Lighting Data Extraction
+        let lightDir = [0.5, -1.0, 0.5];
+        let lightColor = [1, 1, 1];
+        let lightIntensity = 1.0;
+
+        for (let i = 0; i < count; i++) {
+            if (store.isActive[i] && (store.componentMask[i] & COMPONENT_MASKS.LIGHT)) {
+                // Simplified world direction from rotation
+                const base = i * 16;
+                lightDir[0] = store.worldMatrix[base + 8];
+                lightDir[1] = store.worldMatrix[base + 9];
+                lightDir[2] = store.worldMatrix[base + 10];
+                lightColor[0] = store.colorR[i];
+                lightColor[1] = store.colorG[i];
+                lightColor[2] = store.colorB[i];
+                lightIntensity = store.lightIntensity[i];
+                break; // Use first light
+            }
+        }
+
         this.drawCalls = 0; this.triangleCount = 0;
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboIncluded);
         gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
         gl.clearColor(0.1, 0.1, 0.1, 1.0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-        this.renderBuckets(this.buckets, store, selectedIndices, vp, cam, time);
+        this.renderBuckets(this.buckets, store, selectedIndices, vp, cam, time, lightDir, lightColor, lightIntensity);
         if (this.showGrid && !this.gridExcludePP) { gl.drawBuffers([gl.COLOR_ATTACHMENT0]); this.renderGrid(gl, vp); }
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboExcluded);
         gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
         gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-        this.renderBuckets(this.excludedBuckets, store, selectedIndices, vp, cam, time);
+        this.renderBuckets(this.excludedBuckets, store, selectedIndices, vp, cam, time, lightDir, lightColor, lightIntensity);
         if (this.showGrid && this.gridExcludePP) this.renderGrid(gl, vp);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.disable(gl.DEPTH_TEST);
         gl.useProgram(this.ppProgram);
@@ -518,7 +539,7 @@ export class WebGLRenderer {
         gl.bindVertexArray(this.quadVAO); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); gl.depthMask(true); gl.disable(gl.BLEND);
     }
 
-    private renderBuckets(buckets: Map<number, number[]>, store: any, selected: Set<number>, vp: Float32Array, cam: any, time: number) {
+    private renderBuckets(buckets: Map<number, number[]>, store: any, selected: Set<number>, vp: Float32Array, cam: any, time: number, lightDir: number[], lightColor: number[], lightIntensity: number) {
         const gl = this.gl!;
         buckets.forEach((indices, key) => {
             const matId = key >> 16; const meshId = key & 0xFFFF; const mesh = this.meshes.get(meshId); if(!mesh) return;
@@ -528,9 +549,18 @@ export class WebGLRenderer {
             gl.uniform1f(gl.getUniformLocation(program, 'u_time'), time);
             gl.uniform3f(gl.getUniformLocation(program, 'u_cameraPos'), cam.x, cam.y, cam.z);
             gl.uniform1i(gl.getUniformLocation(program, 'u_renderMode'), this.renderMode);
+
+            // Lighting Uniforms
+            gl.uniform3fv(gl.getUniformLocation(program, 'u_lightDir'), lightDir);
+            gl.uniform3fv(gl.getUniformLocation(program, 'u_lightColor'), lightColor);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_lightIntensity'), lightIntensity);
+
             if (this.textureArray) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray); gl.uniform1i(gl.getUniformLocation(program, 'u_textures'), 0); }
             let instanceCount = 0; const stride = 22; const buf = mesh.cpuBuffer;
             for (const idx of indices) {
+                // Safety check: Prevent buffer overrun
+                if (instanceCount >= INITIAL_CAPACITY) break;
+                
                 const off = instanceCount * stride; const wm = idx * 16;
                 for (let k = 0; k < 16; k++) buf[off+k] = store.worldMatrix[wm+k];
                 buf[off+16] = store.colorR[idx]; buf[off+17] = store.colorG[idx]; buf[off+18] = store.colorB[idx];

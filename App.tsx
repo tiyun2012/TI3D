@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
 import { engineInstance } from './services/engine';
-import { Entity, ToolType, TransformSpace, SelectionType, GraphNode } from './types';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection } from './types';
 import { EditorContext, EditorContextType, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG, SnapSettings, DEFAULT_SNAP_CONFIG } from './contexts/EditorContext';
 import { assetManager } from './services/AssetManager';
 import { consoleService } from './services/Console';
@@ -18,6 +18,7 @@ import { WindowManager, WindowManagerContext } from './components/WindowManager'
 import { DEFAULT_GIZMO_CONFIG, GizmoConfiguration } from './components/gizmos/GizmoUtils';
 import { GeometrySpreadsheet } from './components/GeometrySpreadsheet';
 import { UVEditor } from './components/UVEditor';
+import { Timeline } from './components/Timeline';
 
 // --- Widget Wrappers ---
 
@@ -43,6 +44,11 @@ const InspectorWrapper = () => {
   
   let target: any = null;
   let count = 0;
+
+  if (ctx.inspectedNode) {
+      target = ctx.inspectedNode;
+      return <InspectorPanel object={target} type="NODE" />;
+  }
 
   if (ctx.selectionType === 'ENTITY') {
       if (ctx.selectedIds.length > 0) {
@@ -151,11 +157,16 @@ const EditorInterface: React.FC = () => {
             id: 'uveditor', title: 'UV Editor', icon: 'LayoutGrid', content: <UVEditor />, 
             width: 500, height: 500, initialPosition: { x: 200, y: 200 }
         });
+        wm.registerWindow({
+            id: 'timeline', title: 'Timeline', icon: 'Film', content: <Timeline />, 
+            width: window.innerWidth - 450, height: 200, initialPosition: { x: 400, y: window.innerHeight - 220 }
+        });
 
         if (!initialized.current) {
             wm.openWindow('hierarchy');
             wm.openWindow('inspector');
             wm.openWindow('project');
+            wm.openWindow('timeline');
             initialized.current = true;
             consoleService.success('Ti3D Engine Editor Initialized');
         }
@@ -240,6 +251,9 @@ const EditorInterface: React.FC = () => {
                                     <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('spreadsheet'); setActiveMenu(null); }}>
                                         <Icon name="Table" size={12} /> Spreadsheet
                                     </div>
+                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('timeline'); setActiveMenu(null); }}>
+                                        <Icon name="Film" size={12} /> Timeline
+                                    </div>
                                     <div className="border-t border-white/5 my-1"></div>
                                     <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { wm?.toggleWindow('preferences'); setActiveMenu(null); }}>Preferences...</div>
                                 </div>
@@ -282,6 +296,7 @@ const App: React.FC = () => {
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
     const [inspectedNode, setInspectedNode] = useState<GraphNode | null>(null);
+    const [activeGraphConnections, setActiveGraphConnections] = useState<GraphConnection[]>([]);
     const [selectionType, setSelectionType] = useState<SelectionType>('ENTITY');
     const [tool, setTool] = useState<ToolType>('SELECT');
     const [transformSpace, setTransformSpace] = useState<TransformSpace>('World');
@@ -291,6 +306,8 @@ const App: React.FC = () => {
     const [uiConfig, setUiConfig] = useState<UIConfiguration>(DEFAULT_UI_CONFIG);
     const [gridConfig, setGridConfig] = useState<GridConfiguration>(DEFAULT_GRID_CONFIG);
     const [snapSettings, setSnapSettings] = useState<SnapSettings>(DEFAULT_SNAP_CONFIG);
+
+    const onNodeDataChangeRef = useRef<((nodeId: string, key: string, value: any) => void) | null>(null);
 
     useEffect(() => {
         const updateState = () => {
@@ -302,12 +319,39 @@ const App: React.FC = () => {
         return unsubscribe;
     }, []);
 
+    // FIX: Stabilized updateInspectedNodeData to prevent infinite update chains
+    const updateInspectedNodeData = useCallback((key: string, value: any) => {
+        setInspectedNode(prev => {
+            if (!prev) return null;
+            // Guard against redundant updates
+            if (prev.data?.[key] === value) return prev;
+            
+            const updated = { ...prev, data: { ...prev.data, [key]: value } };
+            
+            // Push change to active graph if handler exists
+            if (onNodeDataChangeRef.current) {
+                onNodeDataChangeRef.current(updated.id, key, value);
+            }
+            
+            return updated;
+        });
+    }, []);
+
+    // FIX: Stable context setters
+    const setOnNodeDataChange = useCallback((cb: (nodeId: string, key: string, value: any) => void) => {
+        onNodeDataChangeRef.current = cb;
+    }, []);
+
     const contextValue = useMemo<EditorContextType>(() => ({
         entities,
         sceneGraph: engineInstance.sceneGraph,
         selectedIds, setSelectedIds,
         selectedAssetIds, setSelectedAssetIds,
         inspectedNode, setInspectedNode,
+        activeGraphConnections, setActiveGraphConnections,
+        updateInspectedNodeData,
+        onNodeDataChange: (id, k, v) => onNodeDataChangeRef.current?.(id, k, v),
+        setOnNodeDataChange,
         selectionType, setSelectionType,
         tool, setTool,
         transformSpace, setTransformSpace,
@@ -316,7 +360,7 @@ const App: React.FC = () => {
         uiConfig, setUiConfig,
         gridConfig, setGridConfig,
         snapSettings, setSnapSettings
-    }), [entities, selectedIds, selectedAssetIds, inspectedNode, selectionType, tool, transformSpace, isPlaying, gizmoConfig, uiConfig, gridConfig, snapSettings]);
+    }), [entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, updateInspectedNodeData, setOnNodeDataChange, selectionType, tool, transformSpace, isPlaying, gizmoConfig, uiConfig, gridConfig, snapSettings]);
 
     return (
         <EditorContext.Provider value={contextValue}>

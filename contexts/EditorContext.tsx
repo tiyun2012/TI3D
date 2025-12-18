@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Entity, ToolType, TransformSpace, SelectionType, GraphNode } from '../types';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
 import { GizmoConfiguration } from '../components/gizmos/GizmoUtils';
 
@@ -69,6 +69,13 @@ export interface EditorContextType {
   // Graph Node Selection (For Inspector/Spreadsheet)
   inspectedNode: GraphNode | null;
   setInspectedNode: (node: GraphNode | null) => void;
+  activeGraphConnections: GraphConnection[];
+  setActiveGraphConnections: (conns: GraphConnection[]) => void;
+  updateInspectedNodeData: (key: string, value: any) => void;
+  
+  // Graph Sync (Inspector -> NodeGraph)
+  onNodeDataChange: (nodeId: string, key: string, value: any) => void;
+  setOnNodeDataChange: (cb: (nodeId: string, key: string, value: any) => void) => void;
 
   selectionType: SelectionType;
   setSelectionType: (type: SelectionType) => void;

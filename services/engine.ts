@@ -6,7 +6,7 @@ import { HistorySystem } from './systems/HistorySystem';
 import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { DebugRenderer } from './renderers/DebugRenderer';
 import { assetManager } from './AssetManager';
-import { PerformanceMetrics, GraphNode, GraphConnection, Vector3, ComponentType, Asset } from '../types';
+import { PerformanceMetrics, GraphNode, GraphConnection, Vector3, ComponentType, Asset, TimelineState } from '../types';
 import { Mat4Utils, RayUtils, Vec3Utils } from './math';
 import { compileShader } from './ShaderCompiler';
 import { GridConfiguration } from '../contexts/EditorContext';
@@ -25,6 +25,15 @@ export class Engine {
     isPlaying: boolean = false;
     renderMode: number = 0;
     
+    // Timeline Master State
+    timeline: TimelineState = {
+        currentTime: 0,
+        duration: 30, // 30 seconds default
+        isPlaying: false,
+        playbackSpeed: 1.0,
+        isLooping: true
+    };
+
     selectedIndices: Set<number> = new Set();
     
     private listeners: (() => void)[] = [];
@@ -51,40 +60,109 @@ export class Engine {
             triangleCount: 0,
             entityCount: 0
         };
+    }
 
-        setTimeout(() => {
-            try {
-                this.createEntityFromAsset('SM_Cube', { x: 0, y: 0, z: 0 });
-                const light = this.ecs.createEntity('Directional Light');
-                this.ecs.addComponent(light, ComponentType.LIGHT);
-                this.ecs.store.setPosition(this.ecs.idToIndex.get(light)!, 5, 10, 5);
-                this.ecs.store.setRotation(this.ecs.idToIndex.get(light)!, -0.5, 0.5, 0); 
-                this.sceneGraph.registerEntity(light);
-            } catch (e) {
-                console.warn("Could not create default scene entities:", e);
+    /**
+     * Re-compiles all registered material assets to GPU.
+     * Essential after GL context is lost or newly initialized.
+     */
+    recompileAllMaterials() {
+        assetManager.getAssetsByType('MATERIAL').forEach(asset => {
+            if (asset.type === 'MATERIAL') {
+                this.compileGraph(asset.data.nodes, asset.data.connections, asset.id);
             }
-        }, 0);
+        });
     }
 
     initGL(canvas: HTMLCanvasElement) {
         this.renderer.init(canvas);
         this.debugRenderer.init(this.renderer.gl!);
+        
+        // Compile materials now that WebGL is ready
+        this.recompileAllMaterials();
+
+        // Initialize default scene if empty
+        if (this.ecs.count === 0) {
+            this.createDefaultScene();
+        }
+    }
+
+    private createDefaultScene() {
+        try {
+            // Find the standard material UUID
+            const standardMat = assetManager.getAssetsByType('MATERIAL').find(a => a.name === 'Standard');
+            
+            // Add Cube and Sphere
+            const cubeId = this.createEntityFromAsset('SM_Cube', { x: -1.5, y: 0, z: 0 });
+            const sphereId = this.createEntityFromAsset('SM_Sphere', { x: 1.5, y: 0, z: 0 });
+            
+            // Assign default material
+            if (standardMat) {
+                const cIdx = this.ecs.idToIndex.get(cubeId!);
+                const sIdx = this.ecs.idToIndex.get(sphereId!);
+                const mIntId = assetManager.getMaterialID(standardMat.id);
+                if (cIdx !== undefined) this.ecs.store.materialIndex[cIdx] = mIntId;
+                if (sIdx !== undefined) this.ecs.store.materialIndex[sIdx] = mIntId;
+            }
+
+            // Add Light
+            const light = this.ecs.createEntity('Directional Light');
+            this.ecs.addComponent(light, ComponentType.LIGHT);
+            const idx = this.ecs.idToIndex.get(light)!;
+            this.ecs.store.setPosition(idx, 5, 10, 5);
+            // Better rotation for default lighting (Top-Front-Left)
+            this.ecs.store.setRotation(idx, -0.785, 0.785, 0); 
+            this.sceneGraph.registerEntity(light);
+            
+            this.notifyUI();
+        } catch (e) {
+            console.warn("Could not create default scene entities:", e);
+        }
     }
 
     resize(width: number, height: number) {
         this.renderer.resize(width, height);
     }
 
-    start() { this.isPlaying = true; this.notifyUI(); }
-    pause() { this.isPlaying = false; this.notifyUI(); }
+    start() { 
+        this.isPlaying = true; 
+        this.timeline.isPlaying = true;
+        this.notifyUI(); 
+    }
+    pause() { 
+        this.isPlaying = false; 
+        this.timeline.isPlaying = false;
+        this.notifyUI(); 
+    }
     stop() { 
         this.isPlaying = false; 
+        this.timeline.isPlaying = false;
+        this.timeline.currentTime = 0;
         this.notifyUI(); 
+    }
+
+    setTimelineTime(time: number) {
+        this.timeline.currentTime = Math.max(0, Math.min(time, this.timeline.duration));
+        this.notifyUI();
     }
 
     tick(dt: number) {
         const start = performance.now();
         
+        // Update Timeline
+        if (this.timeline.isPlaying) {
+            this.timeline.currentTime += dt * this.timeline.playbackSpeed;
+            if (this.timeline.currentTime >= this.timeline.duration) {
+                if (this.timeline.isLooping) {
+                    this.timeline.currentTime = 0;
+                } else {
+                    this.timeline.currentTime = this.timeline.duration;
+                    this.timeline.isPlaying = false;
+                    this.isPlaying = false;
+                }
+            }
+        }
+
         if (this.isPlaying) {
             this.physicsSystem.update(dt, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
         }
@@ -167,13 +245,13 @@ export class Engine {
         }
     }
 
-    createEntityFromAsset(assetId: string, position: {x:number, y:number, z:number}) {
+    createEntityFromAsset(assetId: string, position: {x:number, y:number, z:number}): string | null {
         let asset = assetManager.getAsset(assetId);
         if (!asset) {
             asset = assetManager.getAllAssets().find(a => a.name === assetId) || undefined;
         }
 
-        if (!asset) return;
+        if (!asset) return null;
 
         this.registerAssetWithGPU(asset);
 
@@ -190,6 +268,7 @@ export class Engine {
         
         this.notifyUI();
         this.pushUndoState();
+        return id;
     }
 
     pushUndoState() {
@@ -281,7 +360,7 @@ export class Engine {
             ecs: this.ecs,
             sceneGraph: this.sceneGraph,
             entityId: entityId,
-            time: performance.now() / 1000
+            time: this.timeline.currentTime // Use Master Timeline Time
         };
 
         const nodeMap = new Map(nodes.map(n => [n.id, n]));

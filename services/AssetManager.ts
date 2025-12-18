@@ -64,7 +64,8 @@ class AssetManagerService {
 
     constructor() {
         this.registerDefaultAssets();
-        this.createMaterial('Standard', MATERIAL_TEMPLATES[1]);
+        // Set Standard material to Template 0 but we will update it below with better defaults
+        this.createMaterial('Standard', MATERIAL_TEMPLATES[0]);
         this.createDefaultPhysicsMaterials();
         this.createScript('New Visual Script');
         this.createRig('Locomotion IK Logic', RIG_TEMPLATES[0]);
@@ -106,7 +107,7 @@ class AssetManagerService {
         const copy = JSON.parse(JSON.stringify(original));
         copy.id = crypto.randomUUID();
         copy.name = `${original.name} (Copy)`;
-        copy.isProtected = false; // Duplicates are never protected
+        copy.isProtected = false; 
         this.registerAsset(copy);
         return copy;
     }
@@ -117,7 +118,6 @@ class AssetManagerService {
 
         this.assets.delete(id);
         
-        // Cleanup lookup maps
         if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
             const intId = this.meshUuidToInt.get(id);
             if (intId !== undefined) {
@@ -515,7 +515,6 @@ class AssetManagerService {
                 }
             }
             this.generateMissingNormals(outV, outN, outIdx);
-            // Fixed: returned outU instead of undefined variable u
             return { v: outV, n: outN, u: outU, idx: outIdx, faces: logicalFaces, triToFace };
         }
         return this.generateCylinder(24);
@@ -607,6 +606,84 @@ class AssetManagerService {
         return { v, n, u, idx, faces, triToFace };
     }
 
+    /**
+     * Procedural Quad Sphere Generation (Maya/Industry Style)
+     * Subdivides a cube and normalizes vertices to sphere surface.
+     */
+    private generateQuadSphere(subdivisions: number = 24) {
+        const vertices: number[] = [];
+        const normals: number[] = [];
+        const uvs: number[] = [];
+        const indices: number[] = [];
+        const faces: number[][] = [];
+        const triToFace: number[] = [];
+
+        const step = 1.0 / subdivisions;
+        let vOffset = 0;
+
+        // Cube face origins and axes
+        const origins = [
+            [-0.5, -0.5,  0.5], [ 0.5, -0.5,  0.5], [ 0.5, -0.5, -0.5],
+            [-0.5, -0.5, -0.5], [-0.5,  0.5,  0.5], [-0.5, -0.5, -0.5]
+        ];
+        const rightAxes = [
+            [ 1, 0, 0], [ 0, 0,-1], [-1, 0, 0],
+            [ 0, 0, 1], [ 1, 0, 0], [ 1, 0, 0]
+        ];
+        const upAxes = [
+            [ 0, 1, 0], [ 0, 1, 0], [ 0, 1, 0],
+            [ 0, 1, 0], [ 0, 0,-1], [ 0, 0, 1]
+        ];
+
+        for (let f = 0; f < 6; f++) {
+            const origin = origins[f];
+            const r = rightAxes[f];
+            const u = upAxes[f];
+
+            for (let j = 0; j <= subdivisions; j++) {
+                for (let i = 0; i <= subdivisions; i++) {
+                    const px = origin[0] + i * step * r[0] + j * step * u[0];
+                    const py = origin[1] + i * step * r[1] + j * step * u[1];
+                    const pz = origin[2] + i * step * r[2] + j * step * u[2];
+
+                    // Normalize to sphere
+                    const length = Math.sqrt(px * px + py * py + pz * pz);
+                    const nx = px / length;
+                    const ny = py / length;
+                    const nz = pz / length;
+
+                    // Standard radius 0.5
+                    vertices.push(nx * 0.5, ny * 0.5, nz * 0.5);
+                    normals.push(nx, ny, nz);
+                    
+                    // Simple spherical UV mapping
+                    const uVal = 0.5 + (Math.atan2(nz, nx) / (2 * Math.PI));
+                    const vVal = 0.5 - (Math.asin(ny) / Math.PI);
+                    uvs.push(uVal, vVal);
+                }
+            }
+
+            for (let j = 0; j < subdivisions; j++) {
+                for (let i = 0; i < subdivisions; i++) {
+                    const base = vOffset + j * (subdivisions + 1) + i;
+                    const next = base + 1;
+                    const top = base + (subdivisions + 1);
+                    const topNext = top + 1;
+
+                    const faceIdx = faces.length;
+                    faces.push([base, next, topNext, top]);
+                    
+                    indices.push(base, next, topNext);
+                    indices.push(base, topNext, top);
+                    triToFace.push(faceIdx, faceIdx);
+                }
+            }
+            vOffset += (subdivisions + 1) * (subdivisions + 1);
+        }
+
+        return { v: vertices, n: normals, u: uvs, idx: indices, faces, triToFace };
+    }
+
     private createPrimitive(name: string, generator: () => any): StaticMeshAsset {
         const data = generator();
         const v2f = new Map<number, number[]>();
@@ -628,6 +705,9 @@ class AssetManagerService {
             const triToFace = [ 0,0, 1,1, 2,2, 3,3, 4,4, 5,5 ];
             return { v, n, u, idx, faces, triToFace };
         }), MESH_TYPES['Cube']);
+
+        this.registerAsset(this.createPrimitive('Sphere', () => this.generateQuadSphere(24)), MESH_TYPES['Sphere']);
+
         this.registerAsset(this.createPrimitive('Plane', () => ({ 
             v: [-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5], 
             n: [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0], 

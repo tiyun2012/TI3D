@@ -1,16 +1,20 @@
+
 import React, { useState, useRef, useEffect, useContext } from 'react';
-import { Entity, Component, ComponentType, Vector3, RotationOrder, TransformSpace, Asset, PhysicsMaterialAsset } from '../types';
+import { Entity, Component, ComponentType, Vector3, RotationOrder, TransformSpace, Asset, PhysicsMaterialAsset, GraphNode, GraphConnection } from '../types';
 import { engineInstance } from '../services/engine';
 import { assetManager } from '../services/AssetManager';
 import { Icon } from './Icon';
 import { ROTATION_ORDERS, LIGHT_TYPES } from '../services/constants';
 import { EditorContext } from '../contexts/EditorContext';
 import { Select } from './ui/Select';
+import { NodeRegistry } from '../services/NodeRegistry';
+import { WindowManagerContext } from './WindowManager';
 
 interface InspectorPanelProps {
-  object: Entity | Asset | null; // Can inspect Entity or Asset
+  object: Entity | Asset | GraphNode | null; // Can inspect Entity, Asset, or GraphNode
   selectionCount?: number;
-  type?: 'ENTITY' | 'ASSET';
+  type?: 'ENTITY' | 'ASSET' | 'NODE';
+  isClone?: boolean; // If true, this panel is a dedicated instance
 }
 
 // --- Reusable UI Controls ---
@@ -23,7 +27,8 @@ const DraggableNumber: React.FC<{
   onCommit?: () => void;
   color?: string;
   step?: number;
-}> = ({ label, value, onChange, onStart, onCommit, color, step = 0.1 }) => {
+  disabled?: boolean;
+}> = ({ label, value, onChange, onStart, onCommit, color, step = 0.1, disabled = false }) => {
   const [isDragging, setIsDragging] = useState(false);
   const startX = useRef(0);
   const startVal = useRef(0);
@@ -55,10 +60,11 @@ const DraggableNumber: React.FC<{
   }, [isDragging, onChange, onCommit, step]);
 
   return (
-    <div className="flex items-center bg-input-bg rounded overflow-hidden border border-transparent focus-within:border-accent group">
+    <div className={`flex items-center bg-input-bg rounded overflow-hidden border border-transparent focus-within:border-accent group ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>
       <div 
-        className={`w-6 flex items-center justify-center text-[10px] font-bold cursor-ew-resize select-none h-6 transition-colors hover:text-white ${color || 'text-text-secondary'}`}
+        className={`w-6 flex items-center justify-center text-[10px] font-bold select-none h-6 transition-colors ${disabled ? '' : 'cursor-ew-resize hover:text-white'} ${color || 'text-text-secondary'}`}
         onMouseDown={(e) => {
+          if (disabled) return;
           if (onStart) onStart();
           startX.current = e.clientX;
           startVal.current = value;
@@ -70,11 +76,12 @@ const DraggableNumber: React.FC<{
       <input 
         type="number" 
         aria-label={label || "Numeric Input"}
-        className="flex-1 bg-transparent text-xs p-1 outline-none text-white min-w-0" 
+        className="flex-1 bg-transparent text-xs p-1 outline-none text-white min-w-0 disabled:text-text-secondary" 
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
         onBlur={onCommit}
         step={step}
+        disabled={disabled}
       />
     </div>
   );
@@ -85,17 +92,64 @@ const Vector3Input: React.FC<{
     value: Vector3; 
     onChange?: (v: Vector3) => void; 
     onStart?: () => void;
-    onCommit?: () => void 
-}> = ({ label, value, onChange, onStart, onCommit }) => (
-  <div className="flex flex-col gap-1 mb-3">
+    onCommit?: () => void;
+    disabled?: boolean;
+}> = ({ label, value, onChange, onStart, onCommit, disabled = false }) => (
+  <div className={`flex flex-col gap-1 mb-3 ${disabled ? 'opacity-60' : ''}`}>
     <div className="text-[10px] uppercase text-text-secondary font-semibold tracking-wider ml-1">{label}</div>
     <div className="grid grid-cols-3 gap-1">
-      <DraggableNumber label="X" value={value.x} onChange={(v) => onChange?.({...value, x: v})} onStart={onStart} onCommit={onCommit} color="text-red-500 hover:bg-red-500/20" />
-      <DraggableNumber label="Y" value={value.y} onChange={(v) => onChange?.({...value, y: v})} onStart={onStart} onCommit={onCommit} color="text-green-500 hover:bg-green-500/20" />
-      <DraggableNumber label="Z" value={value.z} onChange={(v) => onChange?.({...value, z: v})} onStart={onStart} onCommit={onCommit} color="text-blue-500 hover:bg-blue-500/20" />
+      <DraggableNumber label="X" value={value.x} onChange={(v) => onChange?.({...value, x: v})} onStart={onStart} onCommit={onCommit} color="text-red-500 hover:bg-red-500/20" disabled={disabled} />
+      <DraggableNumber label="Y" value={value.y} onChange={(v) => onChange?.({...value, y: v})} onStart={onStart} onCommit={onCommit} color="text-green-500 hover:bg-green-500/20" disabled={disabled} />
+      <DraggableNumber label="Z" value={value.z} onChange={(v) => onChange?.({...value, z: v})} onStart={onStart} onCommit={onCommit} color="text-blue-500 hover:bg-blue-500/20" disabled={disabled} />
     </div>
   </div>
 );
+
+/**
+ * Optimized Color Picker that avoids triggering heavy graph recompilations on every move.
+ */
+const DebouncedColorPicker: React.FC<{ 
+    value: string; 
+    onChange: (val: string) => void; 
+    label?: string;
+    disabled?: boolean;
+}> = ({ value, onChange, label, disabled }) => {
+    const [localValue, setLocalValue] = useState(value);
+    const timeoutRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        setLocalValue(value);
+    }, [value]);
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const newVal = e.target.value;
+        setLocalValue(newVal);
+        
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        
+        // Debounce the heavy context update
+        timeoutRef.current = window.setTimeout(() => {
+            onChange(newVal);
+        }, 100);
+    };
+
+    const handleBlur = () => {
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        onChange(localValue);
+    };
+
+    return (
+        <input 
+            type="color" 
+            value={localValue} 
+            onChange={handleChange}
+            onBlur={handleBlur}
+            disabled={disabled}
+            className={`w-full h-8 rounded bg-transparent cursor-pointer border border-white/10 transition-opacity ${disabled ? 'opacity-30 pointer-events-none' : ''}`} 
+            aria-label={label || 'Color Picker'}
+        />
+    );
+};
 
 const ComponentCard: React.FC<{ 
   component: Component; 
@@ -301,12 +355,10 @@ const ComponentCard: React.FC<{
             </div>
             <div className="flex items-center gap-2">
                <span className="w-24 text-text-secondary">Color</span>
-               <input 
-                  type="color" 
+               <DebouncedColorPicker 
                   value={component.color} 
-                  onChange={(e) => handleAtomicChange('color', e.target.value)}
-                  className="w-full h-6 rounded bg-transparent cursor-pointer" 
-                  aria-label="Light Color"
+                  onChange={(v) => handleAtomicChange('color', v)}
+                  label="Light Color"
                />
             </div>
             <div className="flex items-center gap-2">
@@ -362,34 +414,78 @@ const ComponentCard: React.FC<{
   );
 };
 
-export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectionCount = 0, type = 'ENTITY' }) => {
+export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialObject, selectionCount = 0, type: initialType = 'ENTITY', isClone = false }) => {
+  const [isLocked, setIsLocked] = useState(isClone); // Clones start locked
+  const [snapshot, setSnapshot] = useState<{ object: any, type: any } | null>(null);
   const [name, setName] = useState('');
   const [refresh, setRefresh] = useState(0);
   const [showAddComponent, setShowAddComponent] = useState(false);
+  
+  const editorCtx = useContext(EditorContext)!;
+  const wm = useContext(WindowManagerContext);
+
+  // Determine current active target
+  const activeObject = isLocked ? (snapshot?.object ?? initialObject) : initialObject;
+  const activeType = isLocked ? (snapshot?.type ?? initialType) : initialType;
 
   useEffect(() => {
-    if (object) setName(object.name);
-  }, [object]);
+    if (!isLocked) {
+        // FIX: Only update snapshot if reference actually changed to minimize render cascades
+        setSnapshot(prev => {
+            if (prev?.object === initialObject && prev?.type === initialType) return prev;
+            return { object: initialObject, type: initialType };
+        });
+    }
+  }, [initialObject, initialType, isLocked]);
+
+  useEffect(() => {
+    if (activeObject) setName(activeObject.name);
+  }, [activeObject]);
+
+  const toggleLock = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsLocked(!isLocked);
+    if (!isLocked) {
+        setSnapshot({ object: initialObject, type: initialType });
+    }
+  };
+
+  const duplicateInspector = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!wm || !activeObject) return;
+    
+    const cloneId = `inspector_clone_${crypto.randomUUID().slice(0, 8)}`;
+    wm.registerWindow({
+        id: cloneId,
+        title: `Inspector: ${activeObject.name}`,
+        icon: 'Settings2',
+        content: <InspectorPanel object={activeObject} type={activeType} isClone={true} />,
+        width: 320,
+        height: 600,
+        initialPosition: { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+    });
+    wm.openWindow(cloneId);
+  };
 
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setName(e.target.value);
   };
 
   const handleNameCommit = () => {
-      if (object && object.name !== name) {
-          if(type === 'ENTITY') engineInstance.pushUndoState();
-          object.name = name;
+      if (activeObject && activeObject.name !== name) {
+          if(activeType === 'ENTITY') engineInstance.pushUndoState();
+          activeObject.name = name;
           engineInstance.notifyUI();
       }
   };
 
   const startUpdate = () => {
-      if(type === 'ENTITY') engineInstance.pushUndoState();
+      if(activeType === 'ENTITY') engineInstance.pushUndoState();
   };
 
   const updateComponent = (compType: ComponentType, field: string, value: any) => {
-      if (type !== 'ENTITY' || !object) return;
-      const entity = object as Entity;
+      if (activeType !== 'ENTITY' || !activeObject) return;
+      const entity = activeObject as Entity;
       const comp = entity.components[compType];
       if (comp) {
           (comp as any)[field] = value;
@@ -398,30 +494,30 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
   };
   
   const addComponent = (compType: ComponentType) => {
-      if (type !== 'ENTITY' || !object) return;
+      if (activeType !== 'ENTITY' || !activeObject) return;
       engineInstance.pushUndoState();
-      engineInstance.ecs.addComponent((object as Entity).id, compType);
+      engineInstance.ecs.addComponent((activeObject as Entity).id, compType);
       engineInstance.notifyUI();
       setShowAddComponent(false);
   };
 
   const removeComponent = (compType: ComponentType) => {
-      if (type !== 'ENTITY' || !object) return;
+      if (activeType !== 'ENTITY' || !activeObject) return;
       engineInstance.pushUndoState();
-      engineInstance.ecs.removeComponent((object as Entity).id, compType);
+      engineInstance.ecs.removeComponent((activeObject as Entity).id, compType);
       engineInstance.notifyUI();
   };
   
   const updateAssetData = (field: string, value: any) => {
-      if (type !== 'ASSET' || !object) return;
-      const asset = object as PhysicsMaterialAsset; 
+      if (activeType !== 'ASSET' || !activeObject) return;
+      const asset = activeObject as PhysicsMaterialAsset; 
       if (asset.type === 'PHYSICS_MATERIAL') {
           assetManager.updatePhysicsMaterial(asset.id, { [field]: value });
           setRefresh(r => r + 1); 
       }
   };
 
-  if (!object) {
+  if (!activeObject) {
     return (
         <div className="h-full bg-panel flex flex-col items-center justify-center text-text-secondary select-none">
             <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-4">
@@ -434,9 +530,161 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
     );
   }
 
+  const renderHeaderControls = () => (
+    <div className="flex items-center gap-1.5 ml-auto">
+        <button 
+            onClick={toggleLock}
+            className={`p-1 rounded transition-colors ${isLocked ? 'text-accent bg-accent/10' : 'text-text-secondary hover:text-white'}`}
+            title={isLocked ? "Unlock (Follow Selection)" : "Lock (Pin Current Object)"}
+        >
+            <Icon name={isLocked ? "Lock" : "Unlock"} size={13} />
+        </button>
+        <button 
+            onClick={duplicateInspector}
+            className="p-1 rounded text-text-secondary hover:text-white hover:bg-white/5 transition-colors"
+            title="Duplicate Inspector Window"
+        >
+            <Icon name="Copy" size={13} />
+        </button>
+    </div>
+  );
+
+  // --- NODE INSPECTOR ---
+  if (activeType === 'NODE') {
+      const node = activeObject as GraphNode;
+      const nodeDef = NodeRegistry[node.type];
+      if (!nodeDef) return null;
+
+      const isOwned = (pinId: string) => {
+          return editorCtx.activeGraphConnections.some(c => c.toNode === node.id && c.toPin === pinId);
+      };
+
+      // Get combined list of properties (Inputs + Data Keys)
+      const dataKeys = node.data ? Object.keys(node.data) : [];
+      const properties = [...new Set([...nodeDef.inputs.map(i => i.id), ...dataKeys])];
+
+      return (
+        <div className="h-full bg-panel flex flex-col font-sans border-l border-black/20">
+            <div className="p-4 border-b border-black/20 bg-panel-header flex items-center gap-3">
+                 <div className="w-8 h-8 bg-accent rounded flex items-center justify-center text-white shadow-sm shrink-0">
+                     <Icon name="Cpu" size={16} />
+                 </div>
+                 <div className="flex-1 min-w-0">
+                     <div className="text-sm font-bold text-white truncate">{nodeDef.title}</div>
+                     <div className="text-[9px] text-text-secondary font-mono mt-0.5 uppercase tracking-wider opacity-50">
+                         {node.type} Node
+                     </div>
+                 </div>
+                 {renderHeaderControls()}
+            </div>
+            
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
+                <div className="space-y-4">
+                    <div className="text-[10px] font-bold text-text-secondary uppercase border-b border-white/5 pb-1 flex justify-between">
+                        <span>Inputs & Properties</span>
+                        <Icon name="Link2" size={10} className="opacity-40" />
+                    </div>
+                    
+                    {properties.map(key => {
+                        const inputDef = nodeDef.inputs.find(i => i.id === key);
+                        const owned = isOwned(key);
+                        const dataVal = node.data?.[key] || (inputDef?.type === 'vec3' ? '#ffffff' : '0.0');
+                        const isVec3 = inputDef?.type === 'vec3' || key === 'albedo' || key === 'emission';
+                        const label = inputDef?.name || key.charAt(0).toUpperCase() + key.slice(1);
+
+                        // Skip internal layout keys like 'title' or 'color' if it's a comment
+                        if (node.type === 'Comment' && (key === 'title' || key === 'color')) {
+                             return (
+                                <div key={key} className="space-y-1.5">
+                                    <span className="text-[11px] text-text-secondary">{label}</span>
+                                    <input 
+                                        type="text" 
+                                        value={dataVal} 
+                                        onChange={(e) => editorCtx.updateInspectedNodeData(key, e.target.value)}
+                                        className="w-full bg-black/40 text-[11px] p-2 rounded border border-white/5 outline-none focus:border-accent text-white"
+                                        aria-label={label}
+                                    />
+                                </div>
+                             );
+                        }
+
+                        return (
+                            <div key={key} className="space-y-1.5 group relative">
+                                <div className="flex justify-between items-center px-1">
+                                    <span className={`text-[11px] ${owned ? 'text-accent font-bold' : 'text-text-secondary'}`}>{label}</span>
+                                    {owned && (
+                                        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-accent/10 border border-accent/20">
+                                            <Icon name="Link" size={8} className="text-accent" />
+                                            <span className="text-[8px] text-accent uppercase font-bold tracking-tighter">Connected</span>
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                {isVec3 ? (
+                                    <div className={`relative ${owned ? 'pointer-events-none grayscale opacity-30' : ''}`}>
+                                        <DebouncedColorPicker 
+                                            value={String(dataVal).startsWith('#') ? dataVal : '#ffffff'} 
+                                            onChange={(v) => editorCtx.updateInspectedNodeData(key, v)}
+                                            label={`${label} Color`}
+                                            disabled={owned}
+                                        />
+                                    </div>
+                                ) : (
+                                    <DraggableNumber 
+                                        label="" 
+                                        value={typeof dataVal === 'string' ? parseFloat(dataVal) : dataVal} 
+                                        onChange={(v) => editorCtx.updateInspectedNodeData(key, v.toString())} 
+                                        disabled={owned}
+                                    />
+                                )}
+                            </div>
+                        );
+                    })}
+
+                    {/* Node Specific Controls */}
+                    {node.type === 'StaticMesh' && (
+                        <div className="space-y-1.5 pt-2 border-t border-white/5">
+                            <span className="text-[10px] text-text-secondary uppercase font-bold">Mesh Asset</span>
+                            <Select
+                                value={node.data?.assetId || ''}
+                                options={[
+                                    { label: 'None', value: '' },
+                                    ...assetManager.getAssetsByType('MESH').map(m => ({ label: m.name, value: m.id }))
+                                ]}
+                                onChange={(v) => editorCtx.updateInspectedNodeData('assetId', v)}
+                            />
+                        </div>
+                    )}
+                    
+                    {node.type === 'TextureSample' && (
+                        <div className="space-y-1.5 pt-2 border-t border-white/5">
+                            <span className="text-[10px] text-text-secondary uppercase font-bold">Texture Map</span>
+                            <Select
+                                value={node.data?.textureId || '0'}
+                                options={[
+                                    { label: 'White (Default)', value: '0' },
+                                    { label: 'Grid Pattern', value: '1' },
+                                    { label: 'Noise Texture', value: '2' },
+                                    { label: 'Brick Texture', value: '3' }
+                                ]}
+                                onChange={(v) => editorCtx.updateInspectedNodeData('textureId', v)}
+                            />
+                        </div>
+                    )}
+                </div>
+            </div>
+            
+            <div className="p-2 bg-black/20 text-[9px] text-text-secondary flex justify-between items-center opacity-60">
+                <span>Buffer Size: Valid</span>
+                <span className="font-mono">{node.id.split('-')[0]}</span>
+            </div>
+        </div>
+      );
+  }
+
   // --- ASSET INSPECTOR ---
-  if (type === 'ASSET') {
-      const asset = object as Asset;
+  if (activeType === 'ASSET') {
+      const asset = activeObject as Asset;
       let icon = 'File';
       if(asset.type === 'PHYSICS_MATERIAL') icon = 'Activity';
       if(asset.type === 'RIG') icon = 'GitBranch';
@@ -462,6 +710,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
                          {asset.type}
                      </div>
                  </div>
+                 {renderHeaderControls()}
             </div>
             
             <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
@@ -506,7 +755,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
   }
 
   // --- ENTITY INSPECTOR ---
-  const entity = object as Entity;
+  const entity = activeObject as Entity;
   
   // Available components to add
   const availableComponents = [
@@ -548,6 +797,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object, selectio
                  className="cursor-pointer"
                  title="Active"
              />
+             {renderHeaderControls()}
          </div>
          <div className="flex gap-1">
              <button className="flex-1 bg-white/5 hover:bg-white/10 text-text-secondary hover:text-white text-[10px] py-1 rounded border border-white/5 transition-colors">Untagged</button>

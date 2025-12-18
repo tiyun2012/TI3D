@@ -29,11 +29,22 @@ export interface Entity {
   isActive: boolean;
 }
 
+// Timeline Types
+export interface TimelineState {
+  currentTime: number;
+  duration: number;
+  isPlaying: boolean;
+  playbackSpeed: number;
+  isLooping: boolean;
+}
+
 // Node Graph Types
 export interface GraphNode {
   id: string;
   type: string; // Must match key in NodeRegistry
   position: { x: number; y: number };
+  width?: number;
+  height?: number;
   data?: any; // Internal node state (e.g. constant values)
 }
 
@@ -65,8 +76,6 @@ export interface LogicalMesh {
     faces: number[][]; 
     
     // Map: Which Render Triangle belongs to which Logical Face?
-    // index 0 (Triangle A) -> Face 0
-    // index 1 (Triangle B) -> Face 0
     triangleToFaceIndex: Int32Array;
 
     // Connectivity maps for fast lookups
