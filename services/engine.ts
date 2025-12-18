@@ -1,3 +1,4 @@
+
 import { SoAEntitySystem } from './ecs/EntitySystem';
 import { SceneGraph } from './SceneGraph';
 import { PhysicsSystem } from './systems/PhysicsSystem';
@@ -5,11 +6,10 @@ import { HistorySystem } from './systems/HistorySystem';
 import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { DebugRenderer } from './renderers/DebugRenderer';
 import { assetManager } from './AssetManager';
-import { PerformanceMetrics, GraphNode, GraphConnection, Vector3, ComponentType, Asset, TimelineState, StaticMeshAsset } from '../types';
-/* Added Ray to imports from ./math */
+import { PerformanceMetrics, GraphNode, GraphConnection, Vector3, ComponentType, Asset, TimelineState, StaticMeshAsset, MeshComponentMode } from '../types';
 import { Mat4Utils, RayUtils, Vec3Utils, Ray } from './math';
 import { compileShader } from './ShaderCompiler';
-import { GridConfiguration } from '../contexts/EditorContext';
+import { GridConfiguration, UIConfiguration, DEFAULT_UI_CONFIG } from '../contexts/EditorContext';
 import { NodeRegistry } from './NodeRegistry';
 import { MeshTopologyUtils, MeshPickingResult } from './MeshTopologyUtils';
 
@@ -24,6 +24,15 @@ export class Engine {
     isPlaying: boolean = false;
     renderMode: number = 0;
     
+    meshComponentMode: MeshComponentMode = 'OBJECT';
+    subSelection = {
+        vertexIds: new Set<number>(),
+        edgeIds: new Set<string>(), // Keyed as "v1-v2" (sorted)
+        faceIds: new Set<number>()
+    };
+
+    uiConfig: UIConfiguration = DEFAULT_UI_CONFIG;
+
     timeline: TimelineState = {
         currentTime: 0,
         duration: 30,
@@ -111,15 +120,98 @@ export class Engine {
             }
         }
         this.sceneGraph.update();
-        if (this.currentViewProj) {
-             this.renderer.render(this.ecs.store, this.ecs.count, this.selectedIndices, this.currentViewProj, this.currentWidth, this.currentHeight, this.currentCameraPos);
+
+        // Prepare debug overlays (vertices/edges) BEFORE primary render pass
+        if (this.currentViewProj && !this.isPlaying) {
+            this.debugRenderer.begin();
+            this.drawMeshComponentOverlay();
         }
+
+        // Render pass: Handles Scene + Debug Overlays in one depth-sorted sequence
+        if (this.currentViewProj) {
+             this.renderer.render(
+                this.ecs.store, 
+                this.ecs.count, 
+                this.selectedIndices, 
+                this.currentViewProj, 
+                this.currentWidth, 
+                this.currentHeight, 
+                this.currentCameraPos,
+                this.isPlaying ? undefined : this.debugRenderer
+             );
+        }
+
         const end = performance.now();
         this.metrics.frameTime = end - start;
         this.metrics.fps = 1000 / (this.metrics.frameTime || 1);
         this.metrics.drawCalls = this.renderer.drawCalls;
         this.metrics.triangleCount = this.renderer.triangleCount;
         this.metrics.entityCount = this.ecs.count;
+    }
+
+    private drawMeshComponentOverlay() {
+        if (this.selectedIndices.size === 0) return;
+        const isObjectMode = this.meshComponentMode === 'OBJECT';
+        const isVertexMode = this.meshComponentMode === 'VERTEX';
+        if (isObjectMode && !this.uiConfig.selectionEdgeHighlight) return;
+
+        this.selectedIndices.forEach((idx) => {
+            const entityId = this.ecs.store.ids[idx];
+            const meshIntId = this.ecs.store.meshType[idx];
+            const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+            if (!assetUuid) return;
+            const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
+            if (!asset || !asset.topology) return;
+            const worldMat = this.sceneGraph.getWorldMatrix(entityId);
+            if (!worldMat) return;
+            const verts = asset.geometry.vertices;
+            const topo = asset.topology;
+            const hexToRgb = (hex: string) => {
+                const r = parseInt(hex.substring(1, 3), 16) / 255;
+                const g = parseInt(hex.substring(3, 5), 16) / 255;
+                const b = parseInt(hex.substring(5, 7), 16) / 255;
+                return { r, g, b };
+            };
+            const colComp = { r: 0.1, g: 0.8, b: 1.0 };
+            const colSel = { r: 1.0, g: 1.0, b: 0.0 };
+            const colVertex = hexToRgb(this.uiConfig.vertexColor);
+            const colNeutral = { r: 0.3, g: 0.3, b: 0.3 };
+            const colObjectSelection = hexToRgb(this.uiConfig.selectionEdgeColor || '#4f80f8');
+
+            topo.faces.forEach((face) => {
+                for(let k=0; k<face.length; k++) {
+                    const vA = face[k], vB = face[(k+1)%face.length];
+                    const pA = Vec3Utils.transformMat4({ x:verts[vA*3], y:verts[vA*3+1], z:verts[vA*3+2] }, worldMat, {x:0,y:0,z:0});
+                    const pB = Vec3Utils.transformMat4({ x:verts[vB*3], y:verts[vB*3+1], z:verts[vB*3+2] }, worldMat, {x:0,y:0,z:0});
+                    let color = isObjectMode ? colObjectSelection : (isVertexMode ? colNeutral : colComp);
+                    if (!isObjectMode && !isVertexMode) {
+                        const edgeKey = [vA, vB].sort().join('-');
+                        if (this.subSelection.edgeIds.has(edgeKey)) color = colSel;
+                    }
+                    this.debugRenderer.drawLine(pA, pB, color);
+                }
+            });
+
+            if (isVertexMode) {
+                const camPos = this.currentCameraPos;
+                const baseSize = 0.008 * this.uiConfig.vertexSize; 
+                for(let i=0; i<verts.length/3; i++) {
+                    const p = Vec3Utils.transformMat4({ x:verts[i*3], y:verts[i*3+1], z:verts[i*3+2] }, worldMat, {x:0,y:0,z:0});
+                    const d = Vec3Utils.distance(p, camPos); const s = baseSize * d; 
+                    const c = this.subSelection.vertexIds.has(i) ? colSel : colVertex;
+                    if (this.uiConfig.vertexShape === 'CUBE') {
+                        const v = [{x:p.x-s, y:p.y-s, z:p.z-s}, {x:p.x+s, y:p.y-s, z:p.z-s}, {x:p.x+s, y:p.y+s, z:p.z-s}, {x:p.x-s, y:p.y+s, z:p.z-s}, {x:p.x-s, y:p.y-s, z:p.z+s}, {x:p.x+s, y:p.y-s, z:p.z+s}, {x:p.x+s, y:p.y+s, z:p.z+s}, {x:p.x-s, y:p.y+s, z:p.z+s}];
+                        this.debugRenderer.drawLine(v[0], v[1], c); this.debugRenderer.drawLine(v[1], v[2], c); this.debugRenderer.drawLine(v[2], v[3], c); this.debugRenderer.drawLine(v[3], v[0], c);
+                        this.debugRenderer.drawLine(v[4], v[5], c); this.debugRenderer.drawLine(v[5], v[6], c); this.debugRenderer.drawLine(v[6], v[7], c); this.debugRenderer.drawLine(v[7], v[4], c);
+                        this.debugRenderer.drawLine(v[0], v[4], c); this.debugRenderer.drawLine(v[1], v[5], c); this.debugRenderer.drawLine(v[2], v[6], c); this.debugRenderer.drawLine(v[3], v[7], c);
+                    } else {
+                        this.debugRenderer.drawLine({x:p.x-s, y:p.y, z:p.z}, {x:p.x+s, y:p.y, z:p.z}, c);
+                        this.debugRenderer.drawLine({x:p.x, y:p.y-s, z:p.z}, {x:p.x, y:p.y+s, z:p.z}, c);
+                        this.debugRenderer.drawLine({x:p.x, y:p.y, z:p.z-s}, {x:p.x, y:p.y, z:p.z+s}, c);
+                    }
+                }
+            }
+        });
     }
 
     updateCamera(vpMatrix: Float32Array, eye: {x:number, y:number, z:number}, width: number, height: number) {
@@ -132,6 +224,7 @@ export class Engine {
             const idx = this.ecs.idToIndex.get(id);
             if (idx !== undefined) this.selectedIndices.add(idx);
         });
+        this.subSelection.vertexIds.clear(); this.subSelection.edgeIds.clear(); this.subSelection.faceIds.clear();
     }
 
     deleteEntity(id: string) { this.pushUndoState(); this.ecs.deleteEntity(id, this.sceneGraph); this.notifyUI(); }
@@ -170,58 +263,37 @@ export class Engine {
 
     selectEntityAt(mx: number, my: number, w: number, h: number): string | null {
         if (!this.currentViewProj) return null;
-        const invVP = new Float32Array(16);
-        if(!Mat4Utils.invert(this.currentViewProj, invVP)) return null;
-        const ray = RayUtils.create();
-        RayUtils.fromScreen(mx, my, w, h, invVP, ray);
+        const invVP = new Float32Array(16); if(!Mat4Utils.invert(this.currentViewProj, invVP)) return null;
+        const ray = RayUtils.create(); RayUtils.fromScreen(mx, my, w, h, invVP, ray);
         let closestDist = Infinity; let closestId: string | null = null;
         const store = this.ecs.store;
         for(let i=0; i<this.ecs.count; i++) {
             if(!store.isActive[i]) continue;
             const pos = { x: store.worldMatrix[i*16+12], y: store.worldMatrix[i*16+13], z: store.worldMatrix[i*16+14] };
-            const maxScale = Math.max(store.scaleX[i], Math.max(store.scaleY[i], store.scaleZ[i]));
-            const radius = 0.5 * maxScale; 
+            const radius = 0.5 * Math.max(store.scaleX[i], Math.max(store.scaleY[i], store.scaleZ[i])); 
             const t = RayUtils.intersectSphere(ray, pos, radius);
             if (t !== null && t < closestDist) { closestDist = t; closestId = store.ids[i]; }
         }
         return closestId;
     }
 
-    /**
-     * Robust picking for vertices, edges, and faces within a mesh.
-     * Uses the world ray transformed into local space for high precision.
-     */
     pickMeshComponent(entityId: string, mx: number, my: number, w: number, h: number): MeshPickingResult | null {
         if (!this.currentViewProj) return null;
         const idx = this.ecs.idToIndex.get(entityId);
         if (idx === undefined) return null;
-
         const meshIntId = this.ecs.store.meshType[idx];
         const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
         if (!assetUuid) return null;
         const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
         if (!asset || !asset.topology) return null;
-
-        // 1. Generate World Ray
-        const invVP = new Float32Array(16);
-        Mat4Utils.invert(this.currentViewProj, invVP);
-        const worldRay = RayUtils.create();
-        RayUtils.fromScreen(mx, my, w, h, invVP, worldRay);
-
-        // 2. Transform Ray to Local Space
+        const invVP = new Float32Array(16); Mat4Utils.invert(this.currentViewProj, invVP);
+        const worldRay = RayUtils.create(); RayUtils.fromScreen(mx, my, w, h, invVP, worldRay);
         const worldMat = this.sceneGraph.getWorldMatrix(entityId);
         if (!worldMat) return null;
-        const invWorld = Mat4Utils.create();
-        Mat4Utils.invert(worldMat, invWorld);
-
-        const localRay: Ray = {
-            origin: Vec3Utils.transformMat4(worldRay.origin, invWorld, {x:0,y:0,z:0}),
-            direction: Vec3Utils.transformMat4Normal(worldRay.direction, invWorld, {x:0,y:0,z:0})
-        };
+        const invWorld = Mat4Utils.create(); Mat4Utils.invert(worldMat, invWorld);
+        const localRay: Ray = { origin: Vec3Utils.transformMat4(worldRay.origin, invWorld, {x:0,y:0,z:0}), direction: Vec3Utils.transformMat4Normal(worldRay.direction, invWorld, {x:0,y:0,z:0}) };
         Vec3Utils.normalize(localRay.direction, localRay.direction);
-
-        // 3. Delegate to Topology Utils for BVH-accelerated pick
-        return MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, localRay);
+        return MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, localRay, 0.05);
     }
 
     selectEntitiesInRect(x: number, y: number, w: number, h: number): string[] { return []; }
@@ -239,55 +311,36 @@ export class Engine {
     executeAssetGraph(entityId: string, assetId: string) {
         const asset = assetManager.getAsset(assetId);
         if(!asset || (asset.type !== 'SCRIPT' && asset.type !== 'RIG')) return;
-        const nodes = asset.data.nodes;
-        const connections = asset.data.connections;
+        const nodes = asset.data.nodes; const connections = asset.data.connections;
         const context = { ecs: this.ecs, sceneGraph: this.sceneGraph, entityId: entityId, time: this.timeline.currentTime };
-        const nodeMap = new Map(nodes.map(n => [n.id, n]));
-        const computedValues = new Map<string, any>();
+        const nodeMap = new Map(nodes.map(n => [n.id, n])); const computedValues = new Map<string, any>();
         const evaluatePin = (nodeId: string, pinId: string): any => {
-            const key = `${nodeId}.${pinId}`;
-            if(computedValues.has(key)) return computedValues.get(key);
+            const key = `${nodeId}.${pinId}`; if(computedValues.has(key)) return computedValues.get(key);
             const conn = connections.find(c => c.toNode === nodeId && c.toPin === pinId);
             if(conn) { const val = evaluateNodeOutput(conn.fromNode, conn.fromPin); computedValues.set(key, val); return val; }
-            const node = nodeMap.get(nodeId);
-            if(node && node.data && node.data[pinId] !== undefined) return node.data[pinId];
+            const node = nodeMap.get(nodeId); if(node && node.data && node.data[pinId] !== undefined) return node.data[pinId];
             return undefined;
         };
         const evaluateNodeOutput = (nodeId: string, pinId: string): any => {
-            const node = nodeMap.get(nodeId);
-            if(!node) return null;
-            const def = NodeRegistry[node.type];
-            if(!def) return null;
-            if(def.execute) {
-                const inputs = def.inputs.map(inp => evaluatePin(nodeId, renderer.id));
-                const result = def.execute(inputs, node.data, context);
-                if(result && typeof result === 'object' && pinId in result) return result[pinId];
-                if(def.outputs.length === 1) return result;
-                return result; 
-            }
+            const node = nodeMap.get(nodeId); if(!node) return null;
+            const def = NodeRegistry[node.type]; if(!def) return null;
+            if(def.execute) { const inputs = def.inputs.map(inp => evaluatePin(nodeId, inp.id)); const result = def.execute(inputs, node.data, context); return (result && typeof result === 'object' && pinId in result) ? result[pinId] : result; }
             return null;
         };
         nodes.filter(n => n.type === 'RigOutput' || n.type === 'SetEntityTransform').forEach(n => {
-            const def = NodeRegistry[n.type];
-            if(def && def.inputs) def.inputs.forEach(inp => evaluatePin(n.id, inp.id));
+            const def = NodeRegistry[n.type]; if(def && def.inputs) def.inputs.forEach(inp => evaluatePin(n.id, inp.id));
             if(def && def.execute) { const inputs = def.inputs.map(inp => evaluatePin(n.id, inp.id)); def.execute(inputs, n.data, context); }
         });
     }
 
     getPostProcessConfig(): PostProcessConfig { return this.renderer.ppConfig; }
     setPostProcessConfig(config: PostProcessConfig) { this.renderer.ppConfig = config; }
-
     setGridConfig(config: GridConfiguration) {
-        this.renderer.gridOpacity = config.opacity;
-        this.renderer.gridSize = config.size;
-        this.renderer.gridFadeDistance = config.fadeDistance;
-        const hex = config.color.replace('#','');
-        const r = parseInt(hex.substring(0,2), 16)/255;
-        const g = parseInt(hex.substring(2,4), 16)/255;
-        const b = parseInt(hex.substring(4,6), 16)/255;
-        this.renderer.gridColor = [r, g, b];
-        this.renderer.gridExcludePP = config.excludeFromPostProcess;
+        this.renderer.gridOpacity = config.opacity; this.renderer.gridSize = config.size; this.renderer.gridFadeDistance = config.fadeDistance;
+        const hex = config.color.replace('#',''); const r = parseInt(hex.substring(0,2), 16)/255; const g = parseInt(hex.substring(2,4), 16)/255; const b = parseInt(hex.substring(4,6), 16)/255;
+        this.renderer.gridColor = [r, g, b]; this.renderer.gridExcludePP = config.excludeFromPostProcess;
     }
+    setUiConfig(config: UIConfiguration) { this.uiConfig = config; }
 }
 
 export const engineInstance = new Engine();

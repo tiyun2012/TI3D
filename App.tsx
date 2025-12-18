@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
 import { engineInstance } from './services/engine';
-import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection } from './types';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode } from './types';
 import { EditorContext, EditorContextType, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG, SnapSettings, DEFAULT_SNAP_CONFIG } from './contexts/EditorContext';
 import { assetManager } from './services/AssetManager';
 import { consoleService } from './services/Console';
@@ -300,6 +300,7 @@ const App: React.FC = () => {
     const [selectionType, setSelectionType] = useState<SelectionType>('ENTITY');
     const [tool, setTool] = useState<ToolType>('SELECT');
     const [transformSpace, setTransformSpace] = useState<TransformSpace>('World');
+    const [meshComponentMode, setMeshComponentMode] = useState<MeshComponentMode>('OBJECT');
     const [isPlaying, setIsPlaying] = useState(false);
     
     const [gizmoConfig, setGizmoConfig] = useState<GizmoConfiguration>(DEFAULT_GIZMO_CONFIG);
@@ -319,25 +320,23 @@ const App: React.FC = () => {
         return unsubscribe;
     }, []);
 
-    // FIX: Stabilized updateInspectedNodeData to prevent infinite update chains
+    // Sync UI Configuration to Engine Instance for high performance render logic
+    useEffect(() => {
+        engineInstance.setUiConfig(uiConfig);
+    }, [uiConfig]);
+
     const updateInspectedNodeData = useCallback((key: string, value: any) => {
         setInspectedNode(prev => {
             if (!prev) return null;
-            // Guard against redundant updates
             if (prev.data?.[key] === value) return prev;
-            
             const updated = { ...prev, data: { ...prev.data, [key]: value } };
-            
-            // Push change to active graph if handler exists
             if (onNodeDataChangeRef.current) {
                 onNodeDataChangeRef.current(updated.id, key, value);
             }
-            
             return updated;
         });
     }, []);
 
-    // FIX: Stable context setters
     const setOnNodeDataChange = useCallback((cb: (nodeId: string, key: string, value: any) => void) => {
         onNodeDataChangeRef.current = cb;
     }, []);
@@ -353,6 +352,7 @@ const App: React.FC = () => {
         onNodeDataChange: (id, k, v) => onNodeDataChangeRef.current?.(id, k, v),
         setOnNodeDataChange,
         selectionType, setSelectionType,
+        meshComponentMode, setMeshComponentMode,
         tool, setTool,
         transformSpace, setTransformSpace,
         isPlaying,
@@ -360,7 +360,7 @@ const App: React.FC = () => {
         uiConfig, setUiConfig,
         gridConfig, setGridConfig,
         snapSettings, setSnapSettings
-    }), [entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, updateInspectedNodeData, setOnNodeDataChange, selectionType, tool, transformSpace, isPlaying, gizmoConfig, uiConfig, gridConfig, snapSettings]);
+    }), [entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, updateInspectedNodeData, setOnNodeDataChange, selectionType, meshComponentMode, tool, transformSpace, isPlaying, gizmoConfig, uiConfig, gridConfig, snapSettings]);
 
     return (
         <EditorContext.Provider value={contextValue}>

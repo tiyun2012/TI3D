@@ -1,9 +1,10 @@
 
 import React, { useContext, useState, useMemo } from 'react';
-import { EditorContext } from '../contexts/EditorContext';
+import { EditorContext, VertexShape } from '../contexts/EditorContext';
 import { GizmoArrowShape, GizmoCenterShape, GizmoPlaneShape } from './gizmos/GizmoUtils';
 import { Icon } from './Icon';
 import { Slider } from './ui/Slider';
+import { Select } from './ui/Select';
 import { engineInstance } from '../services/engine';
 
 interface Props {
@@ -39,14 +40,6 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   const [ppConfig, setPpConfig] = useState(engineInstance.getPostProcessConfig());
   const [search, setSearch] = useState('');
 
-  const setArrowShape = (shape: GizmoArrowShape) => setGizmoConfig({ ...gizmoConfig, translationShape: shape });
-  const setCenterShape = (shape: GizmoCenterShape) => setGizmoConfig({ ...gizmoConfig, centerHandleShape: shape });
-  const setArrowSize = (size: number) => setGizmoConfig({ ...gizmoConfig, arrowSize: size });
-  const setArrowOffset = (offset: number) => setGizmoConfig({ ...gizmoConfig, arrowOffset: offset });
-  const setRingSize = (size: number) => setGizmoConfig({ ...gizmoConfig, rotationRingSize: size });
-  
-  const updateConfig = (key: keyof typeof gizmoConfig, value: any) => setGizmoConfig({ ...gizmoConfig, [key]: value });
-  
   const updateUiConfig = (key: keyof typeof uiConfig, value: any) => setUiConfig({ ...uiConfig, [key]: value });
 
   const updatePp = (key: string, val: any) => {
@@ -80,21 +73,6 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
       return keywords.some(k => k.toLowerCase().includes(term));
   };
 
-  const PreviewCone = <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L4 22h16L12 2z"/></svg>;
-  const PreviewCube = <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16"/></svg>;
-  const PreviewRhombus = <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 12l10 10 10-10L12 2z"/></svg>;
-  const PreviewTetra = <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L3 18l9 4 9-4L12 2z"/></svg>;
-  const PreviewX = <Icon name="X" size={20} />;
-  const PreviewQuadCircles = (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-          <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="2"/>
-          <circle cx="16" cy="8" r="2" />
-          <circle cx="8" cy="8" r="2" />
-          <circle cx="16" cy="16" r="2" />
-          <circle cx="8" cy="16" r="2" />
-      </svg>
-  );
-
   return (
     <>
         <div className="p-3 border-b border-white/10 bg-black/20">
@@ -112,6 +90,64 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
         </div>
 
         <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1 max-h-[70vh]">
+            {showSection(['Vertex', 'Mesh', 'Edge', 'Color', 'Visuals', 'Shape', 'Selection']) && (
+                <div className="space-y-3">
+                    <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">
+                        <Icon name="Box" size={12} /> Visuals & Selection
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="flex items-center justify-between bg-input-bg p-3 rounded border border-white/5">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Object Edge Highlight</span>
+                            <input 
+                                type="checkbox" 
+                                checked={uiConfig.selectionEdgeHighlight} 
+                                onChange={(e) => updateUiConfig('selectionEdgeHighlight', e.target.checked)} 
+                                aria-label="Selection Edge Highlight" 
+                            />
+                        </div>
+                        <div className="bg-input-bg p-3 rounded border border-white/5 flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Selection Color</span>
+                            <input 
+                                type="color" 
+                                className="w-6 h-6 rounded cursor-pointer bg-transparent border-none" 
+                                value={uiConfig.selectionEdgeColor} 
+                                onChange={(e) => updateUiConfig('selectionEdgeColor', e.target.value)} 
+                                aria-label="Selection Edge Color" 
+                            />
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider px-1">Vertex Shape</span>
+                            <Select 
+                                value={uiConfig.vertexShape}
+                                options={[
+                                    { label: 'Dot (Crosshair)', value: 'DOT' },
+                                    { label: 'Cube-Dot (Volumetric)', value: 'CUBE' }
+                                ]}
+                                onChange={(v) => updateUiConfig('vertexShape', v as VertexShape)}
+                            />
+                        </div>
+                        <div className="bg-input-bg p-3 rounded border border-white/5 flex items-center justify-between self-end h-[38px]">
+                            <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Vertex Color</span>
+                            <input 
+                                type="color" 
+                                className="w-6 h-6 rounded cursor-pointer bg-transparent border-none" 
+                                value={uiConfig.vertexColor} 
+                                onChange={(e) => updateUiConfig('vertexColor', e.target.value)} 
+                                aria-label="Vertex Color" 
+                            />
+                        </div>
+                    </div>
+                    <Slider 
+                        label="Vertex Scale Factor" 
+                        value={uiConfig.vertexSize} 
+                        onChange={(v) => updateUiConfig('vertexSize', v)} 
+                        min={0.1} max={3.0} step={0.1} 
+                    />
+                </div>
+            )}
+
             {showSection(['Window', 'Interface', 'Radius', 'Handle', 'Resize', 'Opacity']) && (
                 <div className="space-y-3">
                     <h3 className="text-xs font-bold text-text-secondary uppercase flex items-center gap-2 border-b border-white/5 pb-1">

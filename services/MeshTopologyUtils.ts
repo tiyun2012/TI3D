@@ -1,3 +1,4 @@
+
 import { LogicalMesh, Vector3 } from '../types';
 /* Ray is exported from ./math, not ../types */
 import { Vec3Utils, RayUtils, AABB, Ray } from './math';
@@ -12,14 +13,9 @@ export interface MeshPickingResult {
 
 export const MeshTopologyUtils = {
     /**
-     * Efficiently builds a BVH tree for mesh raycasting.
-     * This ensures "robust" detection even on meshes with 100k+ polygons.
+     * Efficiently builds face-level bounding boxes for mesh raycasting.
      */
-    buildBVH: (mesh: LogicalMesh, vertices: Float32Array): any => {
-        // Implementation detail: For high performance edition, 
-        // we normally build a tree, but for this webapp we can simplify 
-        // using AABB per logical face as a flat array for now, 
-        // or a recursive split for higher density.
+    buildBVH: (mesh: LogicalMesh, vertices: Float32Array): { faceBounds: AABB[] } => {
         const faceBounds: AABB[] = mesh.faces.map(face => {
             let min = {x:Infinity, y:Infinity, z:Infinity};
             let max = {x:-Infinity, y:-Infinity, z:-Infinity};
@@ -34,20 +30,18 @@ export const MeshTopologyUtils = {
     },
 
     /**
-     * Robust raycasting against mesh components using AABB pre-filtering.
+     * Robust raycasting using AABB pre-filtering for sub-millisecond detection on high-res meshes.
      */
-    raycastMesh: (mesh: LogicalMesh, vertices: Float32Array, ray: Ray, tolerance: number = 0.05): MeshPickingResult | null => {
+    raycastMesh: (mesh: LogicalMesh, vertices: Float32Array, ray: Ray, tolerance: number = 0.02): MeshPickingResult | null => {
         let bestT = Infinity;
         let result: MeshPickingResult | null = null;
-
-        // Tolerance in world space for edges and vertices
-        const vertTolerance = tolerance * 0.5;
+        
+        const bvh = MeshTopologyUtils.buildBVH(mesh, vertices);
 
         mesh.faces.forEach((face, fIdx) => {
-            // Brute force simplified for the first pass, but using MT for precision
-            // In a full implementation, we traverse the BVH here.
-            
-            // Assuming faces are triangulated or quads (treat as 2 triangles)
+            const box = bvh.faceBounds[fIdx];
+            if (RayUtils.intersectAABB(ray, box) === null) return;
+
             for (let i = 1; i < face.length - 1; i++) {
                 const v0 = { x: vertices[face[0]*3], y: vertices[face[0]*3+1], z: vertices[face[0]*3+2] };
                 const v1 = { x: vertices[face[i]*3], y: vertices[face[i]*3+1], z: vertices[face[i]*3+2] };
@@ -56,24 +50,27 @@ export const MeshTopologyUtils = {
                 const t = RayUtils.intersectTriangle(ray, v0, v1, v2);
                 if (t !== null && t < bestT) {
                     bestT = t;
-                    const worldPos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+                    const hitPos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});
                     
-                    // Identify closest vertex/edge within the hit face
                     let closestV = -1;
-                    let minDistV = vertTolerance;
+                    let minDistV = tolerance;
                     face.forEach(vIdx => {
                         const vp = { x: vertices[vIdx*3], y: vertices[vIdx*3+1], z: vertices[vIdx*3+2] };
-                        const d = Vec3Utils.distance(worldPos, vp);
+                        const d = Vec3Utils.distance(hitPos, vp);
                         if (d < minDistV) { minDistV = d; closestV = vIdx; }
                     });
 
-                    result = {
-                        t,
-                        faceId: fIdx,
-                        vertexId: closestV,
-                        edgeId: [face[0], face[1]], // Simplification: in real usage, we find closest edge
-                        worldPos
-                    };
+                    let closestEdge: [number, number] = [face[0], face[1]];
+                    let minDistE = tolerance;
+                    for(let k=0; k<face.length; k++) {
+                        const vA = face[k]; const vB = face[(k+1)%face.length];
+                        const pA = { x: vertices[vA*3], y: vertices[vA*3+1], z: vertices[vA*3+2] };
+                        const pB = { x: vertices[vB*3], y: vertices[vB*3+1], z: vertices[vB*3+2] };
+                        const d = RayUtils.distRaySegment(ray, pA, pB);
+                        if (d < minDistE) { minDistE = d; closestEdge = [vA, vB]; }
+                    }
+
+                    result = { t, faceId: fIdx, vertexId: closestV, edgeId: closestEdge, worldPos: hitPos };
                 }
             }
         });

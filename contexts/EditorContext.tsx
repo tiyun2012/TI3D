@@ -1,8 +1,10 @@
 
 import React from 'react';
-import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection } from '../types';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
 import { GizmoConfiguration } from '../components/gizmos/GizmoUtils';
+
+export type VertexShape = 'DOT' | 'CUBE';
 
 export interface UIConfiguration {
     windowBorderRadius: number;
@@ -10,6 +12,12 @@ export interface UIConfiguration {
     resizeHandleColor: string;
     resizeHandleOpacity: number;
     resizeHandleLength: number;
+    // New Visual Preferences
+    selectionEdgeHighlight: boolean;
+    selectionEdgeColor: string;
+    vertexSize: number;
+    vertexColor: string;
+    vertexShape: VertexShape;
 }
 
 export interface GridConfiguration {
@@ -34,7 +42,12 @@ export const DEFAULT_UI_CONFIG: UIConfiguration = {
     resizeHandleThickness: 6,
     resizeHandleColor: '#4f80f8',
     resizeHandleOpacity: 0.2,
-    resizeHandleLength: 1.0
+    resizeHandleLength: 1.0,
+    selectionEdgeHighlight: true,
+    selectionEdgeColor: '#4f80f8', // Unity Blue
+    vertexSize: 1.0,
+    vertexColor: '#a855f7', // Purple
+    vertexShape: 'DOT'
 };
 
 export const DEFAULT_GRID_CONFIG: GridConfiguration = {
@@ -79,6 +92,10 @@ export interface EditorContextType {
 
   selectionType: SelectionType;
   setSelectionType: (type: SelectionType) => void;
+
+  // Maya-style Mesh Interaction mode
+  meshComponentMode: MeshComponentMode;
+  setMeshComponentMode: (mode: MeshComponentMode) => void;
 
   tool: ToolType;
   setTool: (tool: ToolType) => void;

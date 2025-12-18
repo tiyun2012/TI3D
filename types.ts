@@ -8,6 +8,7 @@ export interface Vector3 {
 
 export type RotationOrder = 'XYZ' | 'XZY' | 'YXZ' | 'YZX' | 'ZXY' | 'ZYX';
 export type TransformSpace = 'World' | 'Local' | 'Gimbal';
+export type MeshComponentMode = 'OBJECT' | 'VERTEX' | 'EDGE' | 'FACE';
 
 export enum ComponentType {
   TRANSFORM = 'Transform',
@@ -72,7 +73,6 @@ export interface PerformanceMetrics {
 // Mesh Topology Types
 export interface LogicalMesh {
     // Defines the original Faces (Quads/Polygons)
-    // e.g. [0, 1, 2, 3] is one face
     faces: number[][]; 
     
     // Map: Which Render Triangle belongs to which Logical Face?

@@ -114,7 +114,6 @@ export const RayUtils = {
     return tmin > 0 ? tmin : tmax;
   },
 
-  // Möller–Trumbore intersection algorithm
   intersectTriangle: (ray: Ray, v0: Vec3, v1: Vec3, v2: Vec3): number | null => {
     const edge1 = Vec3Utils.subtract(v1, v0, {x:0,y:0,z:0});
     const edge2 = Vec3Utils.subtract(v2, v0, {x:0,y:0,z:0});
@@ -130,6 +129,29 @@ export const RayUtils = {
     if (v < 0.0 || u + v > 1.0) return null;
     const t = f * Vec3Utils.dot(edge2, q);
     return t > 0.00001 ? t : null;
+  },
+
+  /**
+   * Shortest distance from a ray to a finite segment.
+   * Useful for edge picking.
+   */
+  distRaySegment: (ray: Ray, p1: Vec3, p2: Vec3): number => {
+    const u = Vec3Utils.subtract(p2, p1, {x:0,y:0,z:0});
+    const v = ray.direction;
+    const w = Vec3Utils.subtract(p1, ray.origin, {x:0,y:0,z:0});
+    const a = Vec3Utils.dot(u, u);
+    const b = Vec3Utils.dot(u, v);
+    const c = Vec3Utils.dot(v, v);
+    const d = Vec3Utils.dot(u, w);
+    const e = Vec3Utils.dot(v, w);
+    const D = a * c - b * b;
+    let sc, tc;
+    if (D < 1e-6) { sc = 0.0; tc = b > c ? d / b : e / c; }
+    else { sc = (b * e - c * d) / D; tc = (a * e - b * d) / D; }
+    sc = Math.max(0, Math.min(1, sc));
+    const closestOnSeg = Vec3Utils.add(p1, Vec3Utils.scale(u, sc, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+    const closestOnRay = Vec3Utils.add(ray.origin, Vec3Utils.scale(v, tc, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+    return Vec3Utils.distance(closestOnSeg, closestOnRay);
   }
 };
 
