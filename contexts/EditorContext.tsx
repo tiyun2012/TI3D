@@ -54,8 +54,8 @@ export const DEFAULT_GRID_CONFIG: GridConfiguration = {
     visible: true,
     size: 1.0,         // 1 Meter primary lines
     subdivisions: 10,  // 10cm sub-divisions (Maya style)
-    opacity: 0.6,      // Updated to 0.6 default
-    fadeDistance: 300.0,
+    opacity: 0.9,      // Default 0.9
+    fadeDistance: 400.0,
     color: '#808080',
     excludeFromPostProcess: false
 };

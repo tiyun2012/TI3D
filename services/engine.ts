@@ -1,4 +1,6 @@
 
+// services/engine.ts
+
 import { SoAEntitySystem } from './ecs/EntitySystem';
 import { SceneGraph } from './SceneGraph';
 import { PhysicsSystem } from './systems/PhysicsSystem';
@@ -27,7 +29,7 @@ export class Engine {
     meshComponentMode: MeshComponentMode = 'OBJECT';
     subSelection = {
         vertexIds: new Set<number>(),
-        edgeIds: new Set<string>(), // Keyed as "v1-v2" (sorted)
+        edgeIds: new Set<string>(), 
         faceIds: new Set<number>()
     };
 
@@ -121,13 +123,11 @@ export class Engine {
         }
         this.sceneGraph.update();
 
-        // Prepare debug overlays (vertices/edges) BEFORE primary render pass
         if (this.currentViewProj && !this.isPlaying) {
             this.debugRenderer.begin();
             this.drawMeshComponentOverlay();
         }
 
-        // Render pass: Handles Scene + Debug Overlays in one depth-sorted sequence
         if (this.currentViewProj) {
              this.renderer.render(
                 this.ecs.store, 
@@ -296,7 +296,86 @@ export class Engine {
         return MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, localRay, 0.05);
     }
 
-    selectEntitiesInRect(x: number, y: number, w: number, h: number): string[] { return []; }
+    /**
+     * High-Performance Precise Marquee Selection
+     * Projects the 8 corners of each object's 3D AABB into screen space (NDC)
+     * and performs a 2D AABB overlap check.
+     */
+    selectEntitiesInRect(rx: number, ry: number, rw: number, rh: number): string[] { 
+        if (!this.currentViewProj || rw < 1 || rh < 1) return [];
+
+        const width = this.currentWidth;
+        const height = this.currentHeight;
+
+        // Selection rect in NDC (-1 to 1)
+        const selX1 = (rx / width) * 2 - 1;
+        const selY1 = 1 - (ry / height) * 2;
+        const selX2 = ((rx + rw) / width) * 2 - 1;
+        const selY2 = 1 - ((ry + rh) / height) * 2;
+
+        const selLeft = Math.min(selX1, selX2);
+        const selRight = Math.max(selX1, selX2);
+        const selBottom = Math.min(selY1, selY2);
+        const selTop = Math.max(selY1, selY2);
+
+        const hitIds: string[] = [];
+        const store = this.ecs.store;
+        const vp = this.currentViewProj;
+
+        // 8 Corners of a standard unit cube centered at origin
+        const corners = [
+            [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5],
+            [-0.5,  0.5, -0.5], [0.5,  0.5, -0.5],
+            [-0.5, -0.5,  0.5], [0.5, -0.5,  0.5],
+            [-0.5,  0.5,  0.5], [0.5,  0.5,  0.5]
+        ];
+
+        for (let i = 0; i < this.ecs.count; i++) {
+            if (!store.isActive[i]) continue;
+
+            const base = i * 16;
+            const wm = store.worldMatrix.subarray(base, base + 16);
+
+            let screenMinX = Infinity, screenMaxX = -Infinity;
+            let screenMinY = Infinity, screenMaxY = -Infinity;
+            let anyInFront = false;
+
+            // Project all 8 corners to find screen-space AABB
+            for (let j = 0; j < 8; j++) {
+                const cx = corners[j][0], cy = corners[j][1], cz = corners[j][2];
+                
+                // Local to World
+                const wx = wm[0] * cx + wm[4] * cy + wm[8] * cz + wm[12];
+                const wy = wm[1] * cx + wm[5] * cy + wm[9] * cz + wm[13];
+                const wz = wm[2] * cx + wm[6] * cy + wm[10] * cz + wm[14];
+
+                // World to Clip
+                const clipX = vp[0] * wx + vp[4] * wy + vp[8] * wz + vp[12];
+                const clipY = vp[1] * wx + vp[5] * wy + vp[9] * wz + vp[13];
+                const clipW = vp[3] * wx + vp[7] * wy + vp[11] * wz + vp[15];
+
+                if (clipW > 0) {
+                    const ndcX = clipX / clipW;
+                    const ndcY = clipY / clipW;
+                    screenMinX = Math.min(screenMinX, ndcX);
+                    screenMaxX = Math.max(screenMaxX, ndcX);
+                    screenMinY = Math.min(screenMinY, ndcY);
+                    screenMaxY = Math.max(screenMaxY, ndcY);
+                    anyInFront = true;
+                }
+            }
+
+            if (!anyInFront) continue;
+
+            // Precise 2D Overlap test
+            if (!(screenMaxX < selLeft || screenMinX > selRight || 
+                  screenMaxY < selBottom || screenMinY > selTop)) {
+                hitIds.push(store.ids[i]);
+            }
+        }
+        return hitIds;
+    }
+
     applyMaterialToSelected(assetId: string) { const matID = assetManager.getMaterialID(assetId); this.selectedIndices.forEach(idx => { this.ecs.store.materialIndex[idx] = matID; }); this.notifyUI(); }
     loadScene(json: string) { this.ecs.deserialize(json, this.sceneGraph); this.notifyUI(); }
     saveScene() { return this.ecs.serialize(); }

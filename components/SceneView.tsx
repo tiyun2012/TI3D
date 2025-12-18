@@ -1,4 +1,6 @@
 
+// components/SceneView.tsx
+
 import React, { useRef, useState, useEffect, useLayoutEffect, useMemo, useContext } from 'react';
 import { Entity, ToolType, PerformanceMetrics, MeshComponentMode } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
@@ -103,7 +105,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       engineInstance.meshComponentMode = meshComponentMode;
   }, [meshComponentMode]);
 
-  const { vpMatrix, invVpMatrix, eye } = useMemo(() => {
+  const { vpMatrix, eye } = useMemo(() => {
     const { width, height } = viewport;
     const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta);
     const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
@@ -114,15 +116,13 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const projMatrix = Mat4Utils.create();
     Mat4Utils.perspective(Math.PI / 4, width/height, 0.1, 1000, projMatrix);
     const vp = Mat4Utils.create(); Mat4Utils.multiply(projMatrix, viewMatrix, vp);
-    const invVp = Mat4Utils.create(); Mat4Utils.invert(vp, invVp);
-    return { vpMatrix: vp, invVpMatrix: invVp, eye: eyeVec };
+    return { vpMatrix: vp, eye: eyeVec };
   }, [camera, viewport.width, viewport.height]);
 
   useEffect(() => {
     if (viewport.width > 1) engineInstance.updateCamera(vpMatrix, eye, viewport.width, viewport.height);
   }, [vpMatrix, eye, viewport.width, viewport.height]);
 
-  // Maya Hotkeys
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
         const isInput = document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA';
@@ -135,7 +135,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             }
         }
         
-        // F8: Object, F9: Vert, F10: Edge, F11: Face
         if (e.key === 'F8') { e.preventDefault(); setMeshComponentMode('OBJECT'); }
         if (e.key === 'F9') { e.preventDefault(); setMeshComponentMode('VERTEX'); }
         if (e.key === 'F10') { e.preventDefault(); setMeshComponentMode('EDGE'); }
@@ -203,9 +202,31 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     }
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e: React.MouseEvent) => {
     if (selectionBox?.isSelecting) {
-      setSelectionBox(null);
+        const x = Math.min(selectionBox.startX, selectionBox.currentX);
+        const y = Math.min(selectionBox.startY, selectionBox.currentY);
+        const w = Math.abs(selectionBox.currentX - selectionBox.startX);
+        const h = Math.abs(selectionBox.currentY - selectionBox.startY);
+        
+        if (w > 3 || h > 3) {
+            const hitIds = engineInstance.selectEntitiesInRect(x, y, w, h);
+            if (e.shiftKey) {
+                const nextSelection = new Set(selectedIds);
+                hitIds.forEach(id => {
+                    if (nextSelection.has(id)) nextSelection.delete(id);
+                    else nextSelection.add(id);
+                });
+                onSelect(Array.from(nextSelection));
+            } else {
+                onSelect(hitIds);
+            }
+        } else {
+            const hitId = engineInstance.selectEntityAt(selectionBox.startX, selectionBox.startY, viewport.width, viewport.height);
+            if (hitId) onSelect(e.shiftKey ? [...selectedIds, hitId] : [hitId]);
+            else if (!e.shiftKey) onSelect([]);
+        }
+        setSelectionBox(null);
     }
   };
 
@@ -262,7 +283,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             <div className="relative" ref={viewMenuRef}>
                 <div className="bg-black/40 backdrop-blur border border-white/5 rounded-md flex items-center px-2 py-1 text-[10px] text-text-secondary min-w-[100px] justify-between cursor-pointer hover:bg-white/5 group" onClick={() => setIsViewMenuOpen(!isViewMenuOpen)}>
                     <div className="flex items-center gap-2"><Icon name={(VIEW_MODES.find(m => m.id === renderMode) || VIEW_MODES[0]).icon as any} size={12} className="text-accent" /><span className="font-semibold text-white/90">{(VIEW_MODES.find(m => m.id === renderMode) || VIEW_MODES[0]).label}</span></div>
-                    <Icon name="ChevronDown" size={10} className={`opacity-50 group-hover:opacity-100 transition-transform ${isViewMenuOpen ? 'rotate-180' : ''}`} />
+                    <Icon name="ChevronDown" size={10} className={`text-text-secondary transition-transform ${isViewMenuOpen ? 'rotate-180' : ''}`} />
                 </div>
                 {isViewMenuOpen && (
                     <div className="absolute top-full left-0 mt-1 w-32 bg-[#252525] border border-white/10 rounded-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100 z-50">
@@ -273,7 +294,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 )}
             </div>
 
-            {/* Selection Mode HUD */}
             {meshComponentMode !== 'OBJECT' && (
                 <div className="bg-accent/20 backdrop-blur border border-accent/40 rounded-md flex items-center px-3 py-1 text-[10px] text-accent font-bold uppercase tracking-widest animate-pulse">
                     Selection Mode: {meshComponentMode}

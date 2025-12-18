@@ -14,6 +14,8 @@ export interface PostProcessConfig {
     toneMapping: boolean;
 }
 
+// --- Shader Templates ---
+
 const VS_TEMPLATE = `#version 300 es
 precision highp float;
 precision highp int;
@@ -114,6 +116,56 @@ void main() {
     
     outColor = vec4(result, 1.0);
     outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0);
+}`;
+
+const GRID_VS = `#version 300 es
+layout(location=0) in vec2 a_position;
+uniform mat4 u_viewProjection;
+out vec3 v_worldPos;
+void main() {
+    v_worldPos = vec3(a_position.x, 0.0, a_position.y) * 15000.0;
+    gl_Position = u_viewProjection * vec4(v_worldPos, 1.0);
+}`;
+
+const GRID_FS = `#version 300 es
+precision mediump float;
+in vec3 v_worldPos;
+layout(location=0) out vec4 outColor;
+
+uniform float u_opacity, u_gridSize, u_subdivisions, u_fadeDist;
+uniform vec3 u_gridColor;
+
+float getGrid(vec2 pos, float size, float thickness) {
+    vec2 r = pos / size;
+    vec2 grid = abs(fract(r - 0.5) - 0.5) / fwidth(r);
+    float line = min(grid.x, grid.y);
+    return 1.0 - smoothstep(thickness - 0.5, thickness + 0.5, line);
+}
+
+void main() {
+    float major = getGrid(v_worldPos.xz, u_gridSize, 0.6); 
+    float minor = getGrid(v_worldPos.xz, u_gridSize / u_subdivisions, 0.3);
+    
+    float xAxis = 1.0 - smoothstep(0.0, fwidth(v_worldPos.z) * 1.5, abs(v_worldPos.z));
+    float zAxis = 1.0 - smoothstep(0.0, fwidth(v_worldPos.x) * 1.5, abs(v_worldPos.x));
+    
+    float dist = length(v_worldPos.xz);
+    float fade = max(0.0, 1.0 - dist / u_fadeDist);
+    
+    vec3 color = u_gridColor;
+    float alpha = max(major * u_opacity, minor * u_opacity * 0.3);
+
+    if (xAxis > 0.01) {
+        color = mix(color, vec3(0.9, 0.1, 0.1), xAxis);
+        alpha = max(alpha, xAxis * u_opacity * 1.5);
+    }
+    if (zAxis > 0.01) {
+        color = mix(color, vec3(0.1, 0.2, 0.9), zAxis);
+        alpha = max(alpha, zAxis * u_opacity * 1.5);
+    }
+    
+    if (alpha * fade < 0.005) discard;
+    outColor = vec4(color, alpha * fade);
 }`;
 
 const PP_VS = `#version 300 es
@@ -221,7 +273,7 @@ export class WebGLRenderer {
     private fboHeight: number = 0;
     
     drawCalls = 0; triangleCount = 0; showGrid = true;
-    gridOpacity = 0.6; gridSize = 1.0; gridSubdivisions = 10; gridFadeDistance = 400.0;
+    gridOpacity = 0.9; gridSize = 1.0; gridSubdivisions = 10; gridFadeDistance = 400.0;
     gridColor = [0.5, 0.5, 0.5]; gridExcludePP = true; 
     renderMode: number = 0;
     ppConfig: PostProcessConfig = { enabled: true, vignetteStrength: 1.0, aberrationStrength: 0.002, toneMapping: true };
@@ -241,72 +293,7 @@ export class WebGLRenderer {
         this.defaultProgram = this.createProgram(gl, defaultVS, FS_DEFAULT_SOURCE);
         this.initTextureArray(gl);
         this.initPostProcess(gl);
-        this.initGridShader(gl);
-    }
-
-    initGridShader(gl: WebGL2RenderingContext) {
-        const gridVS = `#version 300 es
-        layout(location=0) in vec2 a_position;
-        uniform mat4 u_viewProjection;
-        out vec3 v_worldPos;
-        void main() {
-            // Massive infinite plane construction
-            vec3 worldPos = vec3(a_position.x, 0.0, a_position.y) * 12000.0;
-            v_worldPos = worldPos;
-            gl_Position = u_viewProjection * vec4(worldPos, 1.0);
-        }`;
-
-        const gridFS = `#version 300 es
-        precision mediump float;
-        in vec3 v_worldPos;
-        layout(location=0) out vec4 outColor;
-        
-        uniform float u_opacity, u_gridSize, u_subdivisions, u_fadeDist;
-        uniform vec3 u_gridColor;
-
-        float getGridFactor(float coord, float size, float thickness) {
-            float dist = abs(fract(coord / size - 0.5) - 0.5);
-            float df = fwidth(coord / size);
-            // Thinner lines: Reduced multiplier from 2.5 to 1.2
-            return 1.0 - smoothstep(0.0, df * thickness, dist);
-        }
-
-        void main() {
-            // Thinner grid lines for both axes
-            float majorX = getGridFactor(v_worldPos.x, u_gridSize, 1.2);
-            float majorZ = getGridFactor(v_worldPos.z, u_gridSize, 1.2);
-            // Subdivision lines are even thinner
-            float minorX = getGridFactor(v_worldPos.x, u_gridSize / u_subdivisions, 1.0);
-            float minorZ = getGridFactor(v_worldPos.z, u_gridSize / u_subdivisions, 1.0);
-            
-            float majorGrid = max(majorX, majorZ);
-            float minorGrid = max(minorX, minorZ);
-            
-            // Refined Axis Highlighting (Red for X, Blue for Z)
-            float xAxisLine = 1.0 - smoothstep(0.0, fwidth(v_worldPos.z) * 1.5, abs(v_worldPos.z));
-            float zAxisLine = 1.0 - smoothstep(0.0, fwidth(v_worldPos.x) * 1.5, abs(v_worldPos.x));
-            
-            float distToCamera = length(v_worldPos.xz);
-            float fade = max(0.0, 1.0 - distToCamera / u_fadeDist);
-            
-            vec3 color = u_gridColor;
-            // Visible subdivisions: Multiplier increased to 0.5 for better presence
-            float alpha = max(majorGrid * u_opacity, minorGrid * u_opacity * 0.5);
-            
-            // Standard Axis Coloring
-            if (xAxisLine > 0.0) {
-                color = mix(color, vec3(0.9, 0.1, 0.1), xAxisLine);
-                alpha = max(alpha, xAxisLine * 0.9);
-            }
-            if (zAxisLine > 0.0) {
-                color = mix(color, vec3(0.1, 0.3, 0.9), zAxisLine);
-                alpha = max(alpha, zAxisLine * 0.9);
-            }
-            
-            if (alpha * fade < 0.001) discard;
-            outColor = vec4(color, alpha * fade);
-        }`;
-        this.gridProgram = this.createProgram(gl, gridVS, gridFS);
+        this.gridProgram = this.createProgram(gl, GRID_VS, GRID_FS);
     }
 
     initPostProcess(gl: WebGL2RenderingContext) {
@@ -499,8 +486,6 @@ export class WebGLRenderer {
         gl.useProgram(this.gridProgram); 
         gl.enable(gl.BLEND); 
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); 
-        
-        // Depth-test against scene but don't write to depth buffer
         gl.enable(gl.DEPTH_TEST);
         gl.depthFunc(gl.LEQUAL);
         gl.depthMask(false);
@@ -512,7 +497,6 @@ export class WebGLRenderer {
         gl.uniform1f(gl.getUniformLocation(this.gridProgram, 'u_fadeDist'), this.gridFadeDistance);
         gl.uniform3fv(gl.getUniformLocation(this.gridProgram, 'u_gridColor'), this.gridColor);
         
-        // Render using the quad VAO as the surface for the grid
         gl.bindVertexArray(this.quadVAO); 
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); 
         
