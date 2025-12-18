@@ -221,7 +221,7 @@ export class WebGLRenderer {
     private fboHeight: number = 0;
     
     drawCalls = 0; triangleCount = 0; showGrid = true;
-    gridOpacity = 0.3; gridSize = 1.0; gridSubdivisions = 10; gridFadeDistance = 400.0;
+    gridOpacity = 0.6; gridSize = 1.0; gridSubdivisions = 10; gridFadeDistance = 400.0;
     gridColor = [0.5, 0.5, 0.5]; gridExcludePP = true; 
     renderMode: number = 0;
     ppConfig: PostProcessConfig = { enabled: true, vignetteStrength: 1.0, aberrationStrength: 0.002, toneMapping: true };
@@ -250,8 +250,8 @@ export class WebGLRenderer {
         uniform mat4 u_viewProjection;
         out vec3 v_worldPos;
         void main() {
-            // Reconstruct a massive floor plane from the quad
-            vec3 worldPos = vec3(a_position.x, 0.0, a_position.y) * 10000.0;
+            // Massive infinite plane construction
+            vec3 worldPos = vec3(a_position.x, 0.0, a_position.y) * 12000.0;
             v_worldPos = worldPos;
             gl_Position = u_viewProjection * vec4(worldPos, 1.0);
         }`;
@@ -264,41 +264,43 @@ export class WebGLRenderer {
         uniform float u_opacity, u_gridSize, u_subdivisions, u_fadeDist;
         uniform vec3 u_gridColor;
 
-        float getGridFactor(float coord, float size) {
+        float getGridFactor(float coord, float size, float thickness) {
             float dist = abs(fract(coord / size - 0.5) - 0.5);
             float df = fwidth(coord / size);
-            // Constant screen-space line width
-            return 1.0 - smoothstep(0.0, df * 2.5, dist);
+            // Thinner lines: Reduced multiplier from 2.5 to 1.2
+            return 1.0 - smoothstep(0.0, df * thickness, dist);
         }
 
         void main() {
-            // Anti-aliased grid lines for both axes
-            float majorX = getGridFactor(v_worldPos.x, u_gridSize);
-            float majorZ = getGridFactor(v_worldPos.z, u_gridSize);
-            float minorX = getGridFactor(v_worldPos.x, u_gridSize / u_subdivisions);
-            float minorZ = getGridFactor(v_worldPos.z, u_gridSize / u_subdivisions);
+            // Thinner grid lines for both axes
+            float majorX = getGridFactor(v_worldPos.x, u_gridSize, 1.2);
+            float majorZ = getGridFactor(v_worldPos.z, u_gridSize, 1.2);
+            // Subdivision lines are even thinner
+            float minorX = getGridFactor(v_worldPos.x, u_gridSize / u_subdivisions, 1.0);
+            float minorZ = getGridFactor(v_worldPos.z, u_gridSize / u_subdivisions, 1.0);
             
             float majorGrid = max(majorX, majorZ);
             float minorGrid = max(minorX, minorZ);
             
-            // Standard Axis Highlighting (Red for X, Blue for Z)
-            float xAxisLine = 1.0 - smoothstep(0.0, fwidth(v_worldPos.z) * 2.5, abs(v_worldPos.z));
-            float zAxisLine = 1.0 - smoothstep(0.0, fwidth(v_worldPos.x) * 2.5, abs(v_worldPos.x));
+            // Refined Axis Highlighting (Red for X, Blue for Z)
+            float xAxisLine = 1.0 - smoothstep(0.0, fwidth(v_worldPos.z) * 1.5, abs(v_worldPos.z));
+            float zAxisLine = 1.0 - smoothstep(0.0, fwidth(v_worldPos.x) * 1.5, abs(v_worldPos.x));
             
             float distToCamera = length(v_worldPos.xz);
             float fade = max(0.0, 1.0 - distToCamera / u_fadeDist);
             
             vec3 color = u_gridColor;
-            float alpha = max(majorGrid * u_opacity, minorGrid * u_opacity * 0.3);
+            // Visible subdivisions: Multiplier increased to 0.5 for better presence
+            float alpha = max(majorGrid * u_opacity, minorGrid * u_opacity * 0.5);
             
-            // Apply Axis Colors
-            if (xAxisLine > 0.01) {
+            // Standard Axis Coloring
+            if (xAxisLine > 0.0) {
                 color = mix(color, vec3(0.9, 0.1, 0.1), xAxisLine);
-                alpha = max(alpha, xAxisLine * 0.8 * u_opacity * 3.0);
+                alpha = max(alpha, xAxisLine * 0.9);
             }
-            if (zAxisLine > 0.01) {
+            if (zAxisLine > 0.0) {
                 color = mix(color, vec3(0.1, 0.3, 0.9), zAxisLine);
-                alpha = max(alpha, zAxisLine * 0.8 * u_opacity * 3.0);
+                alpha = max(alpha, zAxisLine * 0.9);
             }
             
             if (alpha * fade < 0.001) discard;
