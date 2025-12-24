@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext, useMemo, useRef } from 'react';
 import { Entity, ComponentType, Vector3 } from '../../types';
 import { engineInstance } from '../../services/engine';
-import { GizmoBasis, GizmoMath, GIZMO_COLORS, Axis, ColorUtils } from './GizmoUtils';
+import { GizmoBasis, GizmoMath, GIZMO_COLORS, Axis, ColorUtils, GizmoRenderManager } from './GizmoUtils';
 import { EditorContext, SnapSettings } from '../../contexts/EditorContext';
 import { Mat4Utils, Vec3Utils } from '../../services/math';
 
@@ -13,20 +13,18 @@ interface Props {
     containerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-// Data needed during the drag operation (Mutable, does not trigger renders)
 interface DragData {
     axis: Axis;
-    startWorldPos: Vector3;    // Object position at start
-    startHit: Vector3;         // Exact point on the ray/plane where we clicked
+    startWorldPos: Vector3;    
+    startHit: Vector3;         
     invParentMatrix: Float32Array;
-    
-    // Intersection Geometry
     planeNormal: Vector3;
     planeOrigin: Vector3;
-    axisVector?: Vector3;      // Defined if dragging X, Y, or Z
+    axisVector?: Vector3;
+    lastClientX: number;
+    lastClientY: number;
 }
 
-// State container for event listeners to avoid stale closures
 interface GizmoState {
     invViewProj: Float32Array;
     cameraPosition: Vector3;
@@ -34,21 +32,15 @@ interface GizmoState {
     snapSettings: SnapSettings;
 }
 
+const BATCH_THRESHOLD = 3; 
+
 export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewport, containerRef }) => {
     const { gizmoConfig, transformSpace, snapSettings } = useContext(EditorContext)!;
     const [hoverAxis, setHoverAxis] = useState<Axis | null>(null);
-    
-    // --- State: Controls the Lifecycle ---
     const [isDragging, setIsDragging] = useState(false);
-    
-    // --- State: Visual Feedback ---
     const [visualPos, setVisualPos] = useState<Vector3 | null>(null);
-
-    // --- Refs: Stable Data Storage ---
     const dragRef = useRef<DragData | null>(null);
 
-    // Stores the LATEST external props so the event listener can read them without re-bind
-    // Explicitly typed to avoid mismatch between Float32Array<ArrayBuffer> and Mat4
     const stateRef = useRef<GizmoState>({ 
         invViewProj: new Float32Array(16), 
         cameraPosition: basis.cameraPosition, 
@@ -61,7 +53,6 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         return Mat4Utils.invert(vpMatrix, m) || m;
     }, [vpMatrix]);
 
-    // Update Ref
     stateRef.current = { invViewProj, cameraPosition: basis.cameraPosition, viewport, snapSettings };
 
     const effectiveBasis = useMemo(() => {
@@ -93,8 +84,12 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
             const dragData = dragRef.current;
             if (!dragData || !containerRef?.current) return;
 
-            const { invViewProj, cameraPosition, viewport, snapSettings } = stateRef.current;
+            const dx = Math.abs(e.clientX - dragData.lastClientX);
+            const dy = Math.abs(e.clientY - dragData.lastClientY);
+            
+            if (dx <= BATCH_THRESHOLD && dy <= BATCH_THRESHOLD) return;
 
+            const { invViewProj, cameraPosition, viewport, snapSettings } = stateRef.current;
             const rect = containerRef.current.getBoundingClientRect();
             const ray = GizmoMath.screenToRay(
                 e.clientX - rect.left, 
@@ -113,27 +108,18 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
                     delta = GizmoMath.scale(dragData.axisVector, proj);
                 }
 
-                // Snap Logic
                 if (snapSettings.active) {
                     const snap = snapSettings.move;
-                    // For now, snap total movement length or individual components
-                    // Simple approach: Snap the delta vector components relative to World
                     if (transformSpace === 'World') {
                         delta.x = Math.round(delta.x / snap) * snap;
                         delta.y = Math.round(delta.y / snap) * snap;
                         delta.z = Math.round(delta.z / snap) * snap;
                     } else {
-                        // For Local, we should snap along the local axis magnitude
-                        // but delta is in world space.
-                        // Project delta onto axis again to get magnitude, snap mag, re-scale axis.
                         if (dragData.axisVector) {
                             let mag = GizmoMath.dot(delta, dragData.axisVector);
                             mag = Math.round(mag / snap) * snap;
                             delta = GizmoMath.scale(dragData.axisVector, mag);
                         } else {
-                            // Plane drag in local space: Snap X/Y/Z world coords? No, that feels weird if rotated.
-                            // Snap to grid on the plane? Complex. 
-                            // Fallback to world snap for plane drags for stability.
                             delta.x = Math.round(delta.x / snap) * snap;
                             delta.y = Math.round(delta.y / snap) * snap;
                             delta.z = Math.round(delta.z / snap) * snap;
@@ -142,7 +128,6 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
                 }
 
                 const targetWorldPos = GizmoMath.add(dragData.startWorldPos, delta);
-
                 const transform = entity.components[ComponentType.TRANSFORM];
                 const targetLocal = Vec3Utils.create();
                 Vec3Utils.transformMat4(targetWorldPos, dragData.invParentMatrix, targetLocal);
@@ -152,9 +137,12 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
                 transform.position.z = targetLocal.z;
 
                 engineInstance.syncTransforms();
-                engineInstance.tick(0); 
+                GizmoRenderManager.getInstance().requestGizmoRender();
 
                 setVisualPos(targetWorldPos);
+                
+                dragData.lastClientX = e.clientX;
+                dragData.lastClientY = e.clientY;
             }
         };
 
@@ -179,7 +167,6 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
         e.stopPropagation(); e.preventDefault();
         
         const startWorldPos = { ...effectiveBasis.origin }; 
-        
         const parentId = engineInstance.sceneGraph.getParentId(entity.id);
         const parentMat = Mat4Utils.create();
         if (parentId) {
@@ -227,7 +214,9 @@ export const TranslationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, vie
                     invParentMatrix,
                     planeNormal,
                     planeOrigin: startWorldPos,
-                    axisVector
+                    axisVector,
+                    lastClientX: e.clientX,
+                    lastClientY: e.clientY
                 };
                 setVisualPos(startWorldPos);
                 setIsDragging(true);
