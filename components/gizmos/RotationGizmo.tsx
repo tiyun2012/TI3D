@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect, useContext, useMemo, useRef } from 'react';
 import { Entity, ComponentType, Vector3, RotationOrder } from '../../types';
 import { engineInstance } from '../../services/engine';
-import { GizmoBasis, GizmoMath, GIZMO_COLORS, Axis } from './GizmoUtils';
+import { GizmoBasis, GizmoMath, GIZMO_COLORS, Axis, GizmoRenderManager } from './GizmoUtils';
 import { EditorContext } from '../../contexts/EditorContext';
 import { Mat4Utils } from '../../services/math';
 
@@ -14,7 +13,6 @@ interface Props {
     containerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-// --- Geometry Cache (Unchanged) ---
 const TORUS_CACHE = new Map<string, { vertices: Vector3[], indices: number[][] }>();
 const getCachedTorus = (radius: number, tubeRadius: number) => {
     const key = `${radius.toFixed(3)}-${tubeRadius.toFixed(3)}`;
@@ -57,7 +55,6 @@ const getCachedTorus = (radius: number, tubeRadius: number) => {
     return geo;
 };
 
-// --- Helper: Axis-Angle to Matrix (Rodrigues) ---
 const axisAngleToMat4 = (axis: Vector3, angle: number) => {
     const out = new Float32Array(16);
     const x = axis.x, y = axis.y, z = axis.z;
@@ -148,7 +145,6 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             return { ringMatrices: ringMats };
         }
 
-        // Gimbal Logic
         const transform = entity.components[ComponentType.TRANSFORM];
         const rot = transform.rotation;
         const order = (transform.rotationOrder || 'XYZ') as RotationOrder;
@@ -272,7 +268,7 @@ export const RotationGizmo: React.FC<Props> = ({ entity, basis, vpMatrix, viewpo
             else if (dragData.axis === 'Z') transform.rotation.z = dragData.startRotation.z + totalDelta;
             
             engineInstance.notifyUI();
-            engineInstance.tick(0); 
+            GizmoRenderManager.getInstance().requestGizmoRender();
             
             setVisualState({
                 axis: dragData.axis,
