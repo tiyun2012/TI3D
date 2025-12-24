@@ -1,4 +1,3 @@
-
 // services/engine.ts
 
 import { SoAEntitySystem } from './ecs/EntitySystem';
@@ -51,6 +50,12 @@ export class Engine {
     private currentWidth: number = 1;
     private currentHeight: number = 1;
 
+    // --- Frame Rate Management ---
+    private accumulator: number = 0;
+    private readonly fixedTimeStep: number = 1 / 60; // 60 updates per second (0.0166s)
+    private readonly maxFrameTime: number = 0.1;     // Cap dt to 100ms to prevent "spiral of death"
+    // -----------------------------
+
     constructor() {
         this.ecs = new SoAEntitySystem();
         this.sceneGraph = new SceneGraph();
@@ -100,27 +105,28 @@ export class Engine {
     stop() { this.isPlaying = false; this.timeline.isPlaying = false; this.timeline.currentTime = 0; this.notifyUI(); }
     setTimelineTime(time: number) { this.timeline.currentTime = Math.max(0, Math.min(time, this.timeline.duration)); this.notifyUI(); }
 
+    /**
+     * Main Engine Loop
+     * Decouples Physics (Fixed Step) from Rendering (Variable Step)
+     */
     tick(dt: number) {
         const start = performance.now();
-        if (this.timeline.isPlaying) {
-            this.timeline.currentTime += dt * this.timeline.playbackSpeed;
-            if (this.timeline.currentTime >= this.timeline.duration) {
-                if (this.timeline.isLooping) this.timeline.currentTime = 0;
-                else { this.timeline.currentTime = this.timeline.duration; this.timeline.isPlaying = false; this.isPlaying = false; }
-            }
+
+        // 1. Safety Cap: Prevent giant steps if browser hangs
+        const clampedDt = Math.min(dt, this.maxFrameTime);
+
+        // 2. Accumulate time
+        this.accumulator += clampedDt;
+
+        // 3. Fixed Update Loop (Physics & Logic)
+        // This runs exactly 60 times per second of game time, regardless of screen Hz
+        while (this.accumulator >= this.fixedTimeStep) {
+            this.fixedUpdate(this.fixedTimeStep);
+            this.accumulator -= this.fixedTimeStep;
         }
-        if (this.isPlaying) this.physicsSystem.update(dt, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
-        const store = this.ecs.store;
-        for(let i=0; i<this.ecs.count; i++) {
-            if (store.isActive[i]) {
-                const id = store.ids[i];
-                const rigId = store.rigIndex[i];
-                if (rigId > 0) {
-                    const assetId = assetManager.getRigUUID(rigId);
-                    if(assetId) this.executeAssetGraph(id, assetId);
-                }
-            }
-        }
+
+        // 4. Rendering (Every Frame)
+        // We sync transforms here so the render matches the latest physics state
         this.sceneGraph.update();
 
         if (this.currentViewProj && !this.isPlaying) {
@@ -143,10 +149,47 @@ export class Engine {
 
         const end = performance.now();
         this.metrics.frameTime = end - start;
-        this.metrics.fps = 1000 / (this.metrics.frameTime || 1);
+        // Accurate FPS based on the actual delta time passed by the browser
+        this.metrics.fps = dt > 0 ? 1 / dt : 0;
         this.metrics.drawCalls = this.renderer.drawCalls;
         this.metrics.triangleCount = this.renderer.triangleCount;
         this.metrics.entityCount = this.ecs.count;
+    }
+
+    /**
+     * Updates Physics and Game Logic with a constant time step
+     */
+    private fixedUpdate(fixedDt: number) {
+        // Update Timeline
+        if (this.timeline.isPlaying) {
+            this.timeline.currentTime += fixedDt * this.timeline.playbackSpeed;
+            if (this.timeline.currentTime >= this.timeline.duration) {
+                if (this.timeline.isLooping) this.timeline.currentTime = 0;
+                else { 
+                    this.timeline.currentTime = this.timeline.duration; 
+                    this.timeline.isPlaying = false; 
+                    this.isPlaying = false; 
+                }
+            }
+        }
+
+        // Update Physics
+        if (this.isPlaying) {
+            this.physicsSystem.update(fixedDt, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
+        }
+
+        // Update Scripts / Asset Graphs
+        const store = this.ecs.store;
+        for(let i=0; i<this.ecs.count; i++) {
+            if (store.isActive[i]) {
+                const id = store.ids[i];
+                const rigId = store.rigIndex[i];
+                if (rigId > 0) {
+                    const assetId = assetManager.getRigUUID(rigId);
+                    if(assetId) this.executeAssetGraph(id, assetId);
+                }
+            }
+        }
     }
 
     private drawMeshComponentOverlay() {
@@ -296,11 +339,6 @@ export class Engine {
         return MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, localRay, 0.05);
     }
 
-    /**
-     * High-Performance Precise Marquee Selection
-     * Projects the 8 corners of each object's 3D AABB into screen space (NDC)
-     * and performs a 2D AABB overlap check.
-     */
     selectEntitiesInRect(rx: number, ry: number, rw: number, rh: number): string[] { 
         if (!this.currentViewProj || rw < 1 || rh < 1) return [];
 
@@ -340,16 +378,11 @@ export class Engine {
             let screenMinY = Infinity, screenMaxY = -Infinity;
             let anyInFront = false;
 
-            // Project all 8 corners to find screen-space AABB
             for (let j = 0; j < 8; j++) {
                 const cx = corners[j][0], cy = corners[j][1], cz = corners[j][2];
-                
-                // Local to World
                 const wx = wm[0] * cx + wm[4] * cy + wm[8] * cz + wm[12];
                 const wy = wm[1] * cx + wm[5] * cy + wm[9] * cz + wm[13];
                 const wz = wm[2] * cx + wm[6] * cy + wm[10] * cz + wm[14];
-
-                // World to Clip
                 const clipX = vp[0] * wx + vp[4] * wy + vp[8] * wz + vp[12];
                 const clipY = vp[1] * wx + vp[5] * wy + vp[9] * wz + vp[13];
                 const clipW = vp[3] * wx + vp[7] * wy + vp[11] * wz + vp[15];
@@ -367,7 +400,6 @@ export class Engine {
 
             if (!anyInFront) continue;
 
-            // Precise 2D Overlap test
             if (!(screenMaxX < selLeft || screenMinX > selRight || 
                   screenMaxY < selBottom || screenMinY > selTop)) {
                 hitIds.push(store.ids[i]);
