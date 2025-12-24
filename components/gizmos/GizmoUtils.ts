@@ -1,6 +1,6 @@
-
 import { Vector3 } from '../../types';
 import { Mat4Utils, Vec3Utils, Mat4 } from '../../services/math';
+import { engineInstance } from '../../services/engine';
 
 export type Axis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'UNIFORM' | 'VIEW';
 export type GizmoArrowShape = 'CONE' | 'TETRAHEDRON' | 'RHOMBUS' | 'CUBE';
@@ -14,7 +14,7 @@ export interface GizmoConfiguration {
     arrowSize: number;
     arrowOffset: number;
     planeHandleSize: number;
-    planeOffset: number; // New Config
+    planeOffset: number;
     rotationRingSize: number;
     
     rotationRingTubeScale: number;
@@ -79,6 +79,35 @@ export interface GizmoBasis {
     cameraPosition: Vector3;
 }
 
+export class GizmoRenderManager {
+    private static instance: GizmoRenderManager;
+    private lastRenderTime = 0;
+    private renderRequested = false;
+    private readonly MIN_FRAME_INTERVAL = 1000 / 120; // 120fps max
+    
+    static getInstance(): GizmoRenderManager {
+        if (!GizmoRenderManager.instance) {
+            GizmoRenderManager.instance = new GizmoRenderManager();
+        }
+        return GizmoRenderManager.instance;
+    }
+    
+    requestGizmoRender() {
+        if (!this.renderRequested) {
+            this.renderRequested = true;
+            requestAnimationFrame(() => {
+                this.renderRequested = false;
+                const now = performance.now();
+                // Throttle to max 120fps to prevent overloading the render loop
+                if (now - this.lastRenderTime > this.MIN_FRAME_INTERVAL) {
+                    engineInstance.tick(0);
+                    this.lastRenderTime = now;
+                }
+            });
+        }
+    }
+}
+
 export const GizmoMath = {
     normalize: (v: Vector3): Vector3 => {
         const l = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
@@ -119,8 +148,6 @@ export const GizmoMath = {
         };
     },
 
-    // --- Raycasting Helpers ---
-    
     screenToRay: (
         mx: number, my: number, 
         screenWidth: number, screenHeight: number, 
@@ -179,9 +206,7 @@ export const GizmoMath = {
     getPlaneOpacity: (normal: Vector3, cameraPos: Vector3, origin: Vector3): number => {
         const viewDir = GizmoMath.normalize(GizmoMath.sub(cameraPos, origin));
         const dot = Math.abs(GizmoMath.dot(normal, viewDir));
-        // Plane is visible when normal is PARALLEL to view (Dot ~ 1)
-        // Plane is invisible when normal is PERPENDICULAR to view (Dot ~ 0) aka Edge-on
-        if (dot < 0.1) return 0.1; // Edge on, fade out
+        if (dot < 0.1) return 0.1; 
         if (dot < 0.2) return (dot - 0.1) / 0.1; 
         return 1.0;
     }
