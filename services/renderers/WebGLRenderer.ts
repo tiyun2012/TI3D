@@ -712,4 +712,100 @@ initGizmo() {
         gl.disable(gl.BLEND);
         gl.bindVertexArray(null);
     }
+
+
+    // Add this method
+    renderVirtualPivots(store: ComponentStorage, count: number, vp: Float32Array) {
+        if (!this.gl || !this.gizmoProgram || !this.gizmoVAO) return;
+        const gl = this.gl;
+
+        gl.useProgram(this.gizmoProgram);
+        gl.enable(gl.DEPTH_TEST);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+        gl.uniformMatrix4fv(gl.getUniformLocation(this.gizmoProgram, 'u_vp'), false, vp);
+        const uModel = gl.getUniformLocation(this.gizmoProgram, 'u_model');
+        const uColor = gl.getUniformLocation(this.gizmoProgram, 'u_color');
+        const uAlpha = gl.getUniformLocation(this.gizmoProgram, 'u_alpha');
+
+        gl.bindVertexArray(this.gizmoVAO);
+
+        // Matrices for Axis rotations (Reusing logic from renderGizmos)
+        // We will scale these by the entity's vpLength
+        const matX = new Float32Array(16);
+        const matY = new Float32Array(16);
+        const matZ = new Float32Array(16);
+
+        // Pre-allocate for performance
+        const worldMat = new Float32Array(16);
+
+        for (let i = 0; i < count; i++) {
+            if (!store.isActive[i]) continue;
+            if ((store.componentMask[i] & COMPONENT_MASKS.VIRTUAL_PIVOT) === 0) continue;
+
+            const base = i * 16;
+            // Copy entity world matrix
+            for(let k=0; k<16; k++) worldMat[k] = store.worldMatrix[base+k];
+
+            const len = store.vpLength[i];
+
+            // Construct Matrices for the 3 axes based on World Matrix + Axis Rotation + Length Scale
+            // Logic derived from renderGizmos transformation:
+            
+            // Y-Axis (Green) - Up (Default cylinder orientation)
+            // Just scale by len
+            // Model = World * Scale(len, len, len)
+            // (Simplified: Just multiply rotation cols by len)
+            matY.set(worldMat);
+            matY[0]*=len; matY[1]*=len; matY[2]*=len;
+            matY[4]*=len; matY[5]*=len; matY[6]*=len;
+            matY[8]*=len; matY[9]*=len; matY[10]*=len;
+
+            // X-Axis (Red) - Point Right (Rotate Z -90)
+            // Manual rotation applied to worldMat basis
+            // X_new = Y_old * -1
+            // Y_new = X_old
+            matX.set(worldMat);
+            // Apply scale (len) AND rotation
+            // Col 0 = Col 1 * len
+            matX[0] = worldMat[4]*len; matX[1] = worldMat[5]*len; matX[2] = worldMat[6]*len;
+            // Col 1 = Col 0 * -len
+            matX[4] = -worldMat[0]*len; matX[5] = -worldMat[1]*len; matX[6] = -worldMat[2]*len;
+            // Col 2 = Col 2 * len
+            matX[8] = worldMat[8]*len; matX[9] = worldMat[9]*len; matX[10] = worldMat[10]*len;
+
+            // Z-Axis (Blue) - Point Forward (Rotate X 90)
+            // Y_new = Z_old
+            // Z_new = Y_old * -1
+            matZ.set(worldMat);
+            // Col 0 = Col 0 * len
+            matZ[0] = worldMat[0]*len; matZ[1] = worldMat[1]*len; matZ[2] = worldMat[2]*len;
+            // Col 1 = Col 2 * len
+            matZ[4] = worldMat[8]*len; matZ[5] = worldMat[9]*len; matZ[6] = worldMat[10]*len;
+            // Col 2 = Col 1 * -len
+            matZ[8] = -worldMat[4]*len; matZ[9] = -worldMat[5]*len; matZ[10] = -worldMat[6]*len;
+
+            // Draw Y (Green)
+            gl.uniformMatrix4fv(uModel, false, matY);
+            gl.uniform3f(uColor, 0, 1, 0);
+            gl.uniform1f(uAlpha, 1.0);
+            gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cylinder, this.gizmoOffsets.cylinderCount);
+            gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cone, this.gizmoOffsets.coneCount);
+
+            // Draw X (Red)
+            gl.uniformMatrix4fv(uModel, false, matX);
+            gl.uniform3f(uColor, 1, 0, 0);
+            gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cylinder, this.gizmoOffsets.cylinderCount);
+            gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cone, this.gizmoOffsets.coneCount);
+
+            // Draw Z (Blue)
+            gl.uniformMatrix4fv(uModel, false, matZ);
+            gl.uniform3f(uColor, 0, 0, 1);
+            gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cylinder, this.gizmoOffsets.cylinderCount);
+            gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cone, this.gizmoOffsets.coneCount);
+        }
+        
+        gl.bindVertexArray(null);
+    }
 }

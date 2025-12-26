@@ -110,91 +110,110 @@ export class Engine {
      * Main Engine Loop
      * Decouples Physics (Fixed Step) from Rendering (Variable Step)
      */
-tick(dt: number) {
-        const start = performance.now();
-
-        // 1. Safety Cap: Prevent giant steps if browser hangs
-        const clampedDt = Math.min(dt, this.maxFrameTime);
-
-        // 2. Accumulate time (ONLY if dt is valid)
-        if (dt > 0) {
-            this.accumulator += clampedDt;
-        }
-
-        // 3. Fixed Update Loop (Physics)
-        while (this.accumulator >= this.fixedTimeStep) {
-            this.fixedUpdate(this.fixedTimeStep);
-            this.accumulator -= this.fixedTimeStep;
-        }
-
-        // 4. Rendering
-        this.sceneGraph.update();
-
-        if (this.currentViewProj && !this.isPlaying) {
-            this.debugRenderer.begin();
-            this.drawMeshComponentOverlay();
-        }
-
-        if (this.currentViewProj) {
-             this.renderer.render(
-                this.ecs.store, 
-                this.ecs.count, 
-                this.selectedIndices, 
-                this.currentViewProj, 
-                this.currentWidth, 
-                this.currentHeight, 
-                this.currentCameraPos,
-                this.isPlaying ? undefined : this.debugRenderer
-             );
-        }
-
-        const end = performance.now();
-        this.metrics.frameTime = end - start;
+    createVirtualPivot(name: string = 'Virtual Pivot') {
+        const id = this.ecs.createEntity(name);
+        this.ecs.addComponent(id, ComponentType.VIRTUAL_PIVOT);
+        this.sceneGraph.registerEntity(id);
         
-        // --- FIX: Prevent 0 division ---
-        if (dt > 0.0001) {
-            this.metrics.fps = 1 / dt;
-        }
-        gizmoSystem.render();
-        this.metrics.drawCalls = this.renderer.drawCalls;
-        this.metrics.triangleCount = this.renderer.triangleCount;
-        this.metrics.entityCount = this.ecs.count;
+        // Add default Transform logic (handled by createEntity/addComponent(TRANSFORM) implicitly?)
+        // Note: EntitySystem.createEntity usually adds TRANSFORM by default.
+        
+        this.pushUndoState();
+        this.notifyUI();
+        return id;
     }
-    /**
-     * Updates Physics and Game Logic with a constant time step
-     */
-    private fixedUpdate(fixedDt: number) {
-        // Update Timeline
-        if (this.timeline.isPlaying) {
-            this.timeline.currentTime += fixedDt * this.timeline.playbackSpeed;
-            if (this.timeline.currentTime >= this.timeline.duration) {
-                if (this.timeline.isLooping) this.timeline.currentTime = 0;
-                else { 
-                    this.timeline.currentTime = this.timeline.duration; 
-                    this.timeline.isPlaying = false; 
-                    this.isPlaying = false; 
+
+    tick(dt: number) {
+            const start = performance.now();
+
+            // 1. Safety Cap: Prevent giant steps if browser hangs
+            const clampedDt = Math.min(dt, this.maxFrameTime);
+
+            // 2. Accumulate time (ONLY if dt is valid)
+            if (dt > 0) {
+                this.accumulator += clampedDt;
+            }
+
+            // 3. Fixed Update Loop (Physics)
+            while (this.accumulator >= this.fixedTimeStep) {
+                this.fixedUpdate(this.fixedTimeStep);
+                this.accumulator -= this.fixedTimeStep;
+            }
+
+            // 4. Rendering
+            this.sceneGraph.update();
+
+            if (this.currentViewProj && !this.isPlaying) {
+                this.debugRenderer.begin();
+                this.drawMeshComponentOverlay();
+            }
+
+            if (this.currentViewProj) {
+                this.renderer.render(
+                    this.ecs.store, 
+                    this.ecs.count, 
+                    this.selectedIndices, 
+                    this.currentViewProj, 
+                    this.currentWidth, 
+                    this.currentHeight, 
+                    this.currentCameraPos,
+                    this.isPlaying ? undefined : this.debugRenderer
+                );
+                // RENDER VIRTUAL PIVOTS
+             this.renderer.renderVirtualPivots(
+                 this.ecs.store, 
+                 this.ecs.count, 
+                 this.currentViewProj
+             );
+            }
+
+            const end = performance.now();
+            this.metrics.frameTime = end - start;
+            
+            // --- FIX: Prevent 0 division ---
+            if (dt > 0.0001) {
+                this.metrics.fps = 1 / dt;
+            }
+            gizmoSystem.render();
+            this.metrics.drawCalls = this.renderer.drawCalls;
+            this.metrics.triangleCount = this.renderer.triangleCount;
+            this.metrics.entityCount = this.ecs.count;
+        }
+        /**
+         * Updates Physics and Game Logic with a constant time step
+         */
+        private fixedUpdate(fixedDt: number) {
+            // Update Timeline
+            if (this.timeline.isPlaying) {
+                this.timeline.currentTime += fixedDt * this.timeline.playbackSpeed;
+                if (this.timeline.currentTime >= this.timeline.duration) {
+                    if (this.timeline.isLooping) this.timeline.currentTime = 0;
+                    else { 
+                        this.timeline.currentTime = this.timeline.duration; 
+                        this.timeline.isPlaying = false; 
+                        this.isPlaying = false; 
+                    }
+                }
+            }
+
+            // Update Physics
+            if (this.isPlaying) {
+                this.physicsSystem.update(fixedDt, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
+            }
+
+            // Update Scripts / Asset Graphs
+            const store = this.ecs.store;
+            for(let i=0; i<this.ecs.count; i++) {
+                if (store.isActive[i]) {
+                    const id = store.ids[i];
+                    const rigId = store.rigIndex[i];
+                    if (rigId > 0) {
+                        const assetId = assetManager.getRigUUID(rigId);
+                        if(assetId) this.executeAssetGraph(id, assetId);
+                    }
                 }
             }
         }
-
-        // Update Physics
-        if (this.isPlaying) {
-            this.physicsSystem.update(fixedDt, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
-        }
-
-        // Update Scripts / Asset Graphs
-        const store = this.ecs.store;
-        for(let i=0; i<this.ecs.count; i++) {
-            if (store.isActive[i]) {
-                const id = store.ids[i];
-                const rigId = store.rigIndex[i];
-                if (rigId > 0) {
-                    const assetId = assetManager.getRigUUID(rigId);
-                    if(assetId) this.executeAssetGraph(id, assetId);
-                }
-            }
-        }
-    }
 
     private drawMeshComponentOverlay() {
         if (this.selectedIndices.size === 0) return;
@@ -459,3 +478,4 @@ tick(dt: number) {
 }
 
 export const engineInstance = new Engine();
+(window as any).engineInstance = engineInstance;

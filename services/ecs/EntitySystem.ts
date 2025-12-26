@@ -90,7 +90,10 @@ export class SoAEntitySystem {
         else if (type === ComponentType.LIGHT) mask = COMPONENT_MASKS.LIGHT;
         else if (type === ComponentType.PHYSICS) mask = COMPONENT_MASKS.PHYSICS;
         else if (type === ComponentType.SCRIPT) mask = COMPONENT_MASKS.SCRIPT;
-        
+        else if (type === ComponentType.VIRTUAL_PIVOT) { // <--- ADD THIS BLOCK
+            mask = COMPONENT_MASKS.VIRTUAL_PIVOT;
+            this.store.vpLength[idx] = 1.0; 
+        }  
         this.store.componentMask[idx] |= mask;
     }
 
@@ -236,12 +239,22 @@ export class SoAEntitySystem {
             set name(v) { store.names[index] = v; },
             get isActive() { return !!store.isActive[index]; },
             set isActive(v) { store.isActive[index] = v ? 1 : 0; },
-            components: {
+    components: {
                 get [ComponentType.TRANSFORM]() { return (store.componentMask[index] & COMPONENT_MASKS.TRANSFORM) ? transformProxy : undefined; },
                 get [ComponentType.MESH]() { return (store.componentMask[index] & COMPONENT_MASKS.MESH) ? meshProxy : undefined; },
                 get [ComponentType.PHYSICS]() { return (store.componentMask[index] & COMPONENT_MASKS.PHYSICS) ? physicsProxy : undefined; },
                 get [ComponentType.LIGHT]() { return (store.componentMask[index] & COMPONENT_MASKS.LIGHT) ? lightProxy : undefined; },
-                get [ComponentType.SCRIPT]() { return (store.componentMask[index] & COMPONENT_MASKS.SCRIPT) ? { type: ComponentType.SCRIPT } : undefined; }
+                get [ComponentType.SCRIPT]() { return (store.componentMask[index] & COMPONENT_MASKS.SCRIPT) ? { type: ComponentType.SCRIPT } : undefined; },
+                
+                get [ComponentType.VIRTUAL_PIVOT]() { 
+                    return (store.componentMask[index] & COMPONENT_MASKS.VIRTUAL_PIVOT) 
+                    ? { 
+                        type: ComponentType.VIRTUAL_PIVOT, 
+                        get length() { return store.vpLength[index]; }, 
+                        set length(v: number) { store.vpLength[index] = v; } 
+                      } 
+                    : undefined; 
+                }
             } as any
         };
         

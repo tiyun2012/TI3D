@@ -20,7 +20,8 @@ export const COMPONENT_MASKS = {
     MESH: 2,
     LIGHT: 4,
     PHYSICS: 8,
-    SCRIPT: 16
+    SCRIPT: 16,
+    VIRTUAL_PIVOT: 32 
 };
 
 export const VIEW_MODES = [

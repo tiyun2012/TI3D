@@ -1,14 +1,13 @@
-
 import { INITIAL_CAPACITY, ROTATION_ORDER_ZY_MAP } from '../constants';
 import { Mat4Utils } from '../math';
 
 export class ComponentStorage {
     capacity = INITIAL_CAPACITY;
 
-    // --- Component Mask (1=Transform, 2=Mesh, 4=Light, 8=Physics, 16=Script) ---
+    // --- Component Mask ---
     componentMask = new Uint32Array(this.capacity);
 
-    // --- Transform (Decomposed - Local) ---
+    // --- Transform ---
     posX = new Float32Array(this.capacity);
     posY = new Float32Array(this.capacity);
     posZ = new Float32Array(this.capacity);
@@ -21,35 +20,32 @@ export class ComponentStorage {
     scaleY = new Float32Array(this.capacity);
     scaleZ = new Float32Array(this.capacity);
     
-    // 0=XYZ, 1=XZY, 2=YXZ, 3=YZX, 4=ZXY, 5=ZYX
     rotationOrder = new Uint8Array(this.capacity);
-
-    // --- World Transform Cache (Contiguous for GPU) ---
-    // 16 floats per entity. Computed by SceneGraph when dirty.
     worldMatrix = new Float32Array(this.capacity * 16);
-    
-    // Dirty Flags: 1 = Needs Update
     transformDirty = new Uint8Array(this.capacity);
 
-    // --- Mesh & Rendering ---
+    // --- Mesh ---
     meshType = new Int32Array(this.capacity); 
     textureIndex = new Float32Array(this.capacity);
-    materialIndex = new Int32Array(this.capacity); // ID from AssetManager
-    rigIndex = new Int32Array(this.capacity);      // ID from AssetManager (RIG)
-    effectIndex = new Float32Array(this.capacity); // 0=None, 1=Pixelate, 2=Glitch, 3=Invert
+    materialIndex = new Int32Array(this.capacity); 
+    rigIndex = new Int32Array(this.capacity);      
+    effectIndex = new Float32Array(this.capacity); 
     
     colorR = new Float32Array(this.capacity);
     colorG = new Float32Array(this.capacity);
     colorB = new Float32Array(this.capacity);
 
     // --- Light ---
-    lightType = new Uint8Array(this.capacity); // 0=Directional, 1=Point, 2=Spot
+    lightType = new Uint8Array(this.capacity); 
     lightIntensity = new Float32Array(this.capacity);
 
     // --- Physics ---
     mass = new Float32Array(this.capacity);
     useGravity = new Uint8Array(this.capacity);
-    physicsMaterialIndex = new Int32Array(this.capacity); // ID from AssetManager
+    physicsMaterialIndex = new Int32Array(this.capacity); 
+
+    // --- Virtual Pivot ---
+    vpLength = new Float32Array(this.capacity); // <--- ADD THIS
 
     // --- Metadata ---
     isActive = new Uint8Array(this.capacity);
@@ -62,8 +58,9 @@ export class ComponentStorage {
         this.scaleX.fill(1);
         this.scaleY.fill(1);
         this.scaleZ.fill(1);
+        this.vpLength.fill(1.0); // Default axis length
         
-        // Initialize world matrices to Identity
+        // Initialize world matrices
         for (let i = 0; i < this.capacity; i++) {
             const base = i * 16;
             this.worldMatrix[base] = 1;
@@ -73,9 +70,6 @@ export class ComponentStorage {
         }
     }
 
-    // --- High-Performance Setters ---
-    // Automatically marks dirty for SceneGraph
-    
     setPosition(index: number, x: number, y: number, z: number) {
         this.posX[index] = x; this.posY[index] = y; this.posZ[index] = z;
         this.transformDirty[index] = 1;
@@ -91,7 +85,6 @@ export class ComponentStorage {
         this.transformDirty[index] = 1;
     }
 
-    // Called by SceneGraph to update the cached World Matrix
     updateWorldMatrix(index: number, parentMatrix: Float32Array | null) {
         const base = index * 16;
         const out = this.worldMatrix.subarray(base, base + 16);
@@ -104,60 +97,41 @@ export class ComponentStorage {
         const cy = Math.cos(ry), sy_val = Math.sin(ry);
         const cz = Math.cos(rz), sz_val = Math.sin(rz);
 
-        // Rotation Matrix based on Order
         let r00, r01, r02, r10, r11, r12, r20, r21, r22;
         const order = this.rotationOrder[index];
 
-        if (order === 0) { // XYZ
-            const m00 = cy * cz;
-            const m01 = cz * sx_val * sy_val - cx * sz_val;
-            const m02 = cx * cz * sy_val + sx_val * sz_val;
-            const m10 = cy * sz_val;
-            const m11 = cx * cz + sx_val * sy_val * sz_val;
-            const m12 = -cz * sx_val + cx * sy_val * sz_val;
-            const m20 = -sy_val;
-            const m21 = cy * sx_val;
-            const m22 = cx * cy;
-            
-            r00=m00; r01=m01; r02=m02;
-            r10=m10; r11=m11; r12=m12;
-            r20=m20; r21=m21; r22=m22;
-        } else if (order === 1) { // XZY: R = Ry * Rz * Rx
-            r00 = cy * cz;
-            r01 = -sz_val;
-            r02 = cz * sy_val;
-            r10 = sx_val * sy_val + cx * cy * sz_val;
-            r11 = cx * cz;
-            r12 = cx * sy_val * sz_val - cy * sx_val;
-            r20 = cy * sx_val * sz_val - cx * sy_val;
-            r21 = cz * sx_val;
-            r22 = cx * cy + sx_val * sy_val * sz_val;
+        // Default XYZ
+        const m00 = cy * cz;
+        const m01 = cz * sx_val * sy_val - cx * sz_val;
+        const m02 = cx * cz * sy_val + sx_val * sz_val;
+        const m10 = cy * sz_val;
+        const m11 = cx * cz + sx_val * sy_val * sz_val;
+        const m12 = -cz * sx_val + cx * sy_val * sz_val;
+        const m20 = -sy_val;
+        const m21 = cy * sx_val;
+        const m22 = cx * cy;
+        
+        if (order === 0) {
+            r00=m00; r01=m01; r02=m02; r10=m10; r11=m11; r12=m12; r20=m20; r21=m21; r22=m22;
+        } else if (order === 1) { // XZY
+            r00 = cy * cz; r01 = -sz_val; r02 = cz * sy_val;
+            r10 = sx_val * sy_val + cx * cy * sz_val; r11 = cx * cz; r12 = cx * sy_val * sz_val - cy * sx_val;
+            r20 = cy * sx_val * sz_val - cx * sy_val; r21 = cz * sx_val; r22 = cx * cy + sx_val * sy_val * sz_val;
         } else {
-            // Fallback for others to XYZ for now
-            const m00 = cy * cz;
-            const m01 = cz * sx_val * sy_val - cx * sz_val;
-            const m02 = cx * cz * sy_val + sx_val * sz_val;
-            const m10 = cy * sz_val;
-            const m11 = cx * cz + sx_val * sy_val * sz_val;
-            const m12 = -cz * sx_val + cx * sy_val * sz_val;
-            const m20 = -sy_val;
-            const m21 = cy * sx_val;
-            const m22 = cx * cy;
+            // Fallback
             r00=m00; r01=m01; r02=m02; r10=m10; r11=m11; r12=m12; r20=m20; r21=m21; r22=m22;
         }
 
-        // Apply Scale
         out[0] = r00 * sx; out[1] = r10 * sx; out[2] = r20 * sx; out[3] = 0;
         out[4] = r01 * sy; out[5] = r11 * sy; out[6] = r21 * sy; out[7] = 0;
         out[8] = r02 * sz; out[9] = r12 * sz; out[10] = r22 * sz; out[11] = 0;
         out[12] = tx; out[13] = ty; out[14] = tz; out[15] = 1;
 
-        // 2. Multiply by Parent if exists
         if (parentMatrix) {
             Mat4Utils.multiply(parentMatrix, out, out);
         }
         
-        this.transformDirty[index] = 0; // Clean
+        this.transformDirty[index] = 0;
     }
 
     resize(newCapacity: number) {
@@ -175,7 +149,6 @@ export class ComponentStorage {
         this.scaleX = resizeFloat(this.scaleX); this.scaleY = resizeFloat(this.scaleY); this.scaleZ = resizeFloat(this.scaleZ);
         this.rotationOrder = resizeUint8(this.rotationOrder);
         
-        // Resize World Matrix Cache (stride 16)
         const newWM = new Float32Array(newCapacity * 16);
         newWM.set(this.worldMatrix);
         this.worldMatrix = newWM;
@@ -188,16 +161,15 @@ export class ComponentStorage {
         this.rigIndex = resizeInt32(this.rigIndex);
         this.effectIndex = resizeFloat(this.effectIndex);
         
-        this.colorR = resizeFloat(this.colorR);
-        this.colorG = resizeFloat(this.colorG);
-        this.colorB = resizeFloat(this.colorB);
-        
+        this.colorR = resizeFloat(this.colorR); this.colorG = resizeFloat(this.colorG); this.colorB = resizeFloat(this.colorB);
         this.lightType = resizeUint8(this.lightType);
         this.lightIntensity = resizeFloat(this.lightIntensity);
 
         this.mass = resizeFloat(this.mass);
         this.useGravity = resizeUint8(this.useGravity);
         this.physicsMaterialIndex = resizeInt32(this.physicsMaterialIndex);
+        
+        this.vpLength = resizeFloat(this.vpLength); // <--- ADD THIS
         
         this.isActive = resizeUint8(this.isActive);
         this.generation = resizeUint32(this.generation);
@@ -221,7 +193,6 @@ export class ComponentStorage {
             rotX: new Float32Array(this.rotX), rotY: new Float32Array(this.rotY), rotZ: new Float32Array(this.rotZ),
             scaleX: new Float32Array(this.scaleX), scaleY: new Float32Array(this.scaleY), scaleZ: new Float32Array(this.scaleZ),
             rotationOrder: new Uint8Array(this.rotationOrder),
-            // World Matrix is cache
             meshType: new Int32Array(this.meshType),
             textureIndex: new Float32Array(this.textureIndex),
             materialIndex: new Int32Array(this.materialIndex),
@@ -233,6 +204,7 @@ export class ComponentStorage {
             mass: new Float32Array(this.mass),
             useGravity: new Uint8Array(this.useGravity),
             physicsMaterialIndex: new Int32Array(this.physicsMaterialIndex),
+            vpLength: new Float32Array(this.vpLength), // <--- ADD THIS
             isActive: new Uint8Array(this.isActive),
             generation: new Uint32Array(this.generation),
             names: [...this.names],
@@ -248,7 +220,6 @@ export class ComponentStorage {
         this.posX.set(snap.posX); this.posY.set(snap.posY); this.posZ.set(snap.posZ);
         this.rotX.set(snap.rotX); this.rotY.set(snap.rotY); this.rotZ.set(snap.rotZ);
         this.scaleX.set(snap.scaleX); this.scaleY.set(snap.scaleY); this.scaleZ.set(snap.scaleZ);
-        
         if (snap.rotationOrder) this.rotationOrder.set(snap.rotationOrder);
 
         this.meshType.set(snap.meshType);
@@ -258,7 +229,6 @@ export class ComponentStorage {
         if(snap.effectIndex) this.effectIndex.set(snap.effectIndex);
         
         this.colorR.set(snap.colorR); this.colorG.set(snap.colorG); this.colorB.set(snap.colorB);
-        
         if (snap.lightType) this.lightType.set(snap.lightType);
         if (snap.lightIntensity) this.lightIntensity.set(snap.lightIntensity);
 
@@ -266,13 +236,14 @@ export class ComponentStorage {
         this.useGravity.set(snap.useGravity);
         if(snap.physicsMaterialIndex) this.physicsMaterialIndex.set(snap.physicsMaterialIndex);
         
+        if(snap.vpLength) this.vpLength.set(snap.vpLength); // <--- ADD THIS
+        
         this.isActive.set(snap.isActive);
         this.generation.set(snap.generation);
         
         this.names = [...snap.names];
         this.ids = [...snap.ids];
         
-        // Mark all dirty on load
         this.transformDirty.fill(1);
     }
 }

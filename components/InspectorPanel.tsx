@@ -170,27 +170,27 @@ const ComponentCard: React.FC<{
       if(onStartUpdate) onStartUpdate();
       onUpdate(field, value);
       onCommit();
-  };
-
-  const effects = [
-      { label: 'None', value: 0 },
-      { label: 'Pixelate', value: 1 },
-      { label: 'Glitch', value: 2 },
-      { label: 'Invert', value: 3 },
-      { label: 'Grayscale', value: 4 },
+    };
+    
+    const effects = [
+        { label: 'None', value: 0 },
+        { label: 'Pixelate', value: 1 },
+        { label: 'Glitch', value: 2 },
+        { label: 'Invert', value: 3 },
+        { label: 'Grayscale', value: 4 },
       { label: 'Halftone (Comic)', value: 5 },
       { label: 'Cross-Hatch', value: 6 },
       { label: 'Posterize (Cel)', value: 7 },
       { label: 'Dither (Retro)', value: 8 }
-  ];
-
-  return (
-    <div className="bg-panel-header border-b border-black/20">
+    ];
+    
+    return (
+        <div className="bg-panel-header border-b border-black/20">
       {/* Header */}
       <div 
         className="flex items-center p-2 cursor-pointer hover:bg-white/5 select-none group"
         onClick={() => setOpen(!open)}
-      >
+        >
         <div className="mr-2 text-text-secondary group-hover:text-white transition-colors">
             <Icon name={open ? 'ChevronDown' : 'ChevronRight'} size={12} />
         </div>
@@ -201,11 +201,11 @@ const ComponentCard: React.FC<{
             <button className="p-1 hover:text-white text-text-secondary" title="Settings" aria-label="Settings"><Icon name="Settings2" size={12} /></button>
             {onRemove && (
                 <button 
-                    className="p-1 hover:text-white text-text-secondary" 
+                className="p-1 hover:text-white text-text-secondary" 
                     title="Remove Component" 
                     aria-label="Remove Component"
                     onClick={(e) => { e.stopPropagation(); onRemove(); }}
-                >
+                    >
                     <Icon name="Trash2" size={12} />
                 </button>
             )}
@@ -215,7 +215,7 @@ const ComponentCard: React.FC<{
       {/* Body */}
       {open && <div className="p-3 bg-panel border-t border-black/10 text-xs space-y-3">
         {component.type === ComponentType.TRANSFORM && (
-          <>
+            <>
             <Vector3Input label="Position" value={component.position} onChange={(v) => onUpdate('position', v)} onStart={onStartUpdate} onCommit={onCommit} />
             <div className="flex flex-col gap-1 mb-3">
                  <div className="flex justify-between items-center">
@@ -227,7 +227,7 @@ const ComponentCard: React.FC<{
                                 value={editorCtx?.transformSpace || 'Gimbal'}
                                 options={['Gimbal', 'Local', 'World'].map(v => ({ label: v, value: v }))}
                                 onChange={(v) => editorCtx?.setTransformSpace(v as TransformSpace)}
-                            />
+                                />
                         </div>
                         {/* Order Selector */}
                         <div className="flex items-center gap-1 min-w-[50px]">
@@ -235,7 +235,7 @@ const ComponentCard: React.FC<{
                                 value={component.rotationOrder}
                                 options={ROTATION_ORDERS.map(o => ({ label: o, value: o }))}
                                 onChange={(v) => handleAtomicChange('rotationOrder', v)}
-                            />
+                                />
                         </div>
                     </div>
                  </div>
@@ -247,6 +247,19 @@ const ComponentCard: React.FC<{
             </div>
             <Vector3Input label="Scale" value={component.scale} onChange={(v) => onUpdate('scale', v)} onStart={onStartUpdate} onCommit={onCommit} />
           </>
+        )}
+        {component.type === ComponentType.VIRTUAL_PIVOT && (
+            <div className="flex items-center gap-2">
+               <span className="w-24 text-text-secondary">Axis Length</span>
+               <DraggableNumber 
+                  label="L" 
+                  value={(component as any).length} 
+                  onChange={(v) => onUpdate('length', v)} 
+                  onStart={onStartUpdate} 
+                  onCommit={onCommit} 
+                  step={0.1} 
+               />
+            </div>
         )}
 
         {component.type === ComponentType.MESH && (
@@ -762,7 +775,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
       { type: ComponentType.MESH, label: 'Mesh Renderer', icon: 'Box' },
       { type: ComponentType.LIGHT, label: 'Light', icon: 'Sun' },
       { type: ComponentType.PHYSICS, label: 'Physics Body', icon: 'Activity' },
-      { type: ComponentType.SCRIPT, label: 'Script', icon: 'FileCode' }
+      { type: ComponentType.SCRIPT, label: 'Script', icon: 'FileCode' },
+      { type: ComponentType.VIRTUAL_PIVOT, label: 'Virtual Pivot', icon: 'Maximize' }
   ].filter(c => !entity.components[c.type]);
 
   return (
@@ -817,6 +831,18 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
                   onCommit={() => engineInstance.notifyUI()}
               />
           )}
+        {entity.components[ComponentType.VIRTUAL_PIVOT] && (
+              <ComponentCard 
+                  title="Virtual Pivot" 
+                  icon="Maximize" 
+                  component={entity.components[ComponentType.VIRTUAL_PIVOT]}
+                  onRemove={() => removeComponent(ComponentType.VIRTUAL_PIVOT)}
+                  onUpdate={(f, v) => updateComponent(ComponentType.VIRTUAL_PIVOT, f, v)}
+                  onStartUpdate={startUpdate}
+                  onCommit={() => engineInstance.notifyUI()}
+              />
+          )}
+
           {entity.components[ComponentType.MESH] && (
               <ComponentCard 
                   title="Mesh Renderer" 

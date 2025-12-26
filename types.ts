@@ -15,7 +15,8 @@ export enum ComponentType {
   MESH = 'Mesh',
   LIGHT = 'Light',
   PHYSICS = 'Physics',
-  SCRIPT = 'Script'
+  SCRIPT = 'Script',
+  VIRTUAL_PIVOT = 'VirtualPivot'
 }
 
 export interface Component {
