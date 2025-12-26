@@ -6,7 +6,7 @@ import { engineInstance } from '../services/engine';
 import { Icon } from './Icon';
 import { VIEW_MODES } from '../services/constants';
 import { EditorContext } from '../contexts/EditorContext';
-import { gizmoSystem } from '../services/GizmoSystem'; // Import the new System
+import { gizmoSystem } from '../services/GizmoSystem'; 
 
 interface SceneViewProps {
   entities: Entity[];
@@ -89,7 +89,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       const loop = (time: number) => {
           const dt = (time - lastTime) / 1000;
           lastTime = time;
-          engineInstance.tick(dt); // Scene + Gizmo render happens here
+          engineInstance.tick(dt); 
           frameId = requestAnimationFrame(loop);
       };
       frameId = requestAnimationFrame(loop);
@@ -108,6 +108,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   useEffect(() => {
       gizmoSystem.setTool(tool);
   }, [tool]);
+
   // --- Camera Logic ---
   const { vpMatrix, eye } = useMemo(() => {
     const { width, height } = viewport;
@@ -136,26 +137,28 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const my = e.clientY - rect.top;
 
     // 1. GIZMO CHECK (Priority)
-    // We update the system with isDown=true. 
-    // If it hits a gizmo axis, activeAxis will become set.
+    // If gizmo is active and clicked, it consumes the event.
     gizmoSystem.update(0, mx, my, rect.width, rect.height, true, false);
-    if (gizmoSystem.activeAxis) return; // Stop propagation
+    if (gizmoSystem.activeAxis) return; 
 
-    // 2. Standard Tools
+    // 2. Standard Tools & Selection
     if (!e.altKey && e.button === 0) {
         if (meshComponentMode !== 'OBJECT' && selectedIds.length > 0) {
             const result = engineInstance.pickMeshComponent(selectedIds[0], mx, my, rect.width, rect.height);
-            // ... (Component picking logic omitted for brevity, same as before) ...
-            if (result && result.vertexId !== -1) { /* ... */ } // Simplified for this snippet
+            // ... (Component picking logic omitted) ...
             return; 
         }
 
-        if (tool === 'SELECT') {
-            setSelectionBox({ startX: mx, startY: my, currentX: mx, currentY: my, isSelecting: true });
+        // UNIFIED SELECTION LOGIC
+        // Try to pick a single object
+        const hitId = engineInstance.selectEntityAt(mx, my, rect.width, rect.height);
+        
+        if (hitId) {
+             // Hit an object: Select it directly
+             onSelect(e.shiftKey ? [...selectedIds, hitId] : [hitId]);
         } else {
-             const hitId = engineInstance.selectEntityAt(mx, my, rect.width, rect.height);
-             if (hitId) onSelect(e.shiftKey ? [...selectedIds, hitId] : [hitId]);
-             else if(!e.shiftKey) onSelect([]);
+             // Clicked Empty Space: Start Box Selection (Fallback for ALL tools)
+             setSelectionBox({ startX: mx, startY: my, currentX: mx, currentY: my, isSelecting: true });
         }
     }
     
@@ -177,10 +180,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
 
-      // 1. Pass to Gizmo (Always, for hover + drag)
       gizmoSystem.update(0, mx, my, rect.width, rect.height, false, false);
 
-      // 2. Camera Drag
       if (dragState && dragState.isDragging) {
           const dx = e.clientX - dragState.startX;
           const dy = e.clientY - dragState.startY;
@@ -194,7 +195,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           } else if (dragState.mode === 'ZOOM') {
             setCamera(prev => ({ ...prev, radius: Math.max(1, dragState.startCamera.radius - (dx - dy) * 0.05) }));
           } else if (dragState.mode === 'PAN') {
-            // ... (Pan logic same as before) ...
             const panSpeed = dragState.startCamera.radius * 0.002;
             const eyeX = dragState.startCamera.radius * Math.sin(dragState.startCamera.phi) * Math.cos(dragState.startCamera.theta);
             const eyeY = dragState.startCamera.radius * Math.cos(dragState.startCamera.phi);
@@ -209,7 +209,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           }
       }
       
-      // 3. Selection Box Update
       if (selectionBox?.isSelecting) {
           setSelectionBox(prev => prev ? ({...prev, currentX: mx, currentY: my}) : null);
       }
@@ -218,23 +217,11 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const handleWindowMouseUp = (e: MouseEvent) => {
         if (containerRef.current) {
             const rect = containerRef.current.getBoundingClientRect();
-            // Pass UP event to Gizmo
             gizmoSystem.update(0, e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, false, true);
         }
         
-        // Handle Box Selection Commit
-        if (selectionBox?.isSelecting && containerRef.current) {
-             const rect = containerRef.current.getBoundingClientRect();
-             // Logic repeated from original handleMouseUp to access latest state if needed
-             // But since we are in useEffect, accessing 'selectionBox' state directly might be stale unless in dep array.
-             // Relying on mouseUp in the main component body is safer for state access, 
-             // but here we are in a global listener.
-             // Simplification: We'll trigger the state change via the ref or callback if possible.
-             // Actually, let's keep the logic simple:
-             setSelectionBox(null); 
-             // (Note: Real box select commit logic needs to happen where we have access to 'selectedIds' etc.
-             //  Use the handleMouseUp attached to the DIV for the logic, this global one just clears drag state)
-        }
+        // Note: Actual SelectionBox commit happens in the local handleMouseUp attached to div
+        // We just clear drag state here to be safe
         setDragState(null);
     };
 
@@ -244,9 +231,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         window.removeEventListener('mousemove', handleWindowMouseMove);
         window.removeEventListener('mouseup', handleWindowMouseUp);
     };
-  }, [dragState, camera, selectionBox]); // Add dependencies
+  }, [dragState, camera, selectionBox]);
 
-  // Local Mouse Up for Box Selection Commit (Access to props/state)
+  // Local Mouse Up: Commits Selection
   const handleMouseUp = (e: React.MouseEvent) => {
     if (selectionBox?.isSelecting) {
         const x = Math.min(selectionBox.startX, selectionBox.currentX);
@@ -255,6 +242,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         const h = Math.abs(selectionBox.currentY - selectionBox.startY);
         
         if (w > 3 || h > 3) {
+            // Dragged > 3px: Perform Box Select
             const hitIds = engineInstance.selectEntitiesInRect(x, y, w, h);
             if (e.shiftKey) {
                 const nextSelection = new Set(selectedIds);
@@ -267,8 +255,10 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 onSelect(hitIds);
             }
         } else {
-            // Single Click Select (Fallback if not dragging box)
-            // But usually MouseDown handles single select.
+            // Clicked (Drag < 3px) on Empty Space: Deselect
+            if (!e.shiftKey) {
+                onSelect([]);
+            }
         }
         setSelectionBox(null);
     }
@@ -284,8 +274,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
          onContextMenu={e => e.preventDefault()}
     >
         <canvas ref={canvasRef} className="block w-full h-full outline-none" />
-        
-        {/* OLD GIZMO REMOVED - Now rendered by engineInstance.tick() */}
         
         <StatsOverlay />
         
