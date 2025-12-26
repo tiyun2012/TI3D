@@ -136,10 +136,13 @@ export class GizmoSystem {
         }
     }
 
-    // --- Math Helpers ---
+// --- Math Helpers ---
     private raycastGizmo(ray: any, pos: Vector3, scale: number): GizmoAxis {
         const len = scale * 1.5;
-        const rad = scale * 0.15; 
+        
+        // UPDATE: Reduced radius to match new Cylinder (0.008) + allowance
+        // Was 0.15, now 0.06 is a good hit area for the thinner lines
+        const rad = scale * 0.06; 
         
         // 1. Check Axes (Cylinders)
         const distToAxis = (axisVec: Vector3) => {
@@ -152,9 +155,9 @@ export class GizmoSystem {
         if (distToAxis({x:0,y:0,z:1}) < rad) return 'Z';
         
         // 2. Check Planes (Quads)
-        // Offset = 0.1, Size = 0.3 relative to scale
+        // UPDATE: Match new geometry (Offset 0.1, Size 0.12)
         const pStart = scale * 0.1;
-        const pEnd = scale * 0.4; // 0.1 + 0.3
+        const pEnd = scale * 0.22; // 0.1 + 0.12 = 0.22
 
         const checkPlane = (normal: Vector3, uAxis: Vector3, vAxis: Vector3): boolean => {
             const hit = this.rayPlaneIntersect(ray, pos, normal);
@@ -175,7 +178,6 @@ export class GizmoSystem {
 
         return null;
     }
-
     private screenToRay(mx: number, my: number, w: number, h: number, invVP: Float32Array, camPos: Vector3) {
         const x = (mx / w) * 2 - 1;
         const y = -(my / h) * 2 + 1;
