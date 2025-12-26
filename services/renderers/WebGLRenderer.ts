@@ -714,13 +714,12 @@ initGizmo() {
     }
 
 
-    // Add this method
     renderVirtualPivots(store: ComponentStorage, count: number, vp: Float32Array) {
         if (!this.gl || !this.gizmoProgram || !this.gizmoVAO) return;
         const gl = this.gl;
 
         gl.useProgram(this.gizmoProgram);
-        gl.enable(gl.DEPTH_TEST);
+        gl.disable(gl.DEPTH_TEST);
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -731,81 +730,74 @@ initGizmo() {
 
         gl.bindVertexArray(this.gizmoVAO);
 
-        // Matrices for Axis rotations (Reusing logic from renderGizmos)
-        // We will scale these by the entity's vpLength
         const matX = new Float32Array(16);
         const matY = new Float32Array(16);
         const matZ = new Float32Array(16);
-
-        // Pre-allocate for performance
         const worldMat = new Float32Array(16);
 
-        for (let i = 0; i < count; i++) {
+for (let i = 0; i < count; i++) {
             if (!store.isActive[i]) continue;
             if ((store.componentMask[i] & COMPONENT_MASKS.VIRTUAL_PIVOT) === 0) continue;
 
             const base = i * 16;
-            // Copy entity world matrix
             for(let k=0; k<16; k++) worldMat[k] = store.worldMatrix[base+k];
 
-            const len = store.vpLength[i];
+            const len = store.vpLength[i] * 0.5; 
+            const thick = 2.02*len; // Fixed thickness (or use a multiplier like len * 0.1)
 
-            // Construct Matrices for the 3 axes based on World Matrix + Axis Rotation + Length Scale
-            // Logic derived from renderGizmos transformation:
-            
-            // Y-Axis (Green) - Up (Default cylinder orientation)
-            // Just scale by len
-            // Model = World * Scale(len, len, len)
-            // (Simplified: Just multiply rotation cols by len)
+            // --- Y-AXIS (Green) ---
+            // Geometry Y (Col 1) aligns with Entity Y.
             matY.set(worldMat);
-            matY[0]*=len; matY[1]*=len; matY[2]*=len;
-            matY[4]*=len; matY[5]*=len; matY[6]*=len;
-            matY[8]*=len; matY[9]*=len; matY[10]*=len;
+            // Col 0 (Thickness) = Entity X * thick
+            matY[0] *= thick; matY[1] *= thick; matY[2] *= thick;
+            // Col 1 (Length)    = Entity Y * len
+            matY[4] *= len;   matY[5] *= len;   matY[6] *= len;
+            // Col 2 (Thickness) = Entity Z * thick
+            matY[8] *= thick; matY[9] *= thick; matY[10] *= thick;
 
-            // X-Axis (Red) - Point Right (Rotate Z -90)
-            // Manual rotation applied to worldMat basis
-            // X_new = Y_old * -1
-            // Y_new = X_old
+            // --- X-AXIS (Red) ---
+            // We want Geometry Y (Col 1) to align with Entity X.
             matX.set(worldMat);
-            // Apply scale (len) AND rotation
-            // Col 0 = Col 1 * len
-            matX[0] = worldMat[4]*len; matX[1] = worldMat[5]*len; matX[2] = worldMat[6]*len;
-            // Col 1 = Col 0 * -len
-            matX[4] = -worldMat[0]*len; matX[5] = -worldMat[1]*len; matX[6] = -worldMat[2]*len;
-            // Col 2 = Col 2 * len
-            matX[8] = worldMat[8]*len; matX[9] = worldMat[9]*len; matX[10] = worldMat[10]*len;
+            
+            // Col 0 (Thickness) gets Entity -Y
+            matX[0] = -worldMat[4]*thick; matX[1] = -worldMat[5]*thick; matX[2] = -worldMat[6]*thick;
+            
+            // Col 1 (Length) gets Entity X (This was the bug!)
+            matX[4] = worldMat[0]*len;    matX[5] = worldMat[1]*len;    matX[6] = worldMat[2]*len;
+            
+            // Col 2 (Thickness) gets Entity Z
+            matX[8] = worldMat[8]*thick;  matX[9] = worldMat[9]*thick;  matX[10] = worldMat[10]*thick;
 
-            // Z-Axis (Blue) - Point Forward (Rotate X 90)
-            // Y_new = Z_old
-            // Z_new = Y_old * -1
+            // --- Z-AXIS (Blue) ---
+            // We want Geometry Y (Col 1) to align with Entity Z.
             matZ.set(worldMat);
-            // Col 0 = Col 0 * len
-            matZ[0] = worldMat[0]*len; matZ[1] = worldMat[1]*len; matZ[2] = worldMat[2]*len;
-            // Col 1 = Col 2 * len
-            matZ[4] = worldMat[8]*len; matZ[5] = worldMat[9]*len; matZ[6] = worldMat[10]*len;
-            // Col 2 = Col 1 * -len
-            matZ[8] = -worldMat[4]*len; matZ[9] = -worldMat[5]*len; matZ[10] = -worldMat[6]*len;
+            
+            // Col 0 (Thickness) gets Entity X
+            matZ[0] = worldMat[0]*thick;  matZ[1] = worldMat[1]*thick;  matZ[2] = worldMat[2]*thick;
+            
+            // Col 1 (Length) gets Entity Z (This was the bug!)
+            matZ[4] = worldMat[8]*len;    matZ[5] = worldMat[9]*len;    matZ[6] = worldMat[10]*len;
+            
+            // Col 2 (Thickness) gets Entity -Y
+            matZ[8] = -worldMat[4]*thick; matZ[9] = -worldMat[5]*thick; matZ[10] = -worldMat[6]*thick;
 
-            // Draw Y (Green)
+            // --- Draw Calls ---
             gl.uniformMatrix4fv(uModel, false, matY);
             gl.uniform3f(uColor, 0, 1, 0);
             gl.uniform1f(uAlpha, 1.0);
             gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cylinder, this.gizmoOffsets.cylinderCount);
-            gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cone, this.gizmoOffsets.coneCount);
 
-            // Draw X (Red)
             gl.uniformMatrix4fv(uModel, false, matX);
             gl.uniform3f(uColor, 1, 0, 0);
             gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cylinder, this.gizmoOffsets.cylinderCount);
-            gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cone, this.gizmoOffsets.coneCount);
 
-            // Draw Z (Blue)
             gl.uniformMatrix4fv(uModel, false, matZ);
             gl.uniform3f(uColor, 0, 0, 1);
             gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cylinder, this.gizmoOffsets.cylinderCount);
-            gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cone, this.gizmoOffsets.coneCount);
         }
         
         gl.bindVertexArray(null);
+        // ✅ IMPORTANT: RESTORE DEPTH TEST FOR NEXT FRAME
+        gl.enable(gl.DEPTH_TEST);
     }
 }

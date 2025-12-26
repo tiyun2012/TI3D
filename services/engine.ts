@@ -98,6 +98,7 @@ export class Engine {
         this.ecs.store.setPosition(idx, 5, 10, 5);
         this.ecs.store.setRotation(idx, -0.785, 0.785, 0); 
         this.sceneGraph.registerEntity(light);
+        this.createVirtualPivot();
     }
 
     resize(width: number, height: number) { this.renderer.resize(width, height); }
