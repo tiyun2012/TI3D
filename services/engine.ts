@@ -13,7 +13,7 @@ import { compileShader } from './ShaderCompiler';
 import { GridConfiguration, UIConfiguration, DEFAULT_UI_CONFIG } from '../contexts/EditorContext';
 import { NodeRegistry } from './NodeRegistry';
 import { MeshTopologyUtils, MeshPickingResult } from './MeshTopologyUtils';
-
+import { gizmoSystem } from './GizmoSystem';
 export class Engine {
     ecs: SoAEntitySystem;
     sceneGraph: SceneGraph;
@@ -45,10 +45,10 @@ export class Engine {
     selectedIndices: Set<number> = new Set();
     private listeners: (() => void)[] = [];
     currentShaderSource: string = '';
-    private currentViewProj: Float32Array | null = null;
-    private currentCameraPos: {x:number, y:number, z:number} = {x:0,y:0,z:0};
-    private currentWidth: number = 1;
-    private currentHeight: number = 1;
+    public currentViewProj: Float32Array | null = null;
+    public currentCameraPos = { x: 0, y: 0, z: 0 };
+    public currentWidth: number = 0;
+    public currentHeight: number = 0;
 
     // --- Frame Rate Management ---
     private accumulator: number = 0;
@@ -69,6 +69,7 @@ export class Engine {
 
     initGL(canvas: HTMLCanvasElement) {
         this.renderer.init(canvas);
+        this.renderer.initGizmo();
         this.debugRenderer.init(this.renderer.gl!);
         this.recompileAllMaterials();
         if (this.ecs.count === 0) this.createDefaultScene();
@@ -109,24 +110,24 @@ export class Engine {
      * Main Engine Loop
      * Decouples Physics (Fixed Step) from Rendering (Variable Step)
      */
-    tick(dt: number) {
+tick(dt: number) {
         const start = performance.now();
 
         // 1. Safety Cap: Prevent giant steps if browser hangs
         const clampedDt = Math.min(dt, this.maxFrameTime);
 
-        // 2. Accumulate time
-        this.accumulator += clampedDt;
+        // 2. Accumulate time (ONLY if dt is valid)
+        if (dt > 0) {
+            this.accumulator += clampedDt;
+        }
 
-        // 3. Fixed Update Loop (Physics & Logic)
-        // This runs exactly 60 times per second of game time, regardless of screen Hz
+        // 3. Fixed Update Loop (Physics)
         while (this.accumulator >= this.fixedTimeStep) {
             this.fixedUpdate(this.fixedTimeStep);
             this.accumulator -= this.fixedTimeStep;
         }
 
-        // 4. Rendering (Every Frame)
-        // We sync transforms here so the render matches the latest physics state
+        // 4. Rendering
         this.sceneGraph.update();
 
         if (this.currentViewProj && !this.isPlaying) {
@@ -149,13 +150,16 @@ export class Engine {
 
         const end = performance.now();
         this.metrics.frameTime = end - start;
-        // Accurate FPS based on the actual delta time passed by the browser
-        this.metrics.fps = dt > 0 ? 1 / dt : 0;
+        
+        // --- FIX: Prevent 0 division ---
+        if (dt > 0.0001) {
+            this.metrics.fps = 1 / dt;
+        }
+        gizmoSystem.render();
         this.metrics.drawCalls = this.renderer.drawCalls;
         this.metrics.triangleCount = this.renderer.triangleCount;
         this.metrics.entityCount = this.ecs.count;
     }
-
     /**
      * Updates Physics and Game Logic with a constant time step
      */

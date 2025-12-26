@@ -81,9 +81,6 @@ export interface GizmoBasis {
 
 export class GizmoRenderManager {
     private static instance: GizmoRenderManager;
-    private lastRenderTime = 0;
-    private renderRequested = false;
-    private readonly MIN_FRAME_INTERVAL = 1000 / 120; // 120fps max
     
     static getInstance(): GizmoRenderManager {
         if (!GizmoRenderManager.instance) {
@@ -93,19 +90,23 @@ export class GizmoRenderManager {
     }
     
     requestGizmoRender() {
-        if (!this.renderRequested) {
+        // FIX: Disabled to prevent fighting with the main SceneView loop.
+        // The SceneView loop already renders at 60fps+.
+        // Calling tick(0) here causes double-rendering and FPS drops.
+        
+        // If you absolutely need an immediate update (e.g. while paused),
+        // you could uncomment this, but for now, rely on the main loop.
+        
+        /* if (!this.renderRequested) {
             this.renderRequested = true;
             requestAnimationFrame(() => {
                 this.renderRequested = false;
-                const now = performance.now();
-                // Throttle to max 120fps to prevent overloading the render loop
-                if (now - this.lastRenderTime > this.MIN_FRAME_INTERVAL) {
-                    engineInstance.tick(0);
-                    this.lastRenderTime = now;
-                }
+                // engineInstance.tick(0); // <--- THIS WAS THE CULPRIT
             });
         }
+        */
     }
+    
 }
 
 export const GizmoMath = {

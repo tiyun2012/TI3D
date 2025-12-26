@@ -535,4 +535,180 @@ export class WebGLRenderer {
             }
         });
     }
+    // --- GIZMO RENDERING SUPPORT ---
+    gizmoProgram: WebGLProgram | null = null;
+    gizmoVAO: WebGLVertexArrayObject | null = null;
+    gizmoCount = 0;
+
+    initGizmo() {
+        if (!this.gl) return;
+        const gl = this.gl;
+        
+        // Simple Shader for flat colors
+        const vs = `#version 300 es
+        layout(location=0) in vec3 a_pos;
+        uniform mat4 u_vp;
+        uniform mat4 u_model;
+        void main() { gl_Position = u_vp * u_model * vec4(a_pos, 1.0); }`;
+        
+        const fs = `#version 300 es
+        precision mediump float;
+        uniform vec3 u_color;
+        uniform float u_alpha;
+        layout(location=0) out vec4 outColor;
+        void main() { outColor = vec4(u_color, u_alpha); }`;
+        
+        this.gizmoProgram = this.createProgram(gl, vs, fs);
+
+        // Generate Geometry: Cylinder (Stem) + Cone (Tip) + Quad (Plane)
+        // We pack all into one buffer and use offsets
+        // 0-N: Cylinder, N-M: Cone, M-End: Quad
+        const vertices: number[] = [];
+        
+        // 1. Cylinder (Y-up, height 1, radius 0.05)
+        const segs = 16;
+        for(let i=0; i<segs; i++) {
+            const th = (i/segs)*Math.PI*2; const th2 = ((i+1)/segs)*Math.PI*2;
+            const x1=Math.cos(th)*0.02, z1=Math.sin(th)*0.02;
+            const x2=Math.cos(th2)*0.02, z2=Math.sin(th2)*0.02;
+            // Side
+            vertices.push(x1,0,z1, x2,0,z2, x1,0.8,z1);
+            vertices.push(x2,0,z2, x2,0.8,z2, x1,0.8,z1);
+        }
+        
+        // 2. Cone (Y-up, base at 0.8, tip at 1.0, radius 0.08)
+        const coneOff = vertices.length / 3;
+        for(let i=0; i<segs; i++) {
+            const th = (i/segs)*Math.PI*2; const th2 = ((i+1)/segs)*Math.PI*2;
+            const x1=Math.cos(th)*0.08, z1=Math.sin(th)*0.08;
+            const x2=Math.cos(th2)*0.08, z2=Math.sin(th2)*0.08;
+            vertices.push(x1,0.8,z1, x2,0.8,z2, 0,1.0,0); // Triangle fan to tip
+            vertices.push(x1,0.8,z1, 0,0.8,0, x2,0.8,z2); // Base cap
+        }
+
+        // 3. Quad (XY Plane, size 0.3, offset 0.1)
+        const quadOff = vertices.length / 3;
+        const qS = 0.3, qO = 0.1; // Plane Handle Size/Offset
+        vertices.push(qO,qO,0, qO+qS,qO,0, qO,qO+qS,0);
+        vertices.push(qO+qS,qO,0, qO+qS,qO+qS,0, qO,qO+qS,0);
+
+        this.gizmoCount = vertices.length / 3;
+        
+        this.gizmoVAO = gl.createVertexArray();
+        const vbo = gl.createBuffer();
+        gl.bindVertexArray(this.gizmoVAO);
+        gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+        gl.bindVertexArray(null);
+        
+        // Store offsets for draw calls
+        this.gizmoOffsets = { cylinder: 0, cylinderCount: coneOff, cone: coneOff, coneCount: quadOff - coneOff, quad: quadOff, quadCount: 6 };
+    }
+    
+    gizmoOffsets = { cylinder: 0, cylinderCount: 0, cone: 0, coneCount: 0, quad: 0, quadCount: 0 };
+
+    renderGizmos(vp: Float32Array, pos: {x:number, y:number, z:number}, scale: number, hoverAxis: string | null, activeAxis: string | null) {
+        if (!this.gl || !this.gizmoProgram || !this.gizmoVAO) return;
+        const gl = this.gl;
+        
+        gl.useProgram(this.gizmoProgram);
+        gl.disable(gl.DEPTH_TEST);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+        gl.uniformMatrix4fv(gl.getUniformLocation(this.gizmoProgram, 'u_vp'), false, vp);
+        const uModel = gl.getUniformLocation(this.gizmoProgram, 'u_model');
+        const uColor = gl.getUniformLocation(this.gizmoProgram, 'u_color');
+        const uAlpha = gl.getUniformLocation(this.gizmoProgram, 'u_alpha');
+
+        gl.bindVertexArray(this.gizmoVAO);
+
+        const drawPart = (axis: 'X'|'Y'|'Z', type: 'arrow'|'plane', color: number[]) => {
+            const isHover = hoverAxis === (type === 'plane' ? (axis==='X'?'YZ':(axis==='Y'?'XZ':'XY')) : axis);
+            const isActive = activeAxis === (type === 'plane' ? (axis==='X'?'YZ':(axis==='Y'?'XZ':'XY')) : axis);
+            const baseScale = scale * (isActive ? 1.2 : 1.0);
+            
+            // 1. Base Identity Matrix (Position + Scale)
+            const mIdentity = new Float32Array([
+                baseScale,0,0,0, 0,baseScale,0,0, 0,0,baseScale,0, pos.x,pos.y,pos.z,1
+            ]);
+
+            if (type === 'arrow') {
+                // Construct Arrow Rotation Matrix
+                const mArrow = new Float32Array(mIdentity);
+                if (axis === 'X') { // Point Right (-90 Z)
+                     mArrow[0]=0; mArrow[1]=-baseScale; mArrow[4]=baseScale; mArrow[5]=0;
+                } else if (axis === 'Z') { // Point Forward (90 X)
+                     mArrow[5]=0; mArrow[6]=baseScale; mArrow[9]=-baseScale; mArrow[10]=0;
+                }
+                gl.uniformMatrix4fv(uModel, false, mArrow);
+            } else {
+                // --- PLANES (Quads) ---
+                if (axis === 'X') { 
+                     // YZ Plane (Red Handle Loop) -> Cyan Color
+                     // Map Geom X -> World Z, Geom Y -> World Y
+                     const mP = new Float32Array([
+                         0,0,baseScale,0,  
+                         0,baseScale,0,0,  
+                         -baseScale,0,0,0, 
+                         pos.x,pos.y,pos.z,1
+                     ]);
+                     gl.uniformMatrix4fv(uModel, false, mP);
+                } else if (axis === 'Y') { 
+                     // XZ Plane (Green Handle Loop) -> Magenta Color
+                     // Map Geom X -> World X, Geom Y -> World Z
+                     const mP = new Float32Array([
+                         baseScale,0,0,0,  
+                         0,0,baseScale,0,  
+                         0,-baseScale,0,0, 
+                         pos.x,pos.y,pos.z,1
+                     ]);
+                     gl.uniformMatrix4fv(uModel, false, mP);
+                } else { 
+                     // XY Plane (Blue Handle Loop) -> Yellow Color
+                     // Identity matches (+X, +Y)
+                     // FIX: Use mIdentity, NOT the rotated mArrow
+                     gl.uniformMatrix4fv(uModel, false, mIdentity);
+                }
+            }
+            
+            // Colors
+            let finalColor = color;
+            if (isActive) finalColor = [1, 1, 1]; // Active = White/Bright
+            else if (isHover) finalColor = [1, 1, 1]; // Hover = White/Bright
+            
+            let alpha = type === 'plane' ? (isActive || isHover ? 0.8 : 0.4) : 1.0;
+            
+            gl.uniform3fv(uColor, finalColor);
+            gl.uniform1f(uAlpha, alpha);
+
+            if (type === 'arrow') {
+                gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cylinder, this.gizmoOffsets.cylinderCount);
+                gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cone, this.gizmoOffsets.coneCount);
+            } else {
+                gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.quad, this.gizmoOffsets.quadCount);
+            }
+        };
+
+        // --- DRAW PLANES (Transparent) ---
+        // YZ Plane (X-loop) -> Green+Blue = Cyan [0,1,1]
+        drawPart('X', 'plane', [0, 1, 1]); 
+        
+        // XZ Plane (Y-loop) -> Red+Blue = Magenta [1,0,1]
+        drawPart('Y', 'plane', [1, 0, 1]); 
+        
+        // XY Plane (Z-loop) -> Red+Green = Yellow [1,1,0]
+        drawPart('Z', 'plane', [1, 1, 0]); 
+
+        // --- DRAW ARROWS (Solid) ---
+        drawPart('X', 'arrow', [1, 0, 0]);
+        drawPart('Y', 'arrow', [0, 1, 0]);
+        drawPart('Z', 'arrow', [0, 0, 1]);
+
+        gl.enable(gl.DEPTH_TEST);
+        gl.disable(gl.BLEND);
+        gl.bindVertexArray(null);
+    }
 }
