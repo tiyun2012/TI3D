@@ -104,6 +104,10 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       engineInstance.meshComponentMode = meshComponentMode;
   }, [meshComponentMode]);
 
+  // SYNC TOOL: Make GizmoSystem respect the current tool (Hide on SELECT)
+  useEffect(() => {
+      gizmoSystem.setTool(tool);
+  }, [tool]);
   // --- Camera Logic ---
   const { vpMatrix, eye } = useMemo(() => {
     const { width, height } = viewport;

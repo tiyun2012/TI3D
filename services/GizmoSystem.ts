@@ -1,6 +1,6 @@
 import { engineInstance } from './engine';
 import { Mat4Utils, Vec3Utils } from './math';
-import { Vector3 } from '../types';
+import { Vector3, ToolType } from '../types';
 
 export type GizmoAxis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'VIEW' | null;
 
@@ -8,23 +8,44 @@ export class GizmoSystem {
     activeAxis: GizmoAxis = null;
     hoverAxis: GizmoAxis = null;
     
+    // Config
+    private tool: ToolType = 'SELECT'; // Default to SELECT (Hidden)
+    private gizmoScale = 1.0;
+
+    // Drag State
     private isDragging = false;
     private startPos: Vector3 = { x: 0, y: 0, z: 0 };
     private clickOffset: Vector3 = { x: 0, y: 0, z: 0 };
     private planeNormal: Vector3 = { x: 0, y: 1, z: 0 };
-    private gizmoScale = 1.0;
+    
+    // --- API ---
+    setTool(tool: ToolType) {
+        this.tool = tool;
+        // If we switch to SELECT while dragging, cancel the drag
+        if (tool === 'SELECT' && this.isDragging) {
+            this.isDragging = false;
+            this.activeAxis = null;
+        }
+    }
 
-    // ... (update method remains same) ...
     update(dt: number, mx: number, my: number, width: number, height: number, isDown: boolean, isUp: boolean) {
-        // ... (selection check) ...
+        // 1. Tool Check: If SELECT, do nothing (allow box selection to pass through)
+        if (this.tool === 'SELECT') {
+            this.hoverAxis = null;
+            this.activeAxis = null;
+            return;
+        }
+
         const selected = engineInstance.selectedIndices;
-        if (selected.size !== 1) return;
+        if (selected.size !== 1) return; 
+        
         const idx = Array.from(selected)[0];
         const entityId = engineInstance.ecs.store.ids[idx];
         if (!entityId) return;
 
         const worldPos = engineInstance.sceneGraph.getWorldPosition(entityId);
         const camPos = engineInstance.currentCameraPos;
+        
         const dist = Math.sqrt((camPos.x-worldPos.x)**2 + (camPos.y-worldPos.y)**2 + (camPos.z-worldPos.z)**2);
         this.gizmoScale = dist * 0.15;
 
@@ -55,6 +76,9 @@ export class GizmoSystem {
     }
 
     render() {
+        // 1. Tool Check: If SELECT, do not render
+        if (this.tool === 'SELECT') return;
+
         const selected = engineInstance.selectedIndices;
         if (selected.size !== 1) return;
         const idx = Array.from(selected)[0];
@@ -88,7 +112,7 @@ export class GizmoSystem {
         else if (axis === 'XY') this.planeNormal = Z;
         else if (axis === 'XZ') this.planeNormal = Y;
         else if (axis === 'YZ') this.planeNormal = X;
-        else if (axis === 'VIEW') this.planeNormal = viewDir; // Plane perpendicular to camera
+        else if (axis === 'VIEW') this.planeNormal = viewDir;
 
         const hit = this.rayPlaneIntersect(ray, pos, this.planeNormal);
         if (hit) {
@@ -101,11 +125,10 @@ export class GizmoSystem {
         if (hit) {
             let target = Vec3Utils.subtract(hit, this.clickOffset, {x:0,y:0,z:0});
             
-            // Axis Constraints (VIEW/Planes have no constraint, free move on plane)
+            // Apply Constraints (If NOT free view/plane)
             if (this.activeAxis === 'X') target = { x: target.x, y: this.startPos.y, z: this.startPos.z };
             if (this.activeAxis === 'Y') target = { x: this.startPos.x, y: target.y, z: this.startPos.z };
             if (this.activeAxis === 'Z') target = { x: this.startPos.x, y: this.startPos.y, z: target.z };
-            
             if (this.activeAxis === 'XY') target.z = this.startPos.z;
             if (this.activeAxis === 'XZ') target.y = this.startPos.y;
             if (this.activeAxis === 'YZ') target.x = this.startPos.x;
@@ -137,15 +160,11 @@ export class GizmoSystem {
 
     // --- Math Helpers ---
     private raycastGizmo(ray: any, pos: Vector3, scale: number): GizmoAxis {
-        // --- 0. CENTER BALL RAYCAST (Priority) ---
-        // Radius matches visual (0.05) + tolerance
-        const ballRad = scale * 0.03; 
-        
-        // Simple Ray-Sphere Intersection check (Distance from point to ray < radius)
-        const distToBall = this.distRaySegment(ray, pos, pos); // Segment length 0 = Point
-        if (distToBall < ballRad) return 'VIEW';
+        // 0. Center Ball
+        const ballRad = scale * 0.02; 
+        if (this.distRaySegment(ray, pos, pos) < ballRad) return 'VIEW';
 
-        // --- 1. AXIS RAYCAST ---
+        // 1. Axes
         const len = scale * 0.67;  
         const rad = scale * 0.00625; 
         const distToAxis = (axisVec: Vector3) => {
@@ -157,10 +176,9 @@ export class GizmoSystem {
         if (distToAxis({x:0,y:1,z:0}) < rad) return 'Y';
         if (distToAxis({x:0,y:0,z:1}) < rad) return 'Z';
         
-        // --- 2. PLANE RAYCAST ---
+        // 2. Planes
         const pStart = scale * 0.1;
         const pEnd = scale * 0.2; 
-
         const checkPlane = (normal: Vector3, uAxis: Vector3, vAxis: Vector3): boolean => {
             const hit = this.rayPlaneIntersect(ray, pos, normal);
             if (!hit) return false;
