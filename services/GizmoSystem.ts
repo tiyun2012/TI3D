@@ -14,10 +14,11 @@ export class GizmoSystem {
     private planeNormal: Vector3 = { x: 0, y: 1, z: 0 };
     private gizmoScale = 1.0;
 
+    // ... (update method remains same) ...
     update(dt: number, mx: number, my: number, width: number, height: number, isDown: boolean, isUp: boolean) {
+        // ... (selection check) ...
         const selected = engineInstance.selectedIndices;
-        if (selected.size !== 1) return; 
-        
+        if (selected.size !== 1) return;
         const idx = Array.from(selected)[0];
         const entityId = engineInstance.ecs.store.ids[idx];
         if (!entityId) return;
@@ -81,14 +82,13 @@ export class GizmoSystem {
         
         const X = {x:1,y:0,z:0}; const Y = {x:0,y:1,z:0}; const Z = {x:0,y:0,z:1};
         
-        // Smart Plane Selection for Axes
         if (axis === 'X') this.planeNormal = Math.abs(viewDir.y) > Math.abs(viewDir.z) ? Y : Z;
         else if (axis === 'Y') this.planeNormal = Math.abs(viewDir.x) > Math.abs(viewDir.z) ? X : Z;
         else if (axis === 'Z') this.planeNormal = Math.abs(viewDir.x) > Math.abs(viewDir.y) ? X : Y;
-        // Fixed Planes
         else if (axis === 'XY') this.planeNormal = Z;
         else if (axis === 'XZ') this.planeNormal = Y;
         else if (axis === 'YZ') this.planeNormal = X;
+        else if (axis === 'VIEW') this.planeNormal = viewDir; // Plane perpendicular to camera
 
         const hit = this.rayPlaneIntersect(ray, pos, this.planeNormal);
         if (hit) {
@@ -101,12 +101,11 @@ export class GizmoSystem {
         if (hit) {
             let target = Vec3Utils.subtract(hit, this.clickOffset, {x:0,y:0,z:0});
             
-            // Axis Constraints
+            // Axis Constraints (VIEW/Planes have no constraint, free move on plane)
             if (this.activeAxis === 'X') target = { x: target.x, y: this.startPos.y, z: this.startPos.z };
             if (this.activeAxis === 'Y') target = { x: this.startPos.x, y: target.y, z: this.startPos.z };
             if (this.activeAxis === 'Z') target = { x: this.startPos.x, y: this.startPos.y, z: target.z };
             
-            // Planes (XY, XZ, YZ) - No constraint needed, they move on 2 axes naturally by the plane intersect
             if (this.activeAxis === 'XY') target.z = this.startPos.z;
             if (this.activeAxis === 'XZ') target.y = this.startPos.y;
             if (this.activeAxis === 'YZ') target.x = this.startPos.x;
@@ -136,15 +135,19 @@ export class GizmoSystem {
         }
     }
 
-// --- Math Helpers ---
+    // --- Math Helpers ---
     private raycastGizmo(ray: any, pos: Vector3, scale: number): GizmoAxis {
-        const len = scale * 1.5;
+        // --- 0. CENTER BALL RAYCAST (Priority) ---
+        // Radius matches visual (0.05) + tolerance
+        const ballRad = scale * 0.03; 
         
-        // UPDATE: Reduced radius to match new Cylinder (0.008) + allowance
-        // Was 0.15, now 0.06 is a good hit area for the thinner lines
-        const rad = scale * 0.06; 
-        
-        // 1. Check Axes (Cylinders)
+        // Simple Ray-Sphere Intersection check (Distance from point to ray < radius)
+        const distToBall = this.distRaySegment(ray, pos, pos); // Segment length 0 = Point
+        if (distToBall < ballRad) return 'VIEW';
+
+        // --- 1. AXIS RAYCAST ---
+        const len = scale * 0.67;  
+        const rad = scale * 0.00625; 
         const distToAxis = (axisVec: Vector3) => {
             const end = Vec3Utils.add(pos, Vec3Utils.scale(axisVec, len, {x:0,y:0,z:0}), {x:0,y:0,z:0});
             return this.distRaySegment(ray, pos, end);
@@ -154,44 +157,35 @@ export class GizmoSystem {
         if (distToAxis({x:0,y:1,z:0}) < rad) return 'Y';
         if (distToAxis({x:0,y:0,z:1}) < rad) return 'Z';
         
-        // 2. Check Planes (Quads)
-        // UPDATE: Match new geometry (Offset 0.1, Size 0.12)
+        // --- 2. PLANE RAYCAST ---
         const pStart = scale * 0.1;
-        const pEnd = scale * 0.22; // 0.1 + 0.12 = 0.22
+        const pEnd = scale * 0.2; 
 
         const checkPlane = (normal: Vector3, uAxis: Vector3, vAxis: Vector3): boolean => {
             const hit = this.rayPlaneIntersect(ray, pos, normal);
             if (!hit) return false;
-            // Localize
             const loc = Vec3Utils.subtract(hit, pos, {x:0,y:0,z:0});
             const u = Vec3Utils.dot(loc, uAxis);
             const v = Vec3Utils.dot(loc, vAxis);
             return (u >= pStart && u <= pEnd && v >= pStart && v <= pEnd);
         };
 
-        // XY Plane (Blue Handle) -> Normal Z
         if (checkPlane({x:0,y:0,z:1}, {x:1,y:0,z:0}, {x:0,y:1,z:0})) return 'XY';
-        // XZ Plane (Green Handle) -> Normal Y
         if (checkPlane({x:0,y:1,z:0}, {x:1,y:0,z:0}, {x:0,y:0,z:1})) return 'XZ';
-        // YZ Plane (Red Handle) -> Normal X
         if (checkPlane({x:1,y:0,z:0}, {x:0,y:1,z:0}, {x:0,y:0,z:1})) return 'YZ';
 
         return null;
     }
+
     private screenToRay(mx: number, my: number, w: number, h: number, invVP: Float32Array, camPos: Vector3) {
         const x = (mx / w) * 2 - 1;
         const y = -(my / h) * 2 + 1;
-        
         const world = [0,0,0,0];
         world[0] = invVP[0]*x + invVP[4]*y + invVP[8] + invVP[12];
         world[1] = invVP[1]*x + invVP[5]*y + invVP[9] + invVP[13];
         world[2] = invVP[2]*x + invVP[6]*y + invVP[10] + invVP[14];
         world[3] = invVP[3]*x + invVP[7]*y + invVP[11] + invVP[15];
-        
-        if (world[3] !== 0) {
-            world[0]/=world[3]; world[1]/=world[3]; world[2]/=world[3];
-        }
-        
+        if (world[3] !== 0) { world[0]/=world[3]; world[1]/=world[3]; world[2]/=world[3]; }
         const dir = Vec3Utils.normalize(Vec3Utils.subtract({x:world[0],y:world[1],z:world[2]}, camPos, {x:0,y:0,z:0}), {x:0,y:0,z:0});
         return { origin: camPos, direction: dir };
     }
@@ -205,18 +199,12 @@ export class GizmoSystem {
         const dotC = Vec3Utils.dot(v10, v0r);
         const dotD = Vec3Utils.dot(rDir, rDir);
         const dotE = Vec3Utils.dot(rDir, v0r);
-        
         const denom = dotA*dotD - dotB*dotB;
         let sc, tc;
-        
         if (denom < 0.000001) { sc = 0; tc = (dotB > dotC ? dotE/dotB : 0); }
-        else {
-            sc = (dotB*dotE - dotC*dotD) / denom;
-            tc = (dotA*dotE - dotB*dotC) / denom;
-        }
+        else { sc = (dotB*dotE - dotC*dotD) / denom; tc = (dotA*dotE - dotB*dotC) / denom; }
         sc = Math.max(0, Math.min(1, sc));
         tc = (dotB*sc + dotE) / dotD;
-        
         const pSeg = Vec3Utils.add(v0, Vec3Utils.scale(v10, sc, {x:0,y:0,z:0}), {x:0,y:0,z:0});
         const pRay = Vec3Utils.add(rOrigin, Vec3Utils.scale(rDir, tc, {x:0,y:0,z:0}), {x:0,y:0,z:0});
         const diff = Vec3Utils.subtract(pSeg, pRay, {x:0,y:0,z:0});

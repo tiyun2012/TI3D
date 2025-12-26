@@ -539,75 +539,79 @@ export class WebGLRenderer {
     gizmoProgram: WebGLProgram | null = null;
     gizmoVAO: WebGLVertexArrayObject | null = null;
     
-    gizmoOffsets = { 
+gizmoOffsets = { 
         cylinder: 0, cylinderCount: 0, 
         cone: 0, coneCount: 0, 
         quad: 0, quadCount: 0,
-        quadBorder: 0, quadBorderCount: 0 
+        quadBorder: 0, quadBorderCount: 0,
+        sphere: 0, sphereCount: 0 // New Geometry
     };
 
 initGizmo() {
         if (!this.gl) return;
         const gl = this.gl;
         
+        // ... (Shader setup same as before) ...
         const vs = `#version 300 es
         layout(location=0) in vec3 a_pos;
         uniform mat4 u_vp;
         uniform mat4 u_model;
         void main() { gl_Position = u_vp * u_model * vec4(a_pos, 1.0); }`;
-        
         const fs = `#version 300 es
         precision mediump float;
         uniform vec3 u_color;
         uniform float u_alpha;
         layout(location=0) out vec4 outColor;
         void main() { outColor = vec4(u_color, u_alpha); }`;
-        
         this.gizmoProgram = this.createProgram(gl, vs, fs);
 
         const vertices: number[] = [];
         
-        // --- GEOMETRY ADJUSTMENTS (Compact Size) ---
-        
         // 1. Cylinder (Arrow Stem)
-        // Length: 0.0 -> 0.6 (Total axis ~0.67)
-        // Radius: 0.005 (Thinner)
-        const stemLen = 0.6;
-        const stemRad = 0.005;
-        const segs = 16;
+        const stemLen = 0.6; const stemRad = 0.005; const segs = 16;
         for(let i=0; i<segs; i++) {
             const th = (i/segs)*Math.PI*2; const th2 = ((i+1)/segs)*Math.PI*2;
             const x1=Math.cos(th)*stemRad, z1=Math.sin(th)*stemRad;
             const x2=Math.cos(th2)*stemRad, z2=Math.sin(th2)*stemRad;
-            vertices.push(x1,0,z1, x2,0,z2, x1,stemLen,z1);
-            vertices.push(x2,0,z2, x2,stemLen,z2, x1,stemLen,z1);
+            vertices.push(x1,0,z1, x2,0,z2, x1,stemLen,z1); vertices.push(x2,0,z2, x2,stemLen,z2, x1,stemLen,z1);
         }
         
         // 2. Cone (Arrow Tip)
-        // Length: 0.6 -> 0.67 (Tip length ~0.07, short and sharp)
-        // Radius: 0.022 (Reduced from 0.035)
-        const tipStart = stemLen;
-        const tipEnd = 0.67; 
-        const tipRad = 0.022;
+        const tipStart = stemLen; const tipEnd = 0.67; const tipRad = 0.022;
         const coneOff = vertices.length / 3;
         for(let i=0; i<segs; i++) {
             const th = (i/segs)*Math.PI*2; const th2 = ((i+1)/segs)*Math.PI*2;
             const x1=Math.cos(th)*tipRad, z1=Math.sin(th)*tipRad;
             const x2=Math.cos(th2)*tipRad, z2=Math.sin(th2)*tipRad;
-            vertices.push(x1,tipStart,z1, x2,tipStart,z2, 0,tipEnd,0);
-            vertices.push(x1,tipStart,z1, 0,tipStart,0, x2,tipStart,z2);
+            vertices.push(x1,tipStart,z1, x2,tipStart,z2, 0,tipEnd,0); vertices.push(x1,tipStart,z1, 0,tipStart,0, x2,tipStart,z2);
         }
 
         // 3. Quad (Filled Plane)
-        // Kept close to origin (0.1) but slightly smaller size (0.1)
         const quadOff = vertices.length / 3;
         const qS = 0.1, qO = 0.1; 
-        vertices.push(qO,qO,0, qO+qS,qO,0, qO,qO+qS,0);
-        vertices.push(qO+qS,qO,0, qO+qS,qO+qS,0, qO,qO+qS,0);
+        vertices.push(qO,qO,0, qO+qS,qO,0, qO,qO+qS,0); vertices.push(qO+qS,qO,0, qO+qS,qO+qS,0, qO,qO+qS,0);
 
         // 4. Quad Border (Wireframe)
         const borderOff = vertices.length / 3;
         vertices.push(qO,qO,0, qO+qS,qO,0, qO+qS,qO+qS,0, qO,qO+qS,0);
+
+        // 5. Sphere (Center Ball)
+        // Radius: 0.025 (1/2 of previous 0.05)
+        const sphereRad = 0.025;
+        const sphereOff = vertices.length / 3;
+        const lat = 8, lon = 12;
+        for(let i=0; i<lat; i++) {
+            const th1 = (i/lat)*Math.PI; const th2 = ((i+1)/lat)*Math.PI;
+            for(let j=0; j<lon; j++) {
+                const ph1 = (j/lon)*2*Math.PI; const ph2 = ((j+1)/lon)*2*Math.PI;
+                const p1 = {x:Math.sin(th1)*Math.cos(ph1), y:Math.cos(th1), z:Math.sin(th1)*Math.sin(ph1)};
+                const p2 = {x:Math.sin(th1)*Math.cos(ph2), y:Math.cos(th1), z:Math.sin(th1)*Math.sin(ph2)};
+                const p3 = {x:Math.sin(th2)*Math.cos(ph1), y:Math.cos(th2), z:Math.sin(th2)*Math.sin(ph1)};
+                const p4 = {x:Math.sin(th2)*Math.cos(ph2), y:Math.cos(th2), z:Math.sin(th2)*Math.sin(ph2)};
+                vertices.push(p1.x*sphereRad,p1.y*sphereRad,p1.z*sphereRad, p3.x*sphereRad,p3.y*sphereRad,p3.z*sphereRad, p2.x*sphereRad,p2.y*sphereRad,p2.z*sphereRad);
+                vertices.push(p2.x*sphereRad,p2.y*sphereRad,p2.z*sphereRad, p3.x*sphereRad,p3.y*sphereRad,p3.z*sphereRad, p4.x*sphereRad,p4.y*sphereRad,p4.z*sphereRad);
+            }
+        }
 
         this.gizmoVAO = gl.createVertexArray();
         const vbo = gl.createBuffer();
@@ -622,7 +626,8 @@ initGizmo() {
             cylinder: 0, cylinderCount: coneOff, 
             cone: coneOff, coneCount: quadOff - coneOff, 
             quad: quadOff, quadCount: 6,
-            quadBorder: borderOff, quadBorderCount: 4
+            quadBorder: borderOff, quadBorderCount: 4,
+            sphere: sphereOff, sphereCount: (vertices.length/3) - sphereOff
         };
     }
 
@@ -642,31 +647,35 @@ initGizmo() {
 
         gl.bindVertexArray(this.gizmoVAO);
 
-        const drawPart = (axis: 'X'|'Y'|'Z', type: 'arrow'|'plane', color: number[]) => {
-            const isHover = hoverAxis === (type === 'plane' ? (axis==='X'?'YZ':(axis==='Y'?'XZ':'XY')) : axis);
-            const isActive = activeAxis === (type === 'plane' ? (axis==='X'?'YZ':(axis==='Y'?'XZ':'XY')) : axis);
+        const drawPart = (axis: 'X'|'Y'|'Z'|'VIEW', type: 'arrow'|'plane'|'sphere', color: number[]) => {
+            const axisName = axis === 'VIEW' ? 'VIEW' : axis;
+            const checkName = type === 'plane' ? (axis==='X'?'YZ':(axis==='Y'?'XZ':'XY')) : axisName;
             
-            // Planes size stable (1.0). Arrows stable (1.0).
+            const isHover = hoverAxis === checkName;
+            const isActive = activeAxis === checkName;
             const baseScale = scale; 
             
-            const mIdentity = new Float32Array([
-                baseScale,0,0,0, 0,baseScale,0,0, 0,0,baseScale,0, pos.x,pos.y,pos.z,1
-            ]);
+            const mIdentity = new Float32Array([baseScale,0,0,0, 0,baseScale,0,0, 0,0,baseScale,0, pos.x,pos.y,pos.z,1]);
 
             if (type === 'arrow') {
                 const mArrow = new Float32Array(mIdentity);
                 if (axis === 'X') { mArrow[0]=0; mArrow[1]=-baseScale; mArrow[4]=baseScale; mArrow[5]=0; }
                 else if (axis === 'Z') { mArrow[5]=0; mArrow[6]=baseScale; mArrow[9]=-baseScale; mArrow[10]=0; }
-                
                 gl.uniformMatrix4fv(uModel, false, mArrow);
                 
-                let finalColor = (isActive || isHover) ? [1,1,1] : color;
-                gl.uniform3fv(uColor, finalColor);
+                gl.uniform3fv(uColor, (isActive || isHover) ? [1,1,1] : color);
                 gl.uniform1f(uAlpha, 1.0);
-                
                 gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cylinder, this.gizmoOffsets.cylinderCount);
                 gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.cone, this.gizmoOffsets.coneCount);
-            } else {
+            } 
+            else if (type === 'sphere') {
+                gl.uniformMatrix4fv(uModel, false, mIdentity);
+                // Color: #47a1b3 -> [0.28, 0.63, 0.70]
+                gl.uniform3fv(uColor, (isActive || isHover) ? [1,1,1] : [0.28, 0.63, 0.70]); 
+                gl.uniform1f(uAlpha, 1.0);
+                gl.drawArrays(gl.TRIANGLES, this.gizmoOffsets.sphere, this.gizmoOffsets.sphereCount);
+            }
+            else { 
                 if (axis === 'X') { 
                      const mP = new Float32Array([0,0,baseScale,0, 0,baseScale,0,0, -baseScale,0,0,0, pos.x,pos.y,pos.z,1]);
                      gl.uniformMatrix4fv(uModel, false, mP);
@@ -688,6 +697,8 @@ initGizmo() {
                 }
             }
         };
+
+        drawPart('VIEW', 'sphere', [1,1,1]); // Color is ignored here, overridden inside
 
         drawPart('X', 'plane', [0, 1, 1]); 
         drawPart('Y', 'plane', [1, 0, 1]); 
