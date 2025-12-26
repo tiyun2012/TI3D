@@ -1,7 +1,6 @@
 
 import React, { useContext, useState, useMemo } from 'react';
 import { EditorContext, VertexShape } from '../contexts/EditorContext';
-import { GizmoArrowShape, GizmoCenterShape, GizmoPlaneShape } from './gizmos/GizmoUtils';
 import { Icon } from './Icon';
 import { Slider } from './ui/Slider';
 import { Select } from './ui/Select';
@@ -36,7 +35,7 @@ const SelectionCard: React.FC<{
 };
 
 export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
-  const { gizmoConfig, setGizmoConfig, uiConfig, setUiConfig, gridConfig, setGridConfig } = useContext(EditorContext)!;
+  const {   uiConfig, setUiConfig, gridConfig, setGridConfig } = useContext(EditorContext)!;
   const [ppConfig, setPpConfig] = useState(engineInstance.getPostProcessConfig());
   const [search, setSearch] = useState('');
 

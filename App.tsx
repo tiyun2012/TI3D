@@ -15,7 +15,6 @@ import { ProjectPanel } from './components/ProjectPanel';
 import { Icon } from './components/Icon';
 import { PreferencesModal } from './components/PreferencesModal';
 import { WindowManager, WindowManagerContext } from './components/WindowManager';
-import { DEFAULT_GIZMO_CONFIG, GizmoConfiguration } from './components/gizmos/GizmoUtils';
 import { GeometrySpreadsheet } from './components/GeometrySpreadsheet';
 import { UVEditor } from './components/UVEditor';
 import { Timeline } from './components/Timeline';
@@ -303,7 +302,6 @@ const App: React.FC = () => {
     const [meshComponentMode, setMeshComponentMode] = useState<MeshComponentMode>('OBJECT');
     const [isPlaying, setIsPlaying] = useState(false);
     
-    const [gizmoConfig, setGizmoConfig] = useState<GizmoConfiguration>(DEFAULT_GIZMO_CONFIG);
     const [uiConfig, setUiConfig] = useState<UIConfiguration>(DEFAULT_UI_CONFIG);
     const [gridConfig, setGridConfig] = useState<GridConfiguration>(DEFAULT_GRID_CONFIG);
     const [snapSettings, setSnapSettings] = useState<SnapSettings>(DEFAULT_SNAP_CONFIG);
@@ -356,11 +354,10 @@ const App: React.FC = () => {
         tool, setTool,
         transformSpace, setTransformSpace,
         isPlaying,
-        gizmoConfig, setGizmoConfig,
         uiConfig, setUiConfig,
         gridConfig, setGridConfig,
         snapSettings, setSnapSettings
-    }), [entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, updateInspectedNodeData, setOnNodeDataChange, selectionType, meshComponentMode, tool, transformSpace, isPlaying, gizmoConfig, uiConfig, gridConfig, snapSettings]);
+    }), [entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, updateInspectedNodeData, setOnNodeDataChange, selectionType, meshComponentMode, tool, transformSpace, isPlaying, uiConfig, gridConfig, snapSettings]);
 
     return (
         <EditorContext.Provider value={contextValue}>

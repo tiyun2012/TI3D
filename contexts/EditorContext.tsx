@@ -2,7 +2,6 @@
 import React from 'react';
 import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
-import { GizmoConfiguration } from '../components/gizmos/GizmoUtils';
 
 export type VertexShape = 'DOT' | 'CUBE';
 
@@ -103,9 +102,7 @@ export interface EditorContextType {
   setTransformSpace: (space: TransformSpace) => void;
   isPlaying: boolean;
   
-  gizmoConfig: GizmoConfiguration;
-  setGizmoConfig: (config: GizmoConfiguration) => void;
-  
+
   uiConfig: UIConfiguration;
   setUiConfig: (config: UIConfiguration) => void;
 
