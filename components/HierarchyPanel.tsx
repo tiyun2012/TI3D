@@ -114,7 +114,7 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
   };
 
   const deleteEntity = (id: string) => {
-    engineInstance.deleteEntity(id);
+    engineInstance.deleteEntity(id, engineInstance.sceneGraph);
     onSelect([]);
     setContextMenu(null);
   };

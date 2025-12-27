@@ -1,4 +1,6 @@
 
+import React from 'react';
+
 // ECS Types
 export interface Vector3 {
   x: number;
@@ -9,6 +11,7 @@ export interface Vector3 {
 export type RotationOrder = 'XYZ' | 'XZY' | 'YXZ' | 'YZX' | 'ZXY' | 'ZYX';
 export type TransformSpace = 'World' | 'Local' | 'Gimbal';
 export type MeshComponentMode = 'OBJECT' | 'VERTEX' | 'EDGE' | 'FACE';
+export type SimulationMode = 'STOPPED' | 'GAME' | 'SIMULATE';
 
 export enum ComponentType {
   TRANSFORM = 'Transform',
@@ -19,15 +22,48 @@ export enum ComponentType {
   VIRTUAL_PIVOT = 'VirtualPivot'
 }
 
+// --- MODULAR SYSTEM TYPES ---
+
+export interface ModuleContext {
+    engine: any; // Reference to Engine instance
+    ecs: any;    // Reference to ECS
+    scene: any;  // Reference to SceneGraph
+}
+
+export interface InspectorProps {
+    entity: Entity;
+    component: Component;
+    onUpdate: (field: string, value: any) => void;
+    onStartUpdate: () => void;
+    onCommit: () => void;
+}
+
+export interface EngineModule {
+    id: ComponentType | string;
+    name: string;
+    icon: string;
+    order: number; // For UI sorting
+    
+    // UI Rendering
+    InspectorComponent: React.FC<InspectorProps>;
+    
+    // Lifecycle
+    onRegister?: (ctx: ModuleContext) => void;
+    onUpdate?: (dt: number, ctx: ModuleContext) => void;
+    onRender?: (gl: WebGL2RenderingContext, viewProj: Float32Array, ctx: ModuleContext) => void;
+}
+
+// ----------------------------
+
 export interface Component {
-  type: ComponentType;
+  type: ComponentType | string;
   [key: string]: any;
 }
 
 export interface Entity {
   id: string;
   name: string;
-  components: Record<ComponentType, Component>;
+  components: Record<string, Component>;
   isActive: boolean;
 }
 
@@ -84,14 +120,23 @@ export interface LogicalMesh {
 }
 
 // Asset Types
-export type AssetType = 'MESH' | 'SKELETAL_MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'TEXTURE' | 'SCRIPT' | 'RIG';
+export type AssetType = 'FOLDER' | 'MESH' | 'SKELETAL_MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'TEXTURE' | 'SCRIPT' | 'RIG';
 
-export interface StaticMeshAsset {
+export interface BaseAsset {
     id: string;
     name: string;
+    type: AssetType;
+    path: string; // Virtual folder path e.g., "/Content/Materials"
+    isProtected?: boolean;
+}
+
+export interface FolderAsset extends BaseAsset {
+    type: 'FOLDER';
+}
+
+export interface StaticMeshAsset extends BaseAsset {
     type: 'MESH';
     thumbnail?: string; 
-    isProtected?: boolean;
     geometry: {
         vertices: Float32Array;
         normals: Float32Array;
@@ -101,12 +146,9 @@ export interface StaticMeshAsset {
     topology?: LogicalMesh; // Optional CPU-side topology data
 }
 
-export interface SkeletalMeshAsset {
-    id: string;
-    name: string;
+export interface SkeletalMeshAsset extends BaseAsset {
     type: 'SKELETAL_MESH';
     thumbnail?: string;
-    isProtected?: boolean;
     geometry: {
         vertices: Float32Array;
         normals: Float32Array;
@@ -121,11 +163,8 @@ export interface SkeletalMeshAsset {
     topology?: LogicalMesh;
 }
 
-export interface MaterialAsset {
-    id: string;
-    name: string;
+export interface MaterialAsset extends BaseAsset {
     type: 'MATERIAL';
-    isProtected?: boolean;
     data: {
         nodes: GraphNode[];
         connections: GraphConnection[];
@@ -133,11 +172,8 @@ export interface MaterialAsset {
     };
 }
 
-export interface PhysicsMaterialAsset {
-    id: string;
-    name: string;
+export interface PhysicsMaterialAsset extends BaseAsset {
     type: 'PHYSICS_MATERIAL';
-    isProtected?: boolean;
     data: {
         staticFriction: number;
         dynamicFriction: number;
@@ -146,35 +182,26 @@ export interface PhysicsMaterialAsset {
     };
 }
 
-export interface ScriptAsset {
-    id: string;
-    name: string;
+export interface ScriptAsset extends BaseAsset {
     type: 'SCRIPT';
-    isProtected?: boolean;
     data: {
         nodes: GraphNode[];
         connections: GraphConnection[];
     };
 }
 
-export interface RigAsset {
-    id: string;
-    name: string;
+export interface RigAsset extends BaseAsset {
     type: 'RIG';
-    isProtected?: boolean;
     data: {
         nodes: GraphNode[];
         connections: GraphConnection[];
     };
 }
 
-export interface TextureAsset {
-    id: string;
-    name: string;
+export interface TextureAsset extends BaseAsset {
     type: 'TEXTURE';
-    isProtected?: boolean;
     source: string; 
     layerIndex: number; 
 }
 
-export type Asset = StaticMeshAsset | SkeletalMeshAsset | MaterialAsset | PhysicsMaterialAsset | ScriptAsset | RigAsset | TextureAsset;
+export type Asset = FolderAsset | StaticMeshAsset | SkeletalMeshAsset | MaterialAsset | PhysicsMaterialAsset | ScriptAsset | RigAsset | TextureAsset;

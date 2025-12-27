@@ -90,7 +90,7 @@ export class SoAEntitySystem {
         else if (type === ComponentType.LIGHT) mask = COMPONENT_MASKS.LIGHT;
         else if (type === ComponentType.PHYSICS) mask = COMPONENT_MASKS.PHYSICS;
         else if (type === ComponentType.SCRIPT) mask = COMPONENT_MASKS.SCRIPT;
-        else if (type === ComponentType.VIRTUAL_PIVOT) { // <--- ADD THIS BLOCK
+        else if (type === ComponentType.VIRTUAL_PIVOT) { 
             mask = COMPONENT_MASKS.VIRTUAL_PIVOT;
             this.store.vpLength[idx] = 1.0; 
         }  
@@ -107,6 +107,7 @@ export class SoAEntitySystem {
         else if (type === ComponentType.LIGHT) mask = COMPONENT_MASKS.LIGHT;
         else if (type === ComponentType.PHYSICS) mask = COMPONENT_MASKS.PHYSICS;
         else if (type === ComponentType.SCRIPT) mask = COMPONENT_MASKS.SCRIPT;
+        else if (type === ComponentType.VIRTUAL_PIVOT) mask = COMPONENT_MASKS.VIRTUAL_PIVOT;
         
         this.store.componentMask[idx] &= ~mask;
     }

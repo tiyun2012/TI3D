@@ -1,3 +1,4 @@
+
 // services/math.ts - THE ULTIMATE VERSION (Complete Feature Set + Optimizations)
 
 // ==========================================
@@ -859,6 +860,43 @@ export const RayUtils = {
         if (Math.abs(denom) < MathConstants.EPSILON) return null;
         const t = -(Vec3Utils.dot(plane.normal, ray.origin) + plane.distance) / denom;
         return t >= 0 ? t : null;
+    },
+
+    distRaySegment: (ray: Ray, v0: Vec3, v1: Vec3): number => {
+        const rOrigin = ray.origin; const rDir = ray.direction;
+        const v10x = v1.x - v0.x;
+        const v10y = v1.y - v0.y;
+        const v10z = v1.z - v0.z;
+        
+        const v0rx = v0.x - rOrigin.x;
+        const v0ry = v0.y - rOrigin.y;
+        const v0rz = v0.z - rOrigin.z;
+        
+        const dotA = v10x*v10x + v10y*v10y + v10z*v10z;
+        const dotB = v10x*rDir.x + v10y*rDir.y + v10z*rDir.z;
+        const dotC = v10x*v0rx + v10y*v0ry + v10z*v0rz;
+        const dotD = rDir.x*rDir.x + rDir.y*rDir.y + rDir.z*rDir.z;
+        const dotE = rDir.x*v0rx + rDir.y*v0ry + rDir.z*v0rz;
+        
+        const denom = dotA*dotD - dotB*dotB;
+        
+        let sc, tc;
+        if (denom < MathConstants.EPSILON) {
+            sc = 0.0;
+            tc = (dotB > dotC ? dotE / dotB : 0.0);
+        } else {
+            sc = (dotB*dotE - dotC*dotD) / denom;
+            tc = (dotA*dotE - dotB*dotC) / denom;
+        }
+        
+        sc = Math.max(0, Math.min(1, sc));
+        tc = (dotB*sc + dotE) / dotD;
+        
+        const diffX = (v0.x + v10x * sc) - (rOrigin.x + rDir.x * tc);
+        const diffY = (v0.y + v10y * sc) - (rOrigin.y + rDir.y * tc);
+        const diffZ = (v0.z + v10z * sc) - (rOrigin.z + rDir.z * tc);
+        
+        return Math.sqrt(diffX*diffX + diffY*diffY + diffZ*diffZ);
     }
 };
 

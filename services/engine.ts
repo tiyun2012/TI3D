@@ -1,3 +1,4 @@
+
 // services/engine.ts
 
 import { SoAEntitySystem } from './ecs/EntitySystem';
@@ -7,13 +8,17 @@ import { HistorySystem } from './systems/HistorySystem';
 import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { DebugRenderer } from './renderers/DebugRenderer';
 import { assetManager } from './AssetManager';
-import { PerformanceMetrics, GraphNode, GraphConnection, Vector3, ComponentType, Asset, TimelineState, StaticMeshAsset, MeshComponentMode } from '../types';
+import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode } from '../types';
 import { Mat4Utils, RayUtils, Vec3Utils, Ray } from './math';
 import { compileShader } from './ShaderCompiler';
 import { GridConfiguration, UIConfiguration, DEFAULT_UI_CONFIG } from '../contexts/EditorContext';
 import { NodeRegistry } from './NodeRegistry';
 import { MeshTopologyUtils, MeshPickingResult } from './MeshTopologyUtils';
 import { gizmoSystem } from './GizmoSystem';
+import { moduleManager } from './ModuleManager';
+import { registerCoreModules } from './modules/CoreModules';
+import { consoleService } from './Console';
+
 export class Engine {
     ecs: SoAEntitySystem;
     sceneGraph: SceneGraph;
@@ -23,6 +28,7 @@ export class Engine {
     debugRenderer: DebugRenderer;
     metrics: PerformanceMetrics;
     isPlaying: boolean = false;
+    simulationMode: SimulationMode = 'STOPPED';
     renderMode: number = 0;
     
     meshComponentMode: MeshComponentMode = 'OBJECT';
@@ -50,11 +56,9 @@ export class Engine {
     public currentWidth: number = 0;
     public currentHeight: number = 0;
 
-    // --- Frame Rate Management ---
     private accumulator: number = 0;
-    private readonly fixedTimeStep: number = 1 / 60; // 60 updates per second (0.0166s)
-    private readonly maxFrameTime: number = 0.1;     // Cap dt to 100ms to prevent "spiral of death"
-    // -----------------------------
+    private readonly fixedTimeStep: number = 1 / 60; 
+    private readonly maxFrameTime: number = 0.1;     
 
     constructor() {
         this.ecs = new SoAEntitySystem();
@@ -65,6 +69,14 @@ export class Engine {
         this.renderer = new WebGLRenderer();
         this.debugRenderer = new DebugRenderer();
         this.metrics = { fps: 0, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0 };
+        
+        // Initialize Modular System
+        registerCoreModules();
+        moduleManager.init({
+            engine: this,
+            ecs: this.ecs,
+            scene: this.sceneGraph
+        });
     }
 
     initGL(canvas: HTMLCanvasElement) {
@@ -102,47 +114,56 @@ export class Engine {
     }
 
     resize(width: number, height: number) { this.renderer.resize(width, height); }
-    start() { this.isPlaying = true; this.timeline.isPlaying = true; this.notifyUI(); }
-    pause() { this.isPlaying = false; this.timeline.isPlaying = false; this.notifyUI(); }
-    stop() { this.isPlaying = false; this.timeline.isPlaying = false; this.timeline.currentTime = 0; this.notifyUI(); }
+    
+    start(mode: SimulationMode = 'GAME') { 
+        this.isPlaying = true; 
+        this.simulationMode = mode;
+        this.timeline.isPlaying = true; 
+        this.notifyUI(); 
+        consoleService.info(mode === 'GAME' ? 'Game Started' : 'Simulation Started'); 
+    }
+    
+    pause() { 
+        this.timeline.isPlaying = false; 
+        this.notifyUI(); 
+        consoleService.info('Paused'); 
+    }
+    
+    stop() { 
+        this.isPlaying = false; 
+        this.simulationMode = 'STOPPED';
+        this.timeline.isPlaying = false; 
+        this.timeline.currentTime = 0; 
+        this.notifyUI(); 
+        consoleService.info('Stopped'); 
+    }
+    
     setTimelineTime(time: number) { this.timeline.currentTime = Math.max(0, Math.min(time, this.timeline.duration)); this.notifyUI(); }
 
-    /**
-     * Main Engine Loop
-     * Decouples Physics (Fixed Step) from Rendering (Variable Step)
-     */
     createVirtualPivot(name: string = 'Virtual Pivot') {
         const id = this.ecs.createEntity(name);
         this.ecs.addComponent(id, ComponentType.VIRTUAL_PIVOT);
         this.sceneGraph.registerEntity(id);
-        
-        // Add default Transform logic (handled by createEntity/addComponent(TRANSFORM) implicitly?)
-        // Note: EntitySystem.createEntity usually adds TRANSFORM by default.
-        
         this.pushUndoState();
         this.notifyUI();
+        consoleService.info(`Created helper: ${name}`);
         return id;
     }
 
     tick(dt: number) {
             const start = performance.now();
-
-            // 1. Safety Cap: Prevent giant steps if browser hangs
             const clampedDt = Math.min(dt, this.maxFrameTime);
+            if (dt > 0) this.accumulator += clampedDt;
 
-            // 2. Accumulate time (ONLY if dt is valid)
-            if (dt > 0) {
-                this.accumulator += clampedDt;
-            }
-
-            // 3. Fixed Update Loop (Physics)
             while (this.accumulator >= this.fixedTimeStep) {
                 this.fixedUpdate(this.fixedTimeStep);
                 this.accumulator -= this.fixedTimeStep;
             }
 
-            // 4. Rendering
             this.sceneGraph.update();
+
+            // Run Module Updates (Logic that runs every frame, distinct from fixed physics)
+            moduleManager.update(dt);
 
             if (this.currentViewProj && !this.isPlaying) {
                 this.debugRenderer.begin();
@@ -158,33 +179,20 @@ export class Engine {
                     this.currentWidth, 
                     this.currentHeight, 
                     this.currentCameraPos,
-                    this.isPlaying ? undefined : this.debugRenderer
+                    this.isPlaying && this.simulationMode === 'GAME' ? undefined : this.debugRenderer
                 );
-                // RENDER VIRTUAL PIVOTS
-             this.renderer.renderVirtualPivots(
-                 this.ecs.store, 
-                 this.ecs.count, 
-                 this.currentViewProj
-             );
             }
 
             const end = performance.now();
             this.metrics.frameTime = end - start;
-            
-            // --- FIX: Prevent 0 division ---
-            if (dt > 0.0001) {
-                this.metrics.fps = 1 / dt;
-            }
+            if (dt > 0.0001) this.metrics.fps = 1 / dt;
             gizmoSystem.render();
             this.metrics.drawCalls = this.renderer.drawCalls;
             this.metrics.triangleCount = this.renderer.triangleCount;
             this.metrics.entityCount = this.ecs.count;
         }
-        /**
-         * Updates Physics and Game Logic with a constant time step
-         */
+
         private fixedUpdate(fixedDt: number) {
-            // Update Timeline
             if (this.timeline.isPlaying) {
                 this.timeline.currentTime += fixedDt * this.timeline.playbackSpeed;
                 if (this.timeline.currentTime >= this.timeline.duration) {
@@ -193,16 +201,16 @@ export class Engine {
                         this.timeline.currentTime = this.timeline.duration; 
                         this.timeline.isPlaying = false; 
                         this.isPlaying = false; 
+                        this.simulationMode = 'STOPPED';
+                        this.notifyUI();
                     }
                 }
             }
 
-            // Update Physics
             if (this.isPlaying) {
                 this.physicsSystem.update(fixedDt, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
             }
 
-            // Update Scripts / Asset Graphs
             const store = this.ecs.store;
             for(let i=0; i<this.ecs.count; i++) {
                 if (store.isActive[i]) {
@@ -294,7 +302,15 @@ export class Engine {
         this.subSelection.vertexIds.clear(); this.subSelection.edgeIds.clear(); this.subSelection.faceIds.clear();
     }
 
-    deleteEntity(id: string) { this.pushUndoState(); this.ecs.deleteEntity(id, this.sceneGraph); this.notifyUI(); }
+    deleteEntity(id: string, sceneGraph: SceneGraph) { 
+        const idx = this.ecs.idToIndex.get(id);
+        const name = idx !== undefined ? this.ecs.store.names[idx] : 'Unknown Object';
+        this.pushUndoState(); 
+        this.ecs.deleteEntity(id, sceneGraph); 
+        this.notifyUI();
+        consoleService.info(`Deleted object: ${name}`);
+    }
+    
     deleteAsset(id: string) { assetManager.deleteAsset(id); this.notifyUI(); }
     notifyUI() { this.listeners.forEach(l => l()); }
     subscribe(cb: () => void) { this.listeners.push(cb); return () => { this.listeners = this.listeners.filter(l => l !== cb); }; }
@@ -309,7 +325,10 @@ export class Engine {
     createEntityFromAsset(assetId: string, position: {x:number, y:number, z:number}): string | null {
         let asset = assetManager.getAsset(assetId);
         if (!asset) asset = assetManager.getAllAssets().find(a => a.name === assetId) || undefined;
-        if (!asset) return null;
+        if (!asset) {
+            consoleService.error(`Failed to create entity: Asset ${assetId} not found`);
+            return null;
+        }
         this.registerAssetWithGPU(asset);
         const id = this.ecs.createEntity(asset.name);
         this.sceneGraph.registerEntity(id);
@@ -320,6 +339,7 @@ export class Engine {
             this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
         }
         this.notifyUI(); this.pushUndoState();
+        consoleService.success(`Placed ${asset.name} in scene`);
         return id;
     }
 
@@ -365,69 +385,29 @@ export class Engine {
 
     selectEntitiesInRect(rx: number, ry: number, rw: number, rh: number): string[] { 
         if (!this.currentViewProj || rw < 1 || rh < 1) return [];
-
-        const width = this.currentWidth;
-        const height = this.currentHeight;
-
-        // Selection rect in NDC (-1 to 1)
-        const selX1 = (rx / width) * 2 - 1;
-        const selY1 = 1 - (ry / height) * 2;
-        const selX2 = ((rx + rw) / width) * 2 - 1;
-        const selY2 = 1 - ((ry + rh) / height) * 2;
-
-        const selLeft = Math.min(selX1, selX2);
-        const selRight = Math.max(selX1, selX2);
-        const selBottom = Math.min(selY1, selY2);
-        const selTop = Math.max(selY1, selY2);
-
-        const hitIds: string[] = [];
-        const store = this.ecs.store;
-        const vp = this.currentViewProj;
-
-        // 8 Corners of a standard unit cube centered at origin
-        const corners = [
-            [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5],
-            [-0.5,  0.5, -0.5], [0.5,  0.5, -0.5],
-            [-0.5, -0.5,  0.5], [0.5, -0.5,  0.5],
-            [-0.5,  0.5,  0.5], [0.5,  0.5,  0.5]
-        ];
-
+        const width = this.currentWidth; const height = this.currentHeight;
+        const selX1 = (rx / width) * 2 - 1; const selY1 = 1 - (ry / height) * 2;
+        const selX2 = ((rx + rw) / width) * 2 - 1; const selY2 = 1 - ((ry + rh) / height) * 2;
+        const selLeft = Math.min(selX1, selX2); const selRight = Math.max(selX1, selX2);
+        const selBottom = Math.min(selY1, selY2); const selTop = Math.max(selY1, selY2);
+        const hitIds: string[] = []; const store = this.ecs.store; const vp = this.currentViewProj;
+        const corners = [ [-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[-0.5,0.5,-0.5],[0.5,0.5,-0.5], [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5] ];
         for (let i = 0; i < this.ecs.count; i++) {
             if (!store.isActive[i]) continue;
-
-            const base = i * 16;
-            const wm = store.worldMatrix.subarray(base, base + 16);
-
-            let screenMinX = Infinity, screenMaxX = -Infinity;
-            let screenMinY = Infinity, screenMaxY = -Infinity;
-            let anyInFront = false;
-
+            const base = i * 16; const wm = store.worldMatrix.subarray(base, base + 16);
+            let screenMinX = Infinity, screenMaxX = -Infinity, screenMinY = Infinity, screenMaxY = -Infinity, anyInFront = false;
             for (let j = 0; j < 8; j++) {
                 const cx = corners[j][0], cy = corners[j][1], cz = corners[j][2];
-                const wx = wm[0] * cx + wm[4] * cy + wm[8] * cz + wm[12];
-                const wy = wm[1] * cx + wm[5] * cy + wm[9] * cz + wm[13];
-                const wz = wm[2] * cx + wm[6] * cy + wm[10] * cz + wm[14];
-                const clipX = vp[0] * wx + vp[4] * wy + vp[8] * wz + vp[12];
-                const clipY = vp[1] * wx + vp[5] * wy + vp[9] * wz + vp[13];
-                const clipW = vp[3] * wx + vp[7] * wy + vp[11] * wz + vp[15];
-
+                const wx = wm[0]*cx + wm[4]*cy + wm[8]*cz + wm[12]; const wy = wm[1]*cx + wm[5]*cy + wm[9]*cz + wm[13]; const wz = wm[2]*cx + wm[6]*cy + wm[10]*cz + wm[14];
+                const clipX = vp[0]*wx + vp[4]*wy + vp[8]*wz + vp[12]; const clipY = vp[1]*wx + vp[5]*wy + vp[9]*wz + vp[13]; const clipW = vp[3]*wx + vp[7]*wy + vp[11]*wz + vp[15];
                 if (clipW > 0) {
-                    const ndcX = clipX / clipW;
-                    const ndcY = clipY / clipW;
-                    screenMinX = Math.min(screenMinX, ndcX);
-                    screenMaxX = Math.max(screenMaxX, ndcX);
-                    screenMinY = Math.min(screenMinY, ndcY);
-                    screenMaxY = Math.max(screenMaxY, ndcY);
+                    const ndcX = clipX/clipW; const ndcY = clipY/clipW;
+                    screenMinX = Math.min(screenMinX, ndcX); screenMaxX = Math.max(screenMaxX, ndcX);
+                    screenMinY = Math.min(screenMinY, ndcY); screenMaxY = Math.max(screenMaxY, ndcY);
                     anyInFront = true;
                 }
             }
-
-            if (!anyInFront) continue;
-
-            if (!(screenMaxX < selLeft || screenMinX > selRight || 
-                  screenMaxY < selBottom || screenMinY > selTop)) {
-                hitIds.push(store.ids[i]);
-            }
+            if (anyInFront && !(screenMaxX < selLeft || screenMinX > selRight || screenMaxY < selBottom || screenMinY > selTop)) hitIds.push(store.ids[i]);
         }
         return hitIds;
     }
