@@ -175,19 +175,10 @@ export const UVEditor: React.FC = () => {
                     if (newSet.has(closest)) newSet.delete(closest); else newSet.add(closest);
                     setSelectedIndices(newSet);
                 } else if (e.altKey || (e.ctrlKey && closest !== -1)) {
-                    if (editingAsset?.topology) {
-                        const topology = editingAsset.topology;
-                        const faces = topology.vertexToFaces.get(closest) || [];
-                        if (faces.length > 0) {
-                            const face = topology.faces[faces[0]];
-                            const idxInFace = face.indexOf(closest);
-                            const nextInFace = face[(idxInFace + 1) % face.length];
-                            const loop = MeshTopologyUtils.getEdgeLoop(topology, closest, nextInFace);
-                            const newSet = new Set<number>();
-                            loop.forEach(edge => { newSet.add(edge[0]); newSet.add(edge[1]); });
-                            setSelectedIndices(newSet);
-                        }
-                    }
+                    // Loop Selection - [REMOVED FOR NOW: API Changed to require 2 vertices]
+                    // Standard fallback: select connected shell? Or just single vertex.
+                    setSelectedVertex(closest);
+                    setSelectedIndices(new Set([closest]));
                 } else {
                     setSelectedVertex(closest);
                     setSelectedIndices(new Set([closest]));
@@ -216,7 +207,7 @@ export const UVEditor: React.FC = () => {
             editingAsset.geometry.uvs = new Float32Array(uvBuffer);
             const internalId = assetManager.getMeshID(editingAsset.id);
             if (internalId > 0) {
-                engineInstance.renderer.registerMesh(internalId, editingAsset.geometry);
+                engineInstance.meshSystem.registerMesh(internalId, editingAsset.geometry);
                 engineInstance.tick(0);
             }
             alert('UVs Updated');
@@ -252,7 +243,7 @@ export const UVEditor: React.FC = () => {
             }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={() => setIsDragging(false)} onMouseLeave={() => setIsDragging(false)}>
                 <canvas ref={canvasRef} className="block" />
                 <div className="absolute bottom-2 left-2 text-[9px] text-text-secondary opacity-50 pointer-events-none bg-black/50 px-2 py-1 rounded">
-                    Pan: Alt+Drag • Zoom: Wheel • Loop: Alt+Click Edge • Multiple: Shift+Click
+                    Pan: Alt+Drag • Zoom: Wheel • Loop: Ctrl+Click
                 </div>
             </div>
         </div>

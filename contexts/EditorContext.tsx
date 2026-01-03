@@ -1,9 +1,8 @@
 
 import React from 'react';
-import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode } from '../types';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode, SoftSelectionFalloff } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
-
-export type VertexShape = 'DOT' | 'CUBE';
+import type { SoftSelectionMode } from '../services/engine';
 
 export interface UIConfiguration {
     windowBorderRadius: number;
@@ -16,7 +15,6 @@ export interface UIConfiguration {
     selectionEdgeColor: string;
     vertexSize: number;
     vertexColor: string;
-    vertexShape: VertexShape;
 }
 
 export interface GridConfiguration {
@@ -46,7 +44,6 @@ export const DEFAULT_UI_CONFIG: UIConfiguration = {
     selectionEdgeColor: '#4f80f8', // Unity Blue
     vertexSize: 1.0,
     vertexColor: '#a855f7', // Purple
-    vertexShape: 'DOT'
 };
 
 export const DEFAULT_GRID_CONFIG: GridConfiguration = {
@@ -95,6 +92,18 @@ export interface EditorContextType {
   // Maya-style Mesh Interaction mode
   meshComponentMode: MeshComponentMode;
   setMeshComponentMode: (mode: MeshComponentMode) => void;
+
+  // Soft Selection
+  softSelectionEnabled: boolean;
+  setSoftSelectionEnabled: (enabled: boolean) => void;
+  softSelectionRadius: number;
+  setSoftSelectionRadius: (radius: number) => void;
+  softSelectionMode: SoftSelectionMode;
+  setSoftSelectionMode: (mode: SoftSelectionMode) => void;
+  softSelectionFalloff: SoftSelectionFalloff; // New
+  setSoftSelectionFalloff: (type: SoftSelectionFalloff) => void; // New
+  softSelectionHeatmapVisible: boolean;
+  setSoftSelectionHeatmapVisible: (visible: boolean) => void;
 
   tool: ToolType;
   setTool: (tool: ToolType) => void;

@@ -9,9 +9,10 @@ export interface Vector3 {
 }
 
 export type RotationOrder = 'XYZ' | 'XZY' | 'YXZ' | 'YZX' | 'ZXY' | 'ZYX';
-export type TransformSpace = 'World' | 'Local' | 'Gimbal';
+export type TransformSpace = 'World' | 'Local' | 'Gimbal' | 'Parent' | 'VirtualPivot' | 'Normal' | 'Average' | 'Object' | 'Screen';
 export type MeshComponentMode = 'OBJECT' | 'VERTEX' | 'EDGE' | 'FACE';
 export type SimulationMode = 'STOPPED' | 'GAME' | 'SIMULATE';
+export type SoftSelectionFalloff = 'VOLUME' | 'SURFACE'; // New Type
 
 export enum ComponentType {
   TRANSFORM = 'Transform',
@@ -19,7 +20,8 @@ export enum ComponentType {
   LIGHT = 'Light',
   PHYSICS = 'Physics',
   SCRIPT = 'Script',
-  VIRTUAL_PIVOT = 'VirtualPivot'
+  VIRTUAL_PIVOT = 'VirtualPivot',
+  PARTICLE_SYSTEM = 'ParticleSystem' // Added
 }
 
 // --- MODULAR SYSTEM TYPES ---
@@ -97,7 +99,7 @@ export interface GraphConnection {
 // Editor Types
 export type EditorMode = 'SCENE' | 'GAME' | 'SCRIPT';
 export type ToolType = 'SELECT' | 'MOVE' | 'ROTATE' | 'SCALE';
-export type SelectionType = 'ENTITY' | 'ASSET';
+export type SelectionType = 'ENTITY' | 'ASSET' | 'NODE' | 'VERTEX' | 'EDGE' | 'FACE';
 
 export interface PerformanceMetrics {
   fps: number;
@@ -107,7 +109,29 @@ export interface PerformanceMetrics {
   entityCount: number;
 }
 
-// Mesh Topology Types
+// --- TOPOLOGY TYPES (HALF-EDGE) ---
+export interface HalfEdge {
+    id: number;         // ID of this half-edge
+    vertex: number;     // Index of the vertex this edge points TO
+    pair: number;       // ID of the twin half-edge (or -1 if boundary)
+    next: number;       // ID of next half-edge in the face loop
+    prev: number;       // ID of prev half-edge in the face loop
+    face: number;       // ID of the face this edge belongs to
+    edgeKey: string;    // Stable key "min-max" for edge selection
+}
+
+export interface MeshTopology {
+    halfEdges: HalfEdge[];
+    vertices: { 
+        edge: number; // One outgoing half-edge
+    }[]; 
+    faces: { 
+        edge: number; // One starting half-edge
+    }[];
+    // Fast Lookups
+    edgeKeyToHalfEdge: Map<string, number>; // "v1-v2" -> halfEdgeIndex
+}
+
 export interface LogicalMesh {
     // Defines the original Faces (Quads/Polygons)
     faces: number[][]; 
@@ -117,6 +141,23 @@ export interface LogicalMesh {
 
     // Connectivity maps for fast lookups
     vertexToFaces: Map<number, number[]>;
+    
+    // Advanced Topology Graph (Lazy loaded or computed on import)
+    graph?: MeshTopology;
+}
+
+// Animation Types
+export interface AnimationTrack {
+    name: string; // Target bone name
+    type: 'position' | 'rotation' | 'scale';
+    times: Float32Array;
+    values: Float32Array;
+}
+
+export interface AnimationClip {
+    name: string;
+    duration: number;
+    tracks: AnimationTrack[];
 }
 
 // Asset Types
@@ -141,6 +182,7 @@ export interface StaticMeshAsset extends BaseAsset {
         vertices: Float32Array;
         normals: Float32Array;
         uvs: Float32Array;
+        colors: Float32Array;
         indices: Uint16Array;
     };
     topology?: LogicalMesh; // Optional CPU-side topology data
@@ -153,13 +195,15 @@ export interface SkeletalMeshAsset extends BaseAsset {
         vertices: Float32Array;
         normals: Float32Array;
         uvs: Float32Array;
+        colors: Float32Array;
         indices: Uint16Array;
         jointIndices: Float32Array;
         jointWeights: Float32Array;
     };
     skeleton: {
-        bones: Array<{ name: string; parentIndex: number; bindPose: Float32Array }>;
+        bones: Array<{ name: string; parentIndex: number; bindPose: Float32Array; inverseBindPose: Float32Array }>;
     };
+    animations: AnimationClip[];
     topology?: LogicalMesh;
 }
 

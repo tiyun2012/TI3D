@@ -13,10 +13,10 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
         name: 'Standard Surface',
         description: 'Standard PBR master node with default values.',
         nodes: [
-            { id: 'out', type: 'StandardMaterial', position: { x: 800, y: 200 } },
-            { id: 'alb', type: 'Vec3', position: { x: 400, y: 150 }, data: { x: '0.8', y: '0.8', z: '0.8' } },
-            { id: 'met', type: 'Float', position: { x: 400, y: 300 }, data: { value: '0.0' } },
-            { id: 'smooth', type: 'Float', position: { x: 400, y: 400 }, data: { value: '0.5' } }
+            { id: 'out', type: 'StandardMaterial', position: { x: 600, y: 200 } },
+            { id: 'alb', type: 'Vec3', position: { x: 200, y: 150 }, data: { x: '0.8', y: '0.8', z: '0.8' } },
+            { id: 'met', type: 'Float', position: { x: 200, y: 300 }, data: { value: '0.0' } },
+            { id: 'smooth', type: 'Float', position: { x: 200, y: 400 }, data: { value: '0.5' } }
         ],
         connections: [
             { id: 'c1', fromNode: 'alb', fromPin: 'out', toNode: 'out', toPin: 'albedo' },
@@ -99,6 +99,24 @@ export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
             { id: 'c6', fromNode: 'poster', fromPin: 'out', toNode: 'rim_final', toPin: 'a' },
             { id: 'c7', fromNode: 'rim_mult', fromPin: 'out', toNode: 'rim_final', toPin: 'b' },
             { id: 'c8', fromNode: 'rim_final', fromPin: 'out', toNode: 'out', toPin: 'rim' }
+        ]
+    },
+    {
+        name: 'Fire Particle',
+        description: 'Procedural fire using Vertex Color and Time.',
+        nodes: [
+            { id: 'out', type: 'StandardMaterial', position: { x: 800, y: 200 } },
+            { id: 'vcol', type: 'VertexColor', position: { x: 200, y: 200 } },
+            { id: 'time', type: 'Time', position: { x: 200, y: 400 } },
+            { id: 'life', type: 'ParticleLife', position: { x: 200, y: 300 } },
+            { id: 'sin', type: 'Sine', position: { x: 400, y: 400 } },
+            { id: 'add', type: 'Add', position: { x: 600, y: 200 } }
+        ],
+        connections: [
+            { id: 'c1', fromNode: 'vcol', fromPin: 'rgb', toNode: 'add', toPin: 'a' },
+            { id: 'c2', fromNode: 'life', fromPin: 'out', toNode: 'sin', toPin: 'in' },
+            { id: 'c3', fromNode: 'sin', fromPin: 'out', toNode: 'add', toPin: 'b' },
+            { id: 'c4', fromNode: 'add', fromPin: 'out', toNode: 'out', toPin: 'emission' }
         ]
     }
 ];

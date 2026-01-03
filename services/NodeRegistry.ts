@@ -1,5 +1,4 @@
-
-import { GraphNode } from '../types';
+import { GraphNode, GraphConnection } from '../types';
 import { assetManager } from './AssetManager';
 
 export interface PortDefinition {
@@ -30,6 +29,14 @@ export const formatFloat = (val: any): string => {
     if (isNaN(n)) return '0.0';
     const s = n.toString();
     return s.includes('.') ? s : s + '.0';
+};
+
+const hexToVec3Str = (hex: string) => {
+    if (!hex || !hex.startsWith('#')) return 'vec3(0.0)';
+    const r = parseInt(hex.slice(1,3), 16)/255;
+    const g = parseInt(hex.slice(3,5), 16)/255;
+    const b = parseInt(hex.slice(5,7), 16)/255;
+    return `vec3(${r.toFixed(3)}, ${g.toFixed(3)}, ${b.toFixed(3)})`;
 };
 
 export const getTypeColor = (type: string) => {
@@ -72,7 +79,7 @@ export const NodeRegistry: Record<string, NodeDefinition> = {
         ],
         outputs: [],
         data: {
-            albedo: '#888888',
+            albedo: '#ffffff', 
             metallic: '0.0',
             smoothness: '0.5',
             emission: '#000000',
@@ -111,6 +118,51 @@ export const NodeRegistry: Record<string, NodeDefinition> = {
         inputs: [], outputs: [{ id: 'out', name: 'Time', type: 'float' }],
         glsl: (i, v) => `float ${v} = u_time;`,
         execute: () => performance.now() / 1000
+    },
+    'VertexColor': {
+        type: 'VertexColor', category: 'Input', title: 'Vertex Color',
+        inputs: [], outputs: [{ id: 'rgb', name: 'RGB', type: 'vec3' }],
+        glsl: (i, v) => `vec3 ${v} = v_color;`
+    },
+    'ParticleLife': {
+        type: 'ParticleLife', category: 'Input', title: 'Particle Life',
+        inputs: [], outputs: [{ id: 'out', name: '0..1', type: 'float' }],
+        glsl: (i, v) => `float ${v} = v_life;`
+    },
+    'Ramp': {
+        type: 'Ramp', category: 'Input', title: 'Ramp Color',
+        inputs: [{ id: 'in', name: 'Fac', type: 'float' }],
+        outputs: [{ id: 'out', name: 'Color', type: 'vec3' }],
+        data: { 
+            stops: [
+                { id: 's1', t: 0.0, c: '#000000' },
+                { id: 's2', t: 1.0, c: '#ffffff' }
+            ] 
+        },
+        glsl: (i, v, d) => {
+            const stops = (d.stops || [{ t:0, c:'#000000'}, {t:1, c:'#ffffff'}])
+                .sort((a:any, b:any) => a.t - b.t);
+            
+            const funcName = `ramp_${v}`;
+            let funcBody = `vec3 ${funcName}(float t) {\n`;
+            
+            // Generate linear mix chain
+            funcBody += `    if (t <= ${formatFloat(stops[0].t)}) return ${hexToVec3Str(stops[0].c)};\n`;
+            for(let k=0; k < stops.length - 1; k++) {
+                const s1 = stops[k];
+                const s2 = stops[k+1];
+                const c1 = hexToVec3Str(s1.c);
+                const c2 = hexToVec3Str(s2.c);
+                funcBody += `    if (t < ${formatFloat(s2.t)}) return mix(${c1}, ${c2}, (t - ${formatFloat(s1.t)}) / (${formatFloat(s2.t)} - ${formatFloat(s1.t)}));\n`;
+            }
+            funcBody += `    return ${hexToVec3Str(stops[stops.length-1].c)};\n`;
+            funcBody += `}\n`;
+
+            return {
+                body: `vec3 ${v} = ${funcName}(${i[0] || '0.0'});`,
+                functions: funcBody
+            };
+        }
     },
     'Float': {
         type: 'Float', category: 'Input', title: 'Float',
@@ -161,5 +213,49 @@ export const NodeRegistry: Record<string, NodeDefinition> = {
         type: 'Add', category: 'Math', title: 'Add',
         inputs: [{id:'a', name:'A', type:'any'}, {id:'b', name:'B', type:'any'}], outputs: [{id:'out', name:'Result', type:'any'}],
         glsl: (i, v) => `vec3 ${v} = vec3(${i[0] || '0.0'}) + vec3(${i[1] || '0.0'});`
+    },
+    'Mix': {
+        type: 'Mix', category: 'Math', title: 'Lerp',
+        inputs: [{id:'a', name:'A', type:'any'}, {id:'b', name:'B', type:'any'}, {id:'t', name:'T', type:'float'}], outputs: [{id:'out', name:'Out', type:'any'}],
+        glsl: (i, v) => `vec3 ${v} = mix(vec3(${i[0]||'0.0'}), vec3(${i[1]||'1.0'}), ${i[2]||'0.5'});`
+    },
+    'Fresnel': {
+        type: 'Fresnel', category: 'Math', title: 'Fresnel',
+        inputs: [
+            { id: 'normal', name: 'Normal', type: 'vec3' },
+            { id: 'view', name: 'View Dir', type: 'vec3' }
+        ], 
+        outputs: [{ id: 'out', name: 'Fac', type: 'float' }],
+        data: { power: '5.0' },
+        glsl: (i, v, d) => {
+            const power = formatFloat(d.power || '5.0');
+            return `
+            vec3 ${v}_N = normalize(${i[0] || 'v_normal'});
+            vec3 ${v}_V = normalize(u_cameraPos - v_worldPos);
+            float ${v} = pow(1.0 - clamp(dot(${v}_N, ${v}_V), 0.0, 1.0), ${power});
+            `;
+        }
+    },
+    'Posterize': {
+        type: 'Posterize', category: 'Math', title: 'Posterize',
+        inputs: [{ id: 'in', name: 'In', type: 'float' }],
+        outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+        data: { steps: '4.0' },
+        glsl: (i, v, d) => {
+            const steps = formatFloat(d.steps || '4.0');
+            return `float ${v} = floor(${i[0] || '0.0'} * ${steps}) / ${steps};`;
+        }
+    },
+    'Vec3Scale': {
+        type: 'Vec3Scale', category: 'Math', title: 'Scale Vector',
+        inputs: [{ id: 'a', name: 'Vec3', type: 'vec3' }, { id: 's', name: 'Scale', type: 'float' }],
+        outputs: [{ id: 'out', name: 'Out', type: 'vec3' }],
+        glsl: (i, v) => `vec3 ${v} = (${i[0] || 'vec3(0.0)'}) * (${i[1] || '1.0'});`
+    },
+    'RoughnessToSmoothness': {
+        type: 'RoughnessToSmoothness', category: 'Math', title: 'Rough -> Smooth',
+        inputs: [{ id: 'in', name: 'Roughness', type: 'float' }],
+        outputs: [{ id: 'out', name: 'Smoothness', type: 'float' }],
+        glsl: (i, v) => `float ${v} = 1.0 - (${i[0] || '0.0'});`
     }
 };

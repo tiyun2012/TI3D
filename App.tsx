@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
-import { engineInstance } from './services/engine';
-import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode } from './types';
+import { engineInstance, SoftSelectionMode } from './services/engine';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode, SoftSelectionFalloff } from './types';
 import { EditorContext, EditorContextType, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG, SnapSettings, DEFAULT_SNAP_CONFIG } from './contexts/EditorContext';
 import { assetManager } from './services/AssetManager';
 import { consoleService } from './services/Console';
@@ -20,6 +20,7 @@ import { GeometrySpreadsheet } from './components/GeometrySpreadsheet';
 import { UVEditor } from './components/UVEditor';
 import { Timeline } from './components/Timeline';
 import { SkinningEditor } from './components/SkinningEditor';
+import { ToolOptionsPanel } from './components/ToolOptionsPanel'; // New Import
 
 // --- Widget Wrappers ---
 
@@ -46,6 +47,7 @@ const InspectorWrapper = () => {
   let target: any = null;
   let count = 0;
 
+  // Priority: Graph Node > Entity/Asset Selection
   if (ctx.inspectedNode) {
       target = ctx.inspectedNode;
       return <InspectorPanel object={target} type="NODE" />;
@@ -60,6 +62,11 @@ const InspectorWrapper = () => {
       if (ctx.selectedAssetIds.length > 0) {
           target = assetManager.getAsset(ctx.selectedAssetIds[0]) || null;
           count = ctx.selectedAssetIds.length;
+      }
+  } else if (['VERTEX', 'EDGE', 'FACE'].includes(ctx.selectionType)) {
+      if (ctx.selectedIds.length > 0) {
+          // For component modes, we still target the Entity, but the Inspector will read engineInstance.subSelection
+          target = ctx.entities.find(e => e.id === ctx.selectedIds[0]) || null;
       }
   }
 
@@ -85,6 +92,7 @@ const SceneWrapper = () => {
 
 const ProjectWrapper = () => <ProjectPanel />;
 const ConsoleWrapper = () => <ConsolePanel />;
+const ToolOptionsWrapper = () => <ToolOptionsPanel />; // New Wrapper
 
 const StatsContent = () => {
     const [metrics, setMetrics] = useState(engineInstance.metrics);
@@ -117,6 +125,88 @@ const StatsContent = () => {
     );
 };
 
+const StatusBarInfo: React.FC = () => {
+    const { meshComponentMode, selectedIds, simulationMode } = useContext(EditorContext)!;
+    const [statusText, setStatusText] = useState('Ready');
+    const [hintText, setHintText] = useState('');
+
+    useEffect(() => {
+        const update = () => {
+            if (simulationMode !== 'STOPPED') {
+                setStatusText(simulationMode === 'GAME' ? 'GAME MODE' : 'SIMULATING');
+                setHintText('Press Esc to release cursor');
+                return;
+            }
+
+            if (meshComponentMode === 'OBJECT') {
+                if (selectedIds.length > 0) {
+                    const count = selectedIds.length;
+                    const lastId = selectedIds[count - 1];
+                    const idx = engineInstance.ecs.idToIndex.get(lastId);
+                    const name = idx !== undefined ? engineInstance.ecs.store.names[idx] : 'Object';
+                    setStatusText(count === 1 ? name : `${count} Objects`);
+                    setHintText('Alt+LMB Orbit • MMB Pan • Wheel Zoom');
+                } else {
+                    setStatusText('Ready');
+                    setHintText('Select an object to edit');
+                }
+            } else {
+                const sub = engineInstance.subSelection;
+                if (meshComponentMode === 'VERTEX') {
+                    const count = sub.vertexIds.size;
+                    if (count === 0) {
+                        setStatusText('Vertex Mode');
+                        setHintText('Click to select vertices');
+                    } else {
+                        const last = Array.from(sub.vertexIds).pop();
+                        setStatusText(count === 1 ? `Vertex ID: ${last}` : `${count} Vertices`);
+                        setHintText(count === 1 ? 'Alt+Click 2nd Vertex for Loop' : 'Drag to Move Selection');
+                    }
+                } else if (meshComponentMode === 'EDGE') {
+                    const count = sub.edgeIds.size;
+                    if (count === 0) {
+                        setStatusText('Edge Mode');
+                        setHintText('Click to select edges');
+                    } else {
+                        setStatusText(count === 1 ? `Edge Selection` : `${count} Edges`);
+                        setHintText('Alt+Click for Loop');
+                    }
+                } else if (meshComponentMode === 'FACE') {
+                    const count = sub.faceIds.size;
+                    if (count === 0) {
+                        setStatusText('Face Mode');
+                        setHintText('Click to select faces');
+                    } else {
+                        const last = Array.from(sub.faceIds).pop();
+                        setStatusText(count === 1 ? `Face ID: ${last}` : `${count} Faces`);
+                        setHintText('Alt+Click edge for Strip');
+                    }
+                }
+            }
+        };
+
+        update();
+        const unsub = engineInstance.subscribe(update);
+        return unsub;
+    }, [meshComponentMode, selectedIds, simulationMode]);
+
+    return (
+        <div className="flex items-center gap-3">
+            {simulationMode === 'GAME' ? (
+                <span className="text-emerald-500 animate-pulse font-bold flex items-center gap-2"><Icon name="Gamepad2" size={12} /> GAME MODE</span>
+            ) : simulationMode === 'SIMULATE' ? (
+                <span className="text-indigo-400 animate-pulse font-bold flex items-center gap-2"><Icon name="Activity" size={12} /> SIMULATING</span>
+            ) : (
+                <>
+                    <span className="font-semibold text-white/90 text-[11px]">{statusText}</span>
+                    {hintText && <div className="h-3 w-px bg-white/10 mx-1"></div>}
+                    <span className="text-text-secondary hidden sm:inline text-[10px] opacity-70">{hintText}</span>
+                </>
+            )}
+        </div>
+    );
+};
+
 const EditorInterface: React.FC = () => {
     const wm = useContext(WindowManagerContext);
     const editor = useContext(EditorContext);
@@ -132,6 +222,10 @@ const EditorInterface: React.FC = () => {
         wm.registerWindow({
             id: 'inspector', title: 'Inspector', icon: 'Settings2', content: <InspectorWrapper />, 
             width: 320, height: 600, initialPosition: { x: window.innerWidth - 340, y: 100 }
+        });
+        wm.registerWindow({
+            id: 'tool_options', title: 'Tool Options', icon: 'Tool', content: <ToolOptionsWrapper />, 
+            width: 280, height: 350, initialPosition: { x: window.innerWidth - 640, y: 100 }
         });
         wm.registerWindow({
             id: 'project', title: 'Project Browser', icon: 'FolderOpen', content: <ProjectWrapper />, 
@@ -169,6 +263,7 @@ const EditorInterface: React.FC = () => {
         if (!initialized.current) {
             wm.openWindow('hierarchy');
             wm.openWindow('inspector');
+            wm.openWindow('tool_options'); // Open by default
             wm.openWindow('project');
             // wm.openWindow('timeline'); // Disabled by default to save space
             consoleService.init(); // Initialize global error catching
@@ -221,9 +316,7 @@ const EditorInterface: React.FC = () => {
             </div>
 
             <div className="absolute bottom-0 w-full h-6 bg-panel-header/90 backdrop-blur flex items-center px-4 justify-between text-[10px] text-text-secondary shrink-0 select-none z-50 border-t border-white/5">
-                <div className="flex items-center gap-4">
-                    {editor.simulationMode === 'GAME' ? <span className="text-emerald-500 animate-pulse font-bold">● GAME MODE</span> : (editor.simulationMode === 'SIMULATE' ? <span className="text-indigo-400 animate-pulse font-bold">● SIMULATING</span> : <span>Ready</span>)}
-                </div>
+                <StatusBarInfo />
                 <div className="flex items-center gap-4 font-mono opacity-60">
                     <span>{engineInstance.metrics.entityCount} Objects</span>
                     <span>{engineInstance.metrics.fps.toFixed(0)} FPS</span>
@@ -242,6 +335,13 @@ const App: React.FC = () => {
     const [transformSpace, setTransformSpace] = useState<TransformSpace>('World');
     const [meshComponentMode, setMeshComponentMode] = useState<MeshComponentMode>('OBJECT');
     
+    // Soft Selection State
+    const [softSelectionEnabled, setSoftSelectionEnabled] = useState(false);
+    const [softSelectionRadius, setSoftSelectionRadius] = useState(2.0);
+    const [softSelectionMode, setSoftSelectionMode] = useState<SoftSelectionMode>('FIXED');
+    const [softSelectionFalloff, setSoftSelectionFalloff] = useState<SoftSelectionFalloff>('VOLUME');
+    const [softSelectionHeatmapVisible, setSoftSelectionHeatmapVisible] = useState(true);
+
     // New State for Simulation
     const [simulationMode, setSimulationMode] = useState<SimulationMode>('STOPPED');
 
@@ -265,6 +365,12 @@ const App: React.FC = () => {
         return engineInstance.subscribe(update);
     }, []);
 
+    // Sync mesh component mode to engine
+    useEffect(() => {
+        engineInstance.meshComponentMode = meshComponentMode;
+        engineInstance.notifyUI();
+    }, [meshComponentMode]);
+
     useEffect(() => { engineInstance.setGridConfig(gridConfig); }, [gridConfig]);
     useEffect(() => { engineInstance.setUiConfig(uiConfig); }, [uiConfig]);
 
@@ -272,7 +378,12 @@ const App: React.FC = () => {
         entities,
         sceneGraph: engineInstance.sceneGraph,
         selectedIds,
-        setSelectedIds: (ids) => { setSelectedIds(ids); engineInstance.setSelected(ids); },
+        setSelectedIds: (ids) => { 
+            setSelectedIds(ids); 
+            engineInstance.setSelected(ids);
+            // Auto-clear node inspection when selecting entities to restore Inspector context
+            if (ids.length > 0) setInspectedNode(null);
+        },
         selectedAssetIds,
         setSelectedAssetIds,
         inspectedNode,
@@ -292,6 +403,16 @@ const App: React.FC = () => {
         setSelectionType,
         meshComponentMode,
         setMeshComponentMode,
+        softSelectionEnabled,
+        setSoftSelectionEnabled,
+        softSelectionRadius,
+        setSoftSelectionRadius,
+        softSelectionMode,
+        setSoftSelectionMode,
+        softSelectionFalloff,
+        setSoftSelectionFalloff,
+        softSelectionHeatmapVisible,
+        setSoftSelectionHeatmapVisible,
         tool,
         setTool,
         transformSpace,
@@ -307,7 +428,8 @@ const App: React.FC = () => {
     }), [
         entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, 
         selectionType, meshComponentMode, tool, transformSpace, uiConfig, gridConfig, 
-        snapSettings, engineInstance.isPlaying, simulationMode
+        snapSettings, engineInstance.isPlaying, simulationMode, softSelectionEnabled, softSelectionRadius, softSelectionMode,
+        softSelectionFalloff, softSelectionHeatmapVisible
     ]);
 
     return (

@@ -1,6 +1,9 @@
+
 import { engineInstance } from './engine';
 import { Mat4Utils, Vec3Utils } from './math';
 import { Vector3, ToolType } from '../types';
+import { assetManager } from './AssetManager';
+import { StaticMeshAsset } from '../types';
 
 export type GizmoAxis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'VIEW' | null;
 
@@ -18,6 +21,9 @@ export class GizmoSystem {
     private clickOffset: Vector3 = { x: 0, y: 0, z: 0 };
     private planeNormal: Vector3 = { x: 0, y: 1, z: 0 };
     
+    // Tracks original click position on the intersection plane to calculate cumulative delta
+    private dragOrigin: Vector3 = { x: 0, y: 0, z: 0 };
+
     // --- API ---
     setTool(tool: ToolType) {
         this.tool = tool;
@@ -25,6 +31,7 @@ export class GizmoSystem {
         if (tool === 'SELECT' && this.isDragging) {
             this.isDragging = false;
             this.activeAxis = null;
+            engineInstance.endVertexDrag();
         }
     }
 
@@ -37,15 +44,33 @@ export class GizmoSystem {
         }
 
         const selected = engineInstance.selectedIndices;
-        if (selected.size !== 1) return; 
+        if (selected.size === 0) return; 
         
-        const idx = Array.from(selected)[0];
-        const entityId = engineInstance.ecs.store.ids[idx];
+        // --- Calculate Gizmo Position ---
+        let worldPos = { x: 0, y: 0, z: 0 };
+        let entityId: string | null = null;
+
+        const isComponentMode = engineInstance.meshComponentMode !== 'OBJECT';
+        
+        if (isComponentMode) {
+            // Vertex/Edge/Face Mode: Position at centroid of selected components
+            const idx = Array.from(selected)[0];
+            entityId = engineInstance.ecs.store.ids[idx];
+            // Use the unified vertex selector from engine to get centroid of whatever components are selected
+            worldPos = this.getSelectedComponentCentroid(entityId);
+        } else if (selected.size === 1) {
+            // Entity Mode: Position at entity transform
+            const idx = Array.from(selected)[0];
+            entityId = engineInstance.ecs.store.ids[idx];
+            worldPos = engineInstance.sceneGraph.getWorldPosition(entityId);
+        } else {
+            // Multi-selection not fully supported yet in this simple gizmo
+            return;
+        }
+
         if (!entityId) return;
 
-        const worldPos = engineInstance.sceneGraph.getWorldPosition(entityId);
         const camPos = engineInstance.currentCameraPos;
-        
         const dist = Math.sqrt((camPos.x-worldPos.x)**2 + (camPos.y-worldPos.y)**2 + (camPos.z-worldPos.z)**2);
         this.gizmoScale = dist * 0.15;
 
@@ -60,9 +85,12 @@ export class GizmoSystem {
             if (isUp) {
                 this.isDragging = false;
                 this.activeAxis = null;
+                if (isComponentMode) {
+                    engineInstance.endVertexDrag();
+                }
                 engineInstance.pushUndoState();
             } else {
-                this.handleDrag(ray, entityId);
+                this.handleDrag(ray, entityId, isComponentMode);
             }
         } else {
             this.hoverAxis = this.raycastGizmo(ray, worldPos, this.gizmoScale);
@@ -70,7 +98,7 @@ export class GizmoSystem {
             if (isDown && this.hoverAxis) {
                 this.isDragging = true;
                 this.activeAxis = this.hoverAxis;
-                this.startDrag(ray, worldPos);
+                this.startDrag(ray, worldPos, entityId, isComponentMode);
             }
         }
     }
@@ -80,13 +108,26 @@ export class GizmoSystem {
         if (this.tool === 'SELECT') return;
 
         const selected = engineInstance.selectedIndices;
-        if (selected.size !== 1) return;
-        const idx = Array.from(selected)[0];
-        const pos = {
-            x: engineInstance.ecs.store.worldMatrix[idx*16 + 12],
-            y: engineInstance.ecs.store.worldMatrix[idx*16 + 13],
-            z: engineInstance.ecs.store.worldMatrix[idx*16 + 14]
-        };
+        if (selected.size === 0) return;
+
+        let pos = { x: 0, y: 0, z: 0 };
+        
+        const isComponentMode = engineInstance.meshComponentMode !== 'OBJECT';
+
+        if (isComponentMode) {
+            const idx = Array.from(selected)[0];
+            const entityId = engineInstance.ecs.store.ids[idx];
+            pos = this.getSelectedComponentCentroid(entityId);
+        } else if (selected.size === 1) {
+            const idx = Array.from(selected)[0];
+            pos = {
+                x: engineInstance.ecs.store.worldMatrix[idx*16 + 12],
+                y: engineInstance.ecs.store.worldMatrix[idx*16 + 13],
+                z: engineInstance.ecs.store.worldMatrix[idx*16 + 14]
+            };
+        } else {
+            return;
+        }
         
         if (engineInstance.currentViewProj) {
             engineInstance.renderer.renderGizmos(
@@ -99,7 +140,40 @@ export class GizmoSystem {
         }
     }
 
-    private startDrag(ray: any, pos: Vector3) {
+    private getSelectedComponentCentroid(entityId: string): Vector3 {
+        const centroid = { x: 0, y: 0, z: 0 };
+        const idx = engineInstance.ecs.idToIndex.get(entityId);
+        if (idx === undefined) return centroid;
+
+        const meshIntId = engineInstance.ecs.store.meshType[idx];
+        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+        if (!assetUuid) return centroid;
+        const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
+        if (!asset) return centroid;
+
+        const worldMat = engineInstance.sceneGraph.getWorldMatrix(entityId);
+        if (!worldMat) return centroid;
+
+        // Use the Engine's helper to get all vertices involved in selection (Edge/Face/Vertex)
+        const vertexIds = Array.from(engineInstance.getSelectionAsVertices());
+        if (vertexIds.length === 0) return centroid;
+
+        for (const vIdx of vertexIds) {
+            const local = { 
+                x: asset.geometry.vertices[vIdx*3], 
+                y: asset.geometry.vertices[vIdx*3+1], 
+                z: asset.geometry.vertices[vIdx*3+2] 
+            };
+            const world = Vec3Utils.transformMat4(local, worldMat, {x:0,y:0,z:0});
+            centroid.x += world.x; centroid.y += world.y; centroid.z += world.z;
+        }
+        
+        const invLen = 1.0 / vertexIds.length;
+        centroid.x *= invLen; centroid.y *= invLen; centroid.z *= invLen;
+        return centroid;
+    }
+
+    private startDrag(ray: any, pos: Vector3, entityId: string, isComponentMode: boolean) {
         this.startPos = { ...pos };
         const axis = this.activeAxis;
         const viewDir = Vec3Utils.normalize(Vec3Utils.subtract(engineInstance.currentCameraPos, pos, {x:0,y:0,z:0}), {x:0,y:0,z:0});
@@ -117,24 +191,43 @@ export class GizmoSystem {
         const hit = this.rayPlaneIntersect(ray, pos, this.planeNormal);
         if (hit) {
             this.clickOffset = Vec3Utils.subtract(hit, pos, {x:0,y:0,z:0});
+            // Store original drag point for cumulative delta calculation
+            this.dragOrigin = { ...hit };
+        }
+
+        if (isComponentMode) {
+            engineInstance.startVertexDrag(entityId);
         }
     }
 
-    private handleDrag(ray: any, entityId: string) {
+    private handleDrag(ray: any, entityId: string, isComponentMode: boolean) {
         const hit = this.rayPlaneIntersect(ray, this.startPos, this.planeNormal);
         if (hit) {
-            let target = Vec3Utils.subtract(hit, this.clickOffset, {x:0,y:0,z:0});
-            
             // Apply Constraints (If NOT free view/plane)
-            if (this.activeAxis === 'X') target = { x: target.x, y: this.startPos.y, z: this.startPos.z };
-            if (this.activeAxis === 'Y') target = { x: this.startPos.x, y: target.y, z: this.startPos.z };
-            if (this.activeAxis === 'Z') target = { x: this.startPos.x, y: this.startPos.y, z: target.z };
-            if (this.activeAxis === 'XY') target.z = this.startPos.z;
-            if (this.activeAxis === 'XZ') target.y = this.startPos.y;
-            if (this.activeAxis === 'YZ') target.x = this.startPos.x;
+            // Note: We constrain the HIT point relative to START POS to ensure sliding along axis
+            let constrainedHit = { ...hit };
+            
+            if (this.activeAxis === 'X') { constrainedHit.y = this.startPos.y + this.clickOffset.y; constrainedHit.z = this.startPos.z + this.clickOffset.z; }
+            if (this.activeAxis === 'Y') { constrainedHit.x = this.startPos.x + this.clickOffset.x; constrainedHit.z = this.startPos.z + this.clickOffset.z; }
+            if (this.activeAxis === 'Z') { constrainedHit.x = this.startPos.x + this.clickOffset.x; constrainedHit.y = this.startPos.y + this.clickOffset.y; }
+            if (this.activeAxis === 'XY') constrainedHit.z = this.startPos.z + this.clickOffset.z;
+            if (this.activeAxis === 'XZ') constrainedHit.y = this.startPos.y + this.clickOffset.y;
+            if (this.activeAxis === 'YZ') constrainedHit.x = this.startPos.x + this.clickOffset.x;
 
-            this.setWorldPosition(entityId, target);
-            engineInstance.syncTransforms(); 
+            if (isComponentMode) {
+                // Target Position = Constrained Hit - Click Offset
+                const targetPos = Vec3Utils.subtract(constrainedHit, this.clickOffset, {x:0,y:0,z:0});
+                
+                // Total Delta = Target Position - Initial Gizmo Position (this.startPos)
+                const totalDelta = Vec3Utils.subtract(targetPos, this.startPos, {x:0,y:0,z:0});
+                
+                engineInstance.updateVertexDrag(entityId, totalDelta);
+            } else {
+                // Object Mode (Standard)
+                const target = Vec3Utils.subtract(constrainedHit, this.clickOffset, {x:0,y:0,z:0});
+                this.setWorldPosition(entityId, target);
+                engineInstance.syncTransforms();
+            }
         }
     }
 
@@ -210,23 +303,39 @@ export class GizmoSystem {
     
     private distRaySegment(ray: any, v0: Vector3, v1: Vector3): number {
         const rOrigin = ray.origin; const rDir = ray.direction;
-        const v10 = Vec3Utils.subtract(v1, v0, {x:0,y:0,z:0});
-        const v0r = Vec3Utils.subtract(v0, rOrigin, {x:0,y:0,z:0});
-        const dotA = Vec3Utils.dot(v10, v10);
-        const dotB = Vec3Utils.dot(v10, rDir);
-        const dotC = Vec3Utils.dot(v10, v0r);
-        const dotD = Vec3Utils.dot(rDir, rDir);
-        const dotE = Vec3Utils.dot(rDir, v0r);
+        const v10x = v1.x - v0.x;
+        const v10y = v1.y - v0.y;
+        const v10z = v1.z - v0.z;
+        
+        const v0rx = v0.x - rOrigin.x;
+        const v0ry = v0.y - rOrigin.y;
+        const v0rz = v0.z - rOrigin.z;
+        
+        const dotA = v10x*v10x + v10y*v10y + v10z*v10z;
+        const dotB = v10x*rDir.x + v10y*rDir.y + v10z*rDir.z;
+        const dotC = v10x*v0rx + v10y*v0ry + v10z*v0rz;
+        const dotD = rDir.x*rDir.x + rDir.y*rDir.y + rDir.z*rDir.z;
+        const dotE = rDir.x*v0rx + rDir.y*v0ry + rDir.z*v0rz;
+        
         const denom = dotA*dotD - dotB*dotB;
+        
         let sc, tc;
-        if (denom < 0.000001) { sc = 0; tc = (dotB > dotC ? dotE/dotB : 0); }
-        else { sc = (dotB*dotE - dotC*dotD) / denom; tc = (dotA*dotE - dotB*dotC) / denom; }
+        if (denom < 0.000001) {
+            sc = 0.0;
+            tc = (dotB > dotC ? dotE / dotB : 0.0);
+        } else {
+            sc = (dotB*dotE - dotC*dotD) / denom;
+            tc = (dotA*dotE - dotB*dotC) / denom;
+        }
+        
         sc = Math.max(0, Math.min(1, sc));
         tc = (dotB*sc + dotE) / dotD;
-        const pSeg = Vec3Utils.add(v0, Vec3Utils.scale(v10, sc, {x:0,y:0,z:0}), {x:0,y:0,z:0});
-        const pRay = Vec3Utils.add(rOrigin, Vec3Utils.scale(rDir, tc, {x:0,y:0,z:0}), {x:0,y:0,z:0});
-        const diff = Vec3Utils.subtract(pSeg, pRay, {x:0,y:0,z:0});
-        return Math.sqrt(Vec3Utils.dot(diff, diff));
+        
+        const diffX = (v0.x + v10x * sc) - (rOrigin.x + rDir.x * tc);
+        const diffY = (v0.y + v10y * sc) - (rOrigin.y + rDir.y * tc);
+        const diffZ = (v0.z + v10z * sc) - (rOrigin.z + rDir.z * tc);
+        
+        return Math.sqrt(diffX*diffX + diffY*diffY + diffZ*diffZ);
     }
 
     private rayPlaneIntersect(ray: any, planePoint: Vector3, planeNormal: Vector3): Vector3 | null {
