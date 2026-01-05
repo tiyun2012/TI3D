@@ -63,4 +63,4 @@ while ($queue.Count -gt 0) {
 
 Write-Host "Traversal complete. Output stored in $OutputFile"
 
-# ./allAndIgnore.ps1 -Root "." -IgnoreFolder @("node_modules", ".git") -FileName "toAI_output.txt"
+# ./allAndIgnore.ps1 -Root "." -IgnoreFolder @("node_modules", ".git","docs",".env.local") -FileName "toAI_output.txt"

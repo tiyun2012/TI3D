@@ -1,26 +1,26 @@
 
 import React, { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
-import { engineInstance, SoftSelectionMode } from './services/engine';
-import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode, SoftSelectionFalloff } from './types';
-import { EditorContext, EditorContextType, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG, SnapSettings, DEFAULT_SNAP_CONFIG } from './contexts/EditorContext';
-import { assetManager } from './services/AssetManager';
-import { consoleService } from './services/Console';
+import { engineInstance, SoftSelectionMode } from '../services/engine';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode, SoftSelectionFalloff } from '../types';
+import { EditorContext, EditorContextType, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG, SnapSettings, DEFAULT_SNAP_CONFIG } from '../contexts/EditorContext';
+import { assetManager } from '../services/AssetManager';
+import { consoleService } from '../services/Console';
 
 // Components
-import { Toolbar } from './components/Toolbar';
-import { HierarchyPanel } from './components/HierarchyPanel';
-import { InspectorPanel } from './components/InspectorPanel';
-import { SceneView } from './components/SceneView';
-import { ProjectPanel } from './components/ProjectPanel';
-import { ConsolePanel } from './components/ConsolePanel'; 
-import { Icon } from './components/Icon';
-import { PreferencesModal } from './components/PreferencesModal';
-import { WindowManager, WindowManagerContext, WindowManagerContextType } from './components/WindowManager';
-import { GeometrySpreadsheet } from './components/GeometrySpreadsheet';
-import { UVEditor } from './components/UVEditor';
-import { Timeline } from './components/Timeline';
-import { SkinningEditor } from './components/SkinningEditor';
-import { ToolOptionsPanel } from './components/ToolOptionsPanel'; 
+import { Toolbar } from './Toolbar';
+import { HierarchyPanel } from './HierarchyPanel';
+import { InspectorPanel } from './InspectorPanel';
+import { SceneView } from './SceneView';
+import { ProjectPanel } from './ProjectPanel';
+import { ConsolePanel } from './ConsolePanel'; 
+import { Icon } from './Icon';
+import { PreferencesModal } from './PreferencesModal';
+import { WindowManager, WindowManagerContext, WindowManagerContextType } from './WindowManager';
+import { GeometrySpreadsheet } from './GeometrySpreadsheet';
+import { UVEditor } from './UVEditor';
+import { Timeline } from './Timeline';
+import { SkinningEditor } from './SkinningEditor';
+import { ToolOptionsPanel } from './ToolOptionsPanel'; 
 
 // --- Widget Wrappers ---
 
@@ -126,9 +126,13 @@ const StatsContent = () => {
 };
 
 const StatusBarInfo: React.FC = () => {
-    const { meshComponentMode, selectedIds, simulationMode } = useContext(EditorContext) as EditorContextType;
+    const ctx = useContext(EditorContext) as EditorContextType | null;
     const [statusText, setStatusText] = useState('Ready');
     const [hintText, setHintText] = useState('');
+
+    const meshComponentMode = ctx?.meshComponentMode || 'OBJECT';
+    const selectedIds = ctx?.selectedIds || [];
+    const simulationMode = ctx?.simulationMode || 'STOPPED';
 
     useEffect(() => {
         const update = () => {
@@ -277,7 +281,7 @@ const EditorInterface: React.FC = () => {
             if (e.key === 'Delete' || e.key === 'Backspace') {
                 const active = document.activeElement;
                 const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
-                if (!isInput && editor?.selectedIds.length && editor.selectionType === 'ENTITY') {
+                if (!isInput && editor && editor.selectedIds.length && editor.selectionType === 'ENTITY') {
                     e.preventDefault();
                     editor.selectedIds.forEach(id => engineInstance.deleteEntity(id, engineInstance.sceneGraph));
                     editor.setSelectedIds([]);
@@ -286,7 +290,7 @@ const EditorInterface: React.FC = () => {
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [editor?.selectedIds, editor?.selectionType]);
+    }, [editor?.selectedIds, editor?.selectionType, editor]);
 
     if (!editor) return <div className="flex h-screen items-center justify-center text-white">Initializing...</div>;
 

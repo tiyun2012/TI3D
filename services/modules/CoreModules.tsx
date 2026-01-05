@@ -12,7 +12,6 @@ import { PhysicsSystem } from '../systems/PhysicsSystem';
 import { ParticleSystem } from '../systems/ParticleSystem';
 import { AnimationSystem } from '../systems/AnimationSystem';
 
-// --- Reusable UI Control (Duplicated from InspectorPanel) ---
 const DraggableNumber: React.FC<{ 
   label: string; value: number; onChange: (val: number) => void; step?: number; color?: string; disabled?: boolean;
 }> = ({ label, value, onChange, step = 0.01, color, disabled }) => {
@@ -42,7 +41,6 @@ const Vector3Input: React.FC<{ label: string; value: {x:number, y:number, z:numb
     </div>
 );
 
-// --- TRANSFORM MODULE ---
 const TransformInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartUpdate, onCommit }) => {
     const editorCtx = useContext(EditorContext);
     return (
@@ -81,7 +79,6 @@ export const TransformModule: EngineModule = {
     InspectorComponent: TransformInspector
 };
 
-// --- MESH MODULE ---
 const MeshInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartUpdate, onCommit }) => {
     const materials = assetManager.getAssetsByType('MATERIAL');
     const rigs = assetManager.getAssetsByType('RIG');
@@ -108,7 +105,6 @@ const MeshInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartU
                 </div>
              </div>
              
-             {/* Animation Control */}
              <div className="flex items-center gap-2">
                 <span className="w-24 text-text-secondary text-[10px]">Animation Clip</span>
                 <div className="flex-1">
@@ -142,7 +138,7 @@ export const MeshModule: EngineModule = {
     InspectorComponent: MeshInspector,
     onRender: (gl, viewProj, ctx) => {
         const engine = ctx.engine;
-        const selectedIndices = engine.selectedIndices;
+        const selectedIndices = engine.selectionSystem.selectedIndices; 
         
         if (selectedIndices.size === 0 || engine.isPlaying) return;
         
@@ -151,7 +147,6 @@ export const MeshModule: EngineModule = {
         
         if (isObjectMode && !engine.uiConfig.selectionEdgeHighlight) return;
 
-        // Helpers
         const hexToRgb = (hex: string) => {
             const r = parseInt(hex.substring(1, 3), 16) / 255;
             const g = parseInt(hex.substring(3, 5), 16) / 255;
@@ -159,7 +154,7 @@ export const MeshModule: EngineModule = {
             return { r, g, b };
         };
         
-        const colSel = { r: 1.0, g: 1.0, b: 0.0 }; // Pure Yellow Selection
+        const colSel = { r: 1.0, g: 1.0, b: 0.0 }; 
         const colObjectSelection = hexToRgb(engine.uiConfig.selectionEdgeColor || '#4f80f8');
         const vertexConfigColor = hexToRgb(engine.uiConfig.vertexColor || '#a855f7'); 
         const wireframeDim = { r: 0.3, g: 0.3, b: 0.35 }; 
@@ -189,7 +184,7 @@ export const MeshModule: EngineModule = {
                         
                         if (!isObjectMode && !isVertexMode) {
                             const edgeKey = [vA, vB].sort((a,b)=>a-b).join('-');
-                            if (engine.subSelection.edgeIds.has(edgeKey)) color = colSel;
+                            if (engine.selectionSystem.subSelection.edgeIds.has(edgeKey)) color = colSel;
                         }
                         engine.debugRenderer.drawLine(pA, pB, color);
                     }
@@ -208,8 +203,8 @@ export const MeshModule: EngineModule = {
                     const wy = m1*x + m5*y + m9*z + m13;
                     const wz = m2*x + m6*y + m10*z + m14;
 
-                    const isSelected = engine.subSelection.vertexIds.has(i);
-                    const isHovered = engine.hoveredVertex?.entityId === entityId && engine.hoveredVertex?.index === i;
+                    const isSelected = engine.selectionSystem.subSelection.vertexIds.has(i);
+                    const isHovered = engine.selectionSystem.hoveredVertex?.entityId === entityId && engine.selectionSystem.hoveredVertex?.index === i;
                     
                     let size = baseSize;
                     let border = 0.0;
@@ -233,7 +228,6 @@ export const MeshModule: EngineModule = {
     }
 };
 
-// --- LIGHT MODULE ---
 const LightInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartUpdate, onCommit }) => {
     return (
         <div className="space-y-2">
@@ -266,7 +260,6 @@ export const LightModule: EngineModule = {
     InspectorComponent: LightInspector
 };
 
-// --- PARTICLE SYSTEM MODULE ---
 const ParticleInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartUpdate, onCommit }) => {
     const materials = assetManager.getAssetsByType('MATERIAL');
     const effects = effectRegistry.getOptions(); 
@@ -311,7 +304,6 @@ const ParticleInspector: React.FC<InspectorProps> = ({ component, onUpdate, onSt
     );
 };
 
-// System Wrapper for Particles
 const createParticleSystemAdapter = (sys: ParticleSystem): IGameSystem => ({
     id: 'ParticleSystem',
     init: (ctx) => {
@@ -320,7 +312,6 @@ const createParticleSystemAdapter = (sys: ParticleSystem): IGameSystem => ({
     update: (dt, ctx) => {
         sys.update(dt, ctx.ecs.store);
     },
-    // Rendering is still handled by main renderer due to transparency sorting requirements
 });
 
 export const ParticleModule: EngineModule = {
@@ -331,7 +322,6 @@ export const ParticleModule: EngineModule = {
     InspectorComponent: ParticleInspector
 };
 
-// --- PHYSICS MODULE ---
 const PhysicsInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartUpdate, onCommit }) => {
     const physicsMaterials = assetManager.getAssetsByType('PHYSICS_MATERIAL');
     return (
@@ -356,7 +346,6 @@ const PhysicsInspector: React.FC<InspectorProps> = ({ component, onUpdate, onSta
     );
 };
 
-// Physics System Wrapper
 const createPhysicsSystemAdapter = (sys: PhysicsSystem): IGameSystem => ({
     id: 'PhysicsSystem',
     update: (dt, ctx) => {
@@ -374,25 +363,24 @@ export const PhysicsModule: EngineModule = {
     InspectorComponent: PhysicsInspector
 };
 
-// --- ANIMATION MODULE ---
 const createAnimationSystemAdapter = (sys: AnimationSystem): IGameSystem => ({
     id: 'AnimationSystem',
     update: (dt, ctx) => {
-        // Pass DebugRenderer and Selection State from Engine context
         sys.update(
             dt, 
-            ctx.engine.timeline.currentTime, 
+            ctx.engine.timeline.currentTime,
+            ctx.engine.timeline.isPlaying, // isPlaying
+            ctx.engine.skeletonMap,        // skeletonMap
             ctx.engine.meshSystem, 
             ctx.ecs, 
             ctx.scene,
             ctx.engine.debugRenderer, 
-            ctx.engine.selectedIndices,
+            ctx.engine.selectionSystem.selectedIndices,
             ctx.engine.meshComponentMode
         );
     }
 });
 
-// --- SCRIPT MODULE ---
 export const ScriptModule: EngineModule = {
     id: ComponentType.SCRIPT,
     name: 'Script',
@@ -401,7 +389,6 @@ export const ScriptModule: EngineModule = {
     InspectorComponent: () => <div className="text-xs text-text-secondary italic">Scripts are managed via the Graph Editor.</div>
 };
 
-// --- VIRTUAL PIVOT MODULE ---
 const PivotInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartUpdate, onCommit }) => {
     return (
         <div className="flex items-center gap-2">
@@ -446,13 +433,11 @@ export const VirtualPivotModule: EngineModule = {
     }
 };
 
-// Register all
 export const registerCoreModules = (physicsSys: PhysicsSystem, particleSys: ParticleSystem, animSys: AnimationSystem) => {
     moduleManager.register(TransformModule);
     moduleManager.register(MeshModule);
     moduleManager.register(LightModule);
     
-    // Attach System Adapters
     PhysicsModule.system = createPhysicsSystemAdapter(physicsSys);
     moduleManager.register(PhysicsModule);
     
@@ -462,7 +447,6 @@ export const registerCoreModules = (physicsSys: PhysicsSystem, particleSys: Part
     ParticleModule.system = createParticleSystemAdapter(particleSys);
     moduleManager.register(ParticleModule);
     
-    // Register Animation System (No Module UI yet, but needs system registration)
     moduleManager.register({
         id: 'Animation',
         name: 'Animation',

@@ -14,6 +14,8 @@ import { MeshTopologyUtils } from '../services/MeshTopologyUtils';
 import { assetManager } from '../services/AssetManager';
 import { StaticMeshAsset } from '../types';
 import { consoleService } from '../services/Console';
+import { useBrushInteraction } from '../hooks/useBrushInteraction';
+import { usePieMenuInteraction } from '../hooks/usePieMenuInteraction';
 
 interface SceneViewProps {
   entities: Entity[];
@@ -34,7 +36,66 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         setTool
     } = useContext(EditorContext)!;
     
-    // Sync EditorContext state to Engine Instance
+    // --- HOOKS ---
+    const { isAdjustingBrush, isBrushKeyHeld } = useBrushInteraction();
+    
+    // State for local view settings
+    const [renderMode, setRenderMode] = useState(0);
+    const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
+    
+    const handleModeSelect = (modeId: number) => { 
+        engineInstance.setRenderMode(modeId); 
+        setRenderMode(modeId); 
+        setIsViewMenuOpen(false); 
+    };
+
+    // Camera Focus Logic (Needed by Pie Menu Hook)
+    const handleFocus = useCallback(() => {
+        if (selectedIds.length > 0) {
+            const bounds = AABBUtils.create();
+            let valid = false;
+            selectedIds.forEach(id => {
+                const pos = sceneGraph.getWorldPosition(id);
+                if (pos) {
+                    valid = true;
+                    const idx = engineInstance.ecs.idToIndex.get(id);
+                    let radius = 0.5;
+                    if (idx !== undefined) {
+                        const sx = Math.abs(engineInstance.ecs.store.scaleX[idx]);
+                        const sy = Math.abs(engineInstance.ecs.store.scaleY[idx]);
+                        const sz = Math.abs(engineInstance.ecs.store.scaleZ[idx]);
+                        radius = Math.max(sx, Math.max(sy, sz)) * 0.5; 
+                    }
+                    AABBUtils.expandPoint(bounds, { x: pos.x - radius, y: pos.y - radius, z: pos.z - radius });
+                    AABBUtils.expandPoint(bounds, { x: pos.x + radius, y: pos.y + radius, z: pos.z + radius });
+                }
+            });
+            if (valid) {
+                const center = AABBUtils.center(bounds, Vec3Utils.create());
+                const size = AABBUtils.size(bounds, Vec3Utils.create());
+                const maxDim = Math.max(size.x, Math.max(size.y, size.z));
+                setCamera(prev => ({ ...prev, target: center, radius: Math.max(maxDim * 1.5, 2.0) }));
+            }
+        } else {
+            setCamera(prev => ({ ...prev, target: {x:0, y:0, z:0}, radius: 10 }));
+        }
+    }, [selectedIds, sceneGraph]);
+
+    // Use Pie Menu Hook
+    const { 
+        pieMenuState, 
+        openPieMenu, 
+        closePieMenu, 
+        handlePieAction 
+    } = usePieMenuInteraction({
+        sceneGraph,
+        selectedIds,
+        onSelect,
+        setTool,
+        handleFocus,
+        handleModeSelect
+    });
+
     useEffect(() => {
         engineInstance.meshComponentMode = meshComponentMode;
         engineInstance.softSelectionEnabled = softSelectionEnabled;
@@ -43,7 +104,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         engineInstance.softSelectionFalloff = softSelectionFalloff;
         engineInstance.softSelectionHeatmapVisible = softSelectionHeatmapVisible;
         
-        // Recalculate whenever these settings OR the selection changes
         engineInstance.recalculateSoftSelection(); 
     }, [
         meshComponentMode, 
@@ -52,20 +112,13 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         softSelectionMode, 
         softSelectionFalloff, 
         softSelectionHeatmapVisible,
-        selectedIds // <--- Added this to ensure heatmap updates when selection changes
+        selectedIds
     ]);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const viewMenuRef = useRef<HTMLDivElement>(null);
 
-    const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
-    const [renderMode, setRenderMode] = useState(0);
-    const [pieMenuState, setPieMenuState] = useState<{ x: number, y: number, entityId?: string } | null>(null);
-    const [isAdjustingBrush, setIsAdjustingBrush] = useState(false);
-    const brushStartPos = useRef({ x: 0, y: 0, startRadius: 0 });
-    
-    // Camera State
     const [camera, setCamera] = useState({ theta: 0.5, phi: 1.2, radius: 10, target: { x: 0, y: 0, z: 0 } });
     
     const [dragState, setDragState] = useState<{
@@ -84,7 +137,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         isSelecting: boolean;
     } | null>(null);
 
-    // Initialize GL
     useLayoutEffect(() => {
         if (canvasRef.current && !engineInstance.renderer.gl) {
             engineInstance.initGL(canvasRef.current);
@@ -102,7 +154,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         return () => obs.disconnect();
     }, []);
 
-    // Camera Update Loop
     useEffect(() => {
         let lastTime = performance.now();
         let frameId: number;
@@ -117,23 +168,19 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             
             const width = containerRef.current?.clientWidth || 1;
             const height = containerRef.current?.clientHeight || 1;
-            const aspect = width / height;
             
+            const aspect = width / height;
             const proj = Mat4Utils.create();
             Mat4Utils.perspective(45 * Math.PI / 180, aspect, 0.1, 1000.0, proj);
-            
             const view = Mat4Utils.create();
             Mat4Utils.lookAt({x:eyeX, y:eyeY, z:eyeZ}, camera.target, {x:0,y:1,z:0}, view);
-            
             const vp = Mat4Utils.create();
             Mat4Utils.multiply(proj, view, vp);
-            
             engineInstance.updateCamera(vp, {x:eyeX, y:eyeY, z:eyeZ}, width, height);
             gizmoSystem.setTool(tool);
 
-            // Brush Radius Visualizer (Yellow Ring)
-            if (engineInstance.meshComponentMode !== 'OBJECT' && engineInstance.selectedIndices.size > 0 && softSelectionEnabled) {
-                const idx = Array.from(engineInstance.selectedIndices)[0];
+            if (engineInstance.meshComponentMode !== 'OBJECT' && engineInstance.selectionSystem.selectedIndices.size > 0 && softSelectionEnabled) {
+                const idx = Array.from(engineInstance.selectionSystem.selectedIndices)[0];
                 const entityId = engineInstance.ecs.store.ids[idx];
                 if (entityId) {
                     const worldPos = engineInstance.sceneGraph.getWorldPosition(entityId); 
@@ -162,41 +209,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         return () => cancelAnimationFrame(frameId);
     }, [camera, tool, softSelectionEnabled, softSelectionRadius]); 
 
-    // Focus Logic
-    const handleFocus = useCallback(() => {
-        if (selectedIds.length > 0) {
-            const bounds = AABBUtils.create();
-            let valid = false;
-
-            selectedIds.forEach(id => {
-                const pos = sceneGraph.getWorldPosition(id);
-                if (pos) {
-                    valid = true;
-                    const idx = engineInstance.ecs.idToIndex.get(id);
-                    let radius = 0.5;
-                    if (idx !== undefined) {
-                        const sx = Math.abs(engineInstance.ecs.store.scaleX[idx]);
-                        const sy = Math.abs(engineInstance.ecs.store.scaleY[idx]);
-                        const sz = Math.abs(engineInstance.ecs.store.scaleZ[idx]);
-                        radius = Math.max(sx, Math.max(sy, sz)) * 0.5; 
-                    }
-                    AABBUtils.expandPoint(bounds, { x: pos.x - radius, y: pos.y - radius, z: pos.z - radius });
-                    AABBUtils.expandPoint(bounds, { x: pos.x + radius, y: pos.y + radius, z: pos.z + radius });
-                }
-            });
-
-            if (valid) {
-                const center = AABBUtils.center(bounds, Vec3Utils.create());
-                const size = AABBUtils.size(bounds, Vec3Utils.create());
-                const maxDim = Math.max(size.x, Math.max(size.y, size.z));
-                setCamera(prev => ({ ...prev, target: center, radius: Math.max(maxDim * 1.5, 2.0) }));
-            }
-        } else {
-            setCamera(prev => ({ ...prev, target: {x:0, y:0, z:0}, radius: 10 }));
-        }
-    }, [selectedIds, sceneGraph]);
-
-    // 'F' key to focus
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             const active = document.activeElement;
@@ -211,76 +223,61 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     }, [handleFocus]);
 
     const handleMouseDown = (e: React.MouseEvent) => {
-        if (pieMenuState && e.button !== 2) setPieMenuState(null);
-        if (pieMenuState) return;
+        if (isBrushKeyHeld.current) return;
 
+        if (pieMenuState && e.button !== 2) closePieMenu();
+        if (pieMenuState) return;
+        
         if (!containerRef.current) return;
         const rect = containerRef.current.getBoundingClientRect();
         const mx = e.clientX - rect.left; 
         const my = e.clientY - rect.top;
 
-        // 1. GIZMO CHECK
-        // Must happen before Navigation or Selection
         if (e.button === 0 && !isAdjustingBrush && !e.altKey) {
             gizmoSystem.update(0, mx, my, rect.width, rect.height, true, false);
             if (gizmoSystem.activeAxis) return; 
         }
 
-        // 2. Right Click (Pie Menu)
         if (e.button === 2 && !e.altKey) {
-            const hitId = engineInstance.selectEntityAt(mx, my, rect.width, rect.height);
+            const hitId = engineInstance.selectionSystem.selectEntityAt(mx, my, rect.width, rect.height);
             if (hitId) {
                 if (!selectedIds.includes(hitId)) onSelect([hitId]);
-                setPieMenuState({ x: e.clientX, y: e.clientY, entityId: hitId });
+                openPieMenu(e.clientX, e.clientY, hitId);
             } else if (selectedIds.length > 0) {
-                setPieMenuState({ x: e.clientX, y: e.clientY });
+                openPieMenu(e.clientX, e.clientY);
             }
             return;
         }
 
-        // 3. Selection
-        // Explicitly check !e.altKey to avoid conflict with navigation
         if (e.button === 0 && !isAdjustingBrush && !e.altKey) {
             engineInstance.isInputDown = true;
             let componentHit = false;
             
-            // Try picking components if we are in component mode
             if (meshComponentMode !== 'OBJECT' && selectedIds.length > 0) {
-                const result = engineInstance.pickMeshComponent(selectedIds[0], mx, my, rect.width, rect.height);
+                const result = engineInstance.selectionSystem.pickMeshComponent(selectedIds[0], mx, my, rect.width, rect.height);
                 
                 if (result) {
                     engineInstance.clearDeformation(); 
                     componentHit = true;
                     
                     if (!e.shiftKey) {
-                        engineInstance.subSelection.vertexIds.clear();
-                        engineInstance.subSelection.edgeIds.clear();
-                        engineInstance.subSelection.faceIds.clear();
+                        engineInstance.selectionSystem.subSelection.vertexIds.clear();
+                        engineInstance.selectionSystem.subSelection.edgeIds.clear();
+                        engineInstance.selectionSystem.subSelection.faceIds.clear();
                     }
 
-                    // --- LOOP SELECTION (Alt+Click) ---
-                    // Note: This logic assumes 'Alt' was meant for loop select, but we filtered !e.altKey above.
-                    // This is a design conflict: Maya uses Shift+Double Click for loop, or just double click.
-                    // Standard Alt+Click is usually navigation.
-                    // We will support Loop Select via Shift + Click on existing selection or dedicated double-click logic in future.
-                    // For now, to keep loop select accessible without breaking nav, we might need a different modifier or rely on Pie Menu loop tool.
-                    // However, to strictly fix the reported "Conflict", we disabled Alt in this block.
-                    // If Loop Select relies on Alt, it needs to be re-mapped or handled differently.
-                    // Let's re-enable Alt logic ONLY if we hit a component, but that's complex because we don't know if we hit until we check.
-                    
-                    // Single Component Selection
                     if (meshComponentMode === 'VERTEX') {
                         const id = result.vertexId;
-                        if (engineInstance.subSelection.vertexIds.has(id)) engineInstance.subSelection.vertexIds.delete(id);
-                        else engineInstance.subSelection.vertexIds.add(id);
+                        if (engineInstance.selectionSystem.subSelection.vertexIds.has(id)) engineInstance.selectionSystem.subSelection.vertexIds.delete(id);
+                        else engineInstance.selectionSystem.subSelection.vertexIds.add(id);
                     } else if (meshComponentMode === 'EDGE') {
                         const id = result.edgeId.sort((a,b)=>a-b).join('-');
-                        if (engineInstance.subSelection.edgeIds.has(id)) engineInstance.subSelection.edgeIds.delete(id);
-                        else engineInstance.subSelection.edgeIds.add(id);
+                        if (engineInstance.selectionSystem.subSelection.edgeIds.has(id)) engineInstance.selectionSystem.subSelection.edgeIds.delete(id);
+                        else engineInstance.selectionSystem.subSelection.edgeIds.add(id);
                     } else if (meshComponentMode === 'FACE') {
                         const id = result.faceId;
-                        if (engineInstance.subSelection.faceIds.has(id)) engineInstance.subSelection.faceIds.delete(id);
-                        else engineInstance.subSelection.faceIds.add(id);
+                        if (engineInstance.selectionSystem.subSelection.faceIds.has(id)) engineInstance.selectionSystem.subSelection.faceIds.delete(id);
+                        else engineInstance.selectionSystem.subSelection.faceIds.add(id);
                     }
                     
                     engineInstance.recalculateSoftSelection(); 
@@ -289,9 +286,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 }
             }
 
-            // Object Selection
             if (!componentHit) {
-                const hitId = engineInstance.selectEntityAt(mx, my, rect.width, rect.height);
+                const hitId = engineInstance.selectionSystem.selectEntityAt(mx, my, rect.width, rect.height);
                 if (hitId) {
                     if (e.shiftKey) {
                         const newSel = selectedIds.includes(hitId) ? selectedIds.filter(id => id !== hitId) : [...selectedIds, hitId];
@@ -300,14 +296,11 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                         onSelect([hitId]);
                     }
                 } else {
-                    // Start Box Select
-                    // Logic for resetting mode is now handled in App.tsx via onSelect([]) or new selection
                     setSelectionBox({ startX: mx, startY: my, currentX: mx, currentY: my, isSelecting: true });
                 }
             }
         }
 
-        // 4. Navigation
         if (e.altKey && e.button !== 0 || (e.altKey && e.button === 0 && !isAdjustingBrush)) {
             e.preventDefault();
             let mode: 'ORBIT' | 'PAN' | 'ZOOM' = 'ORBIT';
@@ -326,7 +319,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             const h = Math.abs(selectionBox.currentY - selectionBox.startY);
             
             if (w > 3 || h > 3) {
-                const hitIds = engineInstance.selectEntitiesInRect(x, y, w, h);
+                const hitIds = engineInstance.selectionSystem.selectEntitiesInRect(x, y, w, h);
                 if (e.shiftKey) {
                     const nextSelection = new Set(selectedIds);
                     hitIds.forEach(id => {
@@ -352,29 +345,21 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
 
-        if (isAdjustingBrush) {
-            const dx = e.clientX - brushStartPos.current.x;
-            const sensitivity = 0.05;
-            const newRad = Math.max(0.1, brushStartPos.current.startRadius + dx * sensitivity);
-            setSoftSelectionRadius(newRad);
-            return;
-        }
+        if (isAdjustingBrush) return; // Handled by hook
 
-        // 5. Paint Selection (Brush)
         if (engineInstance.isInputDown && !dragState && !selectionBox && meshComponentMode === 'VERTEX') {
-            engineInstance.selectVerticesInBrush(mx, my, rect.width, rect.height, !e.ctrlKey); 
+            engineInstance.selectionSystem.selectVerticesInBrush(mx, my, rect.width, rect.height, !e.ctrlKey); 
         }
 
         gizmoSystem.update(0, mx, my, rect.width, rect.height, false, false);
 
         if (meshComponentMode !== 'OBJECT') {
-            if (meshComponentMode === 'VERTEX') engineInstance.highlightVertexAt(mx, my, rect.width, rect.height);
+            if (meshComponentMode === 'VERTEX') engineInstance.selectionSystem.highlightVertexAt(mx, my, rect.width, rect.height);
         }
 
         if (dragState && dragState.isDragging) {
             const dx = e.clientX - dragState.startX;
             const dy = e.clientY - dragState.startY;
-            // ... (Camera Logic omitted for brevity, identical to previous) ...
              if (dragState.mode === 'ORBIT') {
                 setCamera(prev => ({
                     ...prev,
@@ -409,34 +394,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             gizmoSystem.update(0, e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, false, true);
         }
         setDragState(null);
-        setIsAdjustingBrush(false);
     };
-
-    // 'B' Key for Soft Selection / Brush
-    useEffect(() => {
-        let bDown = false;
-        const onDown = (e: KeyboardEvent) => { if(e.key.toLowerCase() === 'b') bDown = true; };
-        const onUp = (e: KeyboardEvent) => { if(e.key.toLowerCase() === 'b') bDown = false; };
-        
-        const onWindowMouseDown = (e: MouseEvent) => {
-            if (bDown && e.button === 0) {
-                e.preventDefault(); e.stopPropagation();
-                if (!softSelectionEnabled) setSoftSelectionEnabled(true);
-                setIsAdjustingBrush(true);
-                brushStartPos.current = { x: e.clientX, y: e.clientY, startRadius: softSelectionRadius };
-            }
-        };
-
-        window.addEventListener('keydown', onDown);
-        window.addEventListener('keyup', onUp);
-        window.addEventListener('mousedown', onWindowMouseDown); 
-        
-        return () => {
-            window.removeEventListener('keydown', onDown);
-            window.removeEventListener('keyup', onUp);
-            window.removeEventListener('mousedown', onWindowMouseDown);
-        };
-    }, [softSelectionRadius, setSoftSelectionEnabled, softSelectionEnabled]);
 
     useEffect(() => {
         window.addEventListener('mousemove', handleGlobalMouseMove);
@@ -476,34 +434,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 }
             }
         }
-    };
-
-    const handleModeSelect = (modeId: number) => { 
-        engineInstance.setRenderMode(modeId); 
-        setRenderMode(modeId); 
-        setIsViewMenuOpen(false); 
-    };
-
-    const handlePieAction = (action: string) => {
-        if (action === 'tool_select') setTool('SELECT');
-        if (action === 'tool_move') setTool('MOVE');
-        if (action === 'tool_rotate') setTool('ROTATE');
-        if (action === 'tool_scale') setTool('SCALE');
-        if (action === 'toggle_grid') engineInstance.toggleGrid();
-        if (action === 'toggle_wire') handleModeSelect(3); 
-        if (action === 'reset_cam') handleFocus();
-        if (action === 'delete') { selectedIds.forEach(id => engineInstance.deleteEntity(id, sceneGraph)); onSelect([]); }
-        if (action === 'duplicate') { selectedIds.forEach(id => engineInstance.duplicateEntity(id)); }
-        if (action === 'focus') { handleFocus(); }
-        if (action === 'extrude') engineInstance.extrudeFaces();
-        if (action === 'bevel') engineInstance.bevelEdges();
-        if (action === 'weld') engineInstance.weldVertices();
-        if (action === 'connect') engineInstance.connectComponents();
-        if (action === 'delete_face') engineInstance.deleteSelectedFaces();
-        if (action === 'loop_vert') engineInstance.selectLoop('VERTEX');
-        if (action === 'loop_edge') engineInstance.selectLoop('EDGE');
-        if (action === 'loop_face') engineInstance.selectLoop('FACE');
-        setPieMenuState(null);
     };
 
     return (
@@ -575,9 +505,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     y={pieMenuState.y}
                     entityId={pieMenuState.entityId}
                     currentMode={meshComponentMode}
-                    onSelectMode={(m) => { setMeshComponentMode(m); setPieMenuState(null); }}
+                    onSelectMode={(m) => { setMeshComponentMode(m); closePieMenu(); }}
                     onAction={handlePieAction}
-                    onClose={() => setPieMenuState(null)}
+                    onClose={closePieMenu}
                 />, 
                 document.body
             )}
