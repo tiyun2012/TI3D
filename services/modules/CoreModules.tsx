@@ -1,6 +1,6 @@
 
 import React, { useContext } from 'react';
-import { EngineModule, ComponentType, InspectorProps, TransformSpace, StaticMeshAsset } from '../../types';
+import { EngineModule, ComponentType, InspectorProps, TransformSpace, StaticMeshAsset, SkeletalMeshAsset, IGameSystem } from '../../types';
 import { EditorContext } from '../../contexts/EditorContext';
 import { Select } from '../../components/ui/Select';
 import { ROTATION_ORDERS, LIGHT_TYPES, COMPONENT_MASKS } from '../constants';
@@ -8,26 +8,36 @@ import { assetManager } from '../AssetManager';
 import { moduleManager } from '../ModuleManager';
 import { Vec3Utils } from '../math';
 import { effectRegistry } from '../EffectRegistry'; 
+import { PhysicsSystem } from '../systems/PhysicsSystem';
+import { ParticleSystem } from '../systems/ParticleSystem';
+import { AnimationSystem } from '../systems/AnimationSystem';
 
-// --- SHARED UI CONTROLS ---
-const DraggableNumber: React.FC<{ label: string; value: number; onChange: (val: number) => void; step?: number; color?: string }> = 
-    ({ label, value, onChange, step = 0.1, color }) => {
-    return (
-        <div className="flex items-center bg-black/20 rounded overflow-hidden border border-transparent focus-within:border-accent group">
-            <div className={`w-6 flex items-center justify-center text-[10px] font-bold h-6 ${color || 'text-text-secondary'}`}>{label}</div>
-            <input type="number" className="flex-1 bg-transparent text-xs p-1 outline-none text-white min-w-0 text-right pr-2" 
-                value={value} onChange={e => onChange(parseFloat(e.target.value))} step={step} />
-        </div>
-    );
+// --- Reusable UI Control (Duplicated from InspectorPanel) ---
+const DraggableNumber: React.FC<{ 
+  label: string; value: number; onChange: (val: number) => void; step?: number; color?: string; disabled?: boolean;
+}> = ({ label, value, onChange, step = 0.01, color, disabled }) => {
+  return (
+    <div className={`flex items-center bg-black/20 rounded overflow-hidden border border-transparent ${disabled ? 'opacity-50' : 'focus-within:border-accent'} group`}>
+      <div className={`w-6 flex items-center justify-center text-[10px] font-bold h-6 ${color || 'text-text-secondary'}`}>{label}</div>
+      <input 
+        type="number" 
+        className={`flex-1 bg-transparent text-xs p-1 outline-none text-white min-w-0 text-right pr-2 ${disabled ? 'cursor-not-allowed' : ''}`} 
+        value={value === undefined ? 0 : Number(value).toFixed(3)} 
+        onChange={e => !disabled && onChange(parseFloat(e.target.value))} 
+        step={step}
+        disabled={disabled}
+      />
+    </div>
+  );
 };
 
-const Vector3Input: React.FC<{ label: string; value: any; onChange: (v: any) => void; }> = ({ label, value, onChange }) => (
+const Vector3Input: React.FC<{ label: string; value: {x:number, y:number, z:number}; onChange: (v: {x:number, y:number, z:number}) => void; disabled?: boolean }> = ({ label, value, onChange, disabled }) => (
     <div className="flex flex-col gap-1 mb-2">
         <div className="text-[9px] uppercase text-text-secondary font-bold tracking-wider ml-1 opacity-70">{label}</div>
         <div className="grid grid-cols-3 gap-1">
-            <DraggableNumber label="X" value={value.x} onChange={v => onChange({...value, x: v})} color="text-red-500" />
-            <DraggableNumber label="Y" value={value.y} onChange={v => onChange({...value, y: v})} color="text-green-500" />
-            <DraggableNumber label="Z" value={value.z} onChange={v => onChange({...value, z: v})} color="text-blue-500" />
+            <DraggableNumber label="X" value={value.x} onChange={v => onChange({...value, x: v})} color="text-red-500" disabled={disabled} />
+            <DraggableNumber label="Y" value={value.y} onChange={v => onChange({...value, y: v})} color="text-green-500" disabled={disabled} />
+            <DraggableNumber label="Z" value={value.z} onChange={v => onChange({...value, z: v})} color="text-blue-500" disabled={disabled} />
         </div>
     </div>
 );
@@ -97,6 +107,15 @@ const MeshInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartU
                    <Select icon="GitBranch" value={component.rigId || ""} options={[{ label: 'None', value: "" }, ...rigs.map(r => ({ label: r.name, value: r.id }))]} onChange={(v) => { onStartUpdate(); onUpdate('rigId', v); onCommit(); }} />
                 </div>
              </div>
+             
+             {/* Animation Control */}
+             <div className="flex items-center gap-2">
+                <span className="w-24 text-text-secondary text-[10px]">Animation Clip</span>
+                <div className="flex-1">
+                   <DraggableNumber label="#" value={component.animationIndex || 0} onChange={(v) => { onStartUpdate(); onUpdate('animationIndex', Math.floor(v)); onCommit(); }} step={1} />
+                </div>
+             </div>
+
              <div className="flex items-center gap-2">
                 <span className="w-24 text-text-secondary text-[10px]">Post Effect</span>
                 <div className="flex-1">
@@ -169,7 +188,7 @@ export const MeshModule: EngineModule = {
                         let color = isObjectMode ? colObjectSelection : (isVertexMode ? wireframeDim : wireframeDim);
                         
                         if (!isObjectMode && !isVertexMode) {
-                            const edgeKey = [vA, vB].sort().join('-');
+                            const edgeKey = [vA, vB].sort((a,b)=>a-b).join('-');
                             if (engine.subSelection.edgeIds.has(edgeKey)) color = colSel;
                         }
                         engine.debugRenderer.drawLine(pA, pB, color);
@@ -292,10 +311,22 @@ const ParticleInspector: React.FC<InspectorProps> = ({ component, onUpdate, onSt
     );
 };
 
+// System Wrapper for Particles
+const createParticleSystemAdapter = (sys: ParticleSystem): IGameSystem => ({
+    id: 'ParticleSystem',
+    init: (ctx) => {
+        if(ctx.gl) sys.init(ctx.gl);
+    },
+    update: (dt, ctx) => {
+        sys.update(dt, ctx.ecs.store);
+    },
+    // Rendering is still handled by main renderer due to transparency sorting requirements
+});
+
 export const ParticleModule: EngineModule = {
     id: ComponentType.PARTICLE_SYSTEM,
     name: 'Particle System',
-    icon: 'Sparkles', // Use Sparkles or similar
+    icon: 'Sparkles',
     order: 15,
     InspectorComponent: ParticleInspector
 };
@@ -325,6 +356,16 @@ const PhysicsInspector: React.FC<InspectorProps> = ({ component, onUpdate, onSta
     );
 };
 
+// Physics System Wrapper
+const createPhysicsSystemAdapter = (sys: PhysicsSystem): IGameSystem => ({
+    id: 'PhysicsSystem',
+    update: (dt, ctx) => {
+        if (ctx.engine.isPlaying) {
+            sys.update(dt, ctx.ecs.store, ctx.ecs.idToIndex, ctx.scene);
+        }
+    }
+});
+
 export const PhysicsModule: EngineModule = {
     id: ComponentType.PHYSICS,
     name: 'Physics Body',
@@ -332,6 +373,24 @@ export const PhysicsModule: EngineModule = {
     order: 30,
     InspectorComponent: PhysicsInspector
 };
+
+// --- ANIMATION MODULE ---
+const createAnimationSystemAdapter = (sys: AnimationSystem): IGameSystem => ({
+    id: 'AnimationSystem',
+    update: (dt, ctx) => {
+        // Pass DebugRenderer and Selection State from Engine context
+        sys.update(
+            dt, 
+            ctx.engine.timeline.currentTime, 
+            ctx.engine.meshSystem, 
+            ctx.ecs, 
+            ctx.scene,
+            ctx.engine.debugRenderer, 
+            ctx.engine.selectedIndices,
+            ctx.engine.meshComponentMode
+        );
+    }
+});
 
 // --- SCRIPT MODULE ---
 export const ScriptModule: EngineModule = {
@@ -367,23 +426,17 @@ export const VirtualPivotModule: EngineModule = {
         for (let i = 0; i < ctx.ecs.count; i++) {
             if (store.isActive[i] && (store.componentMask[i] & COMPONENT_MASKS.VIRTUAL_PIVOT)) {
                 const idx = i;
-                
                 const length = store.vpLength[idx] * 0.3; 
-                
                 const wm = store.worldMatrix.subarray(idx * 16, idx * 16 + 16);
-                
                 const pos = { x: wm[12], y: wm[13], z: wm[14] };
-                
                 const xAxis = { x: wm[0], y: wm[1], z: wm[2] };
                 Vec3Utils.normalize(xAxis, xAxis);
                 const pX = Vec3Utils.add(pos, Vec3Utils.scale(xAxis, length, {x:0,y:0,z:0}), {x:0,y:0,z:0});
                 debug.drawLine(pos, pX, { r: 1, g: 0, b: 0 });
-
                 const yAxis = { x: wm[4], y: wm[5], z: wm[6] };
                 Vec3Utils.normalize(yAxis, yAxis);
                 const pY = Vec3Utils.add(pos, Vec3Utils.scale(yAxis, length, {x:0,y:0,z:0}), {x:0,y:0,z:0});
                 debug.drawLine(pos, pY, { r: 0, g: 1, b: 0 });
-
                 const zAxis = { x: wm[8], y: wm[9], z: wm[10] };
                 Vec3Utils.normalize(zAxis, zAxis);
                 const pZ = Vec3Utils.add(pos, Vec3Utils.scale(zAxis, length, {x:0,y:0,z:0}), {x:0,y:0,z:0});
@@ -394,12 +447,28 @@ export const VirtualPivotModule: EngineModule = {
 };
 
 // Register all
-export const registerCoreModules = () => {
+export const registerCoreModules = (physicsSys: PhysicsSystem, particleSys: ParticleSystem, animSys: AnimationSystem) => {
     moduleManager.register(TransformModule);
     moduleManager.register(MeshModule);
     moduleManager.register(LightModule);
+    
+    // Attach System Adapters
+    PhysicsModule.system = createPhysicsSystemAdapter(physicsSys);
     moduleManager.register(PhysicsModule);
+    
     moduleManager.register(ScriptModule);
     moduleManager.register(VirtualPivotModule);
-    moduleManager.register(ParticleModule); // Registered
+    
+    ParticleModule.system = createParticleSystemAdapter(particleSys);
+    moduleManager.register(ParticleModule);
+    
+    // Register Animation System (No Module UI yet, but needs system registration)
+    moduleManager.register({
+        id: 'Animation',
+        name: 'Animation',
+        icon: 'Film',
+        order: 99,
+        InspectorComponent: () => null,
+        system: createAnimationSystemAdapter(animSys)
+    });
 };

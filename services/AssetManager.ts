@@ -1,11 +1,12 @@
-
 import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset, LogicalMesh, FolderAsset } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 import { MESH_TYPES } from './constants';
 import { engineInstance } from './engine';
 import { ProceduralGeneration } from './ProceduralGeneration';
 import { MeshTopologyUtils } from './MeshTopologyUtils';
+// @ts-ignore
 import * as THREE from 'three';
+import { eventBus } from './EventBus';
 
 export interface RigTemplate {
     name: string;
@@ -47,6 +48,12 @@ export const RIG_TEMPLATES: RigTemplate[] = [
     }
 ];
 
+interface ReconstructionOptions {
+    planarThreshold: number;  
+    angleTolerance: number;   
+    maxEdgeLengthRatio: number; 
+}
+
 class AssetManagerService {
     assets = new Map<string, Asset>();
     
@@ -73,6 +80,22 @@ class AssetManagerService {
         this.createRig('Locomotion IK Logic', RIG_TEMPLATES[0]);
     }
 
+    private computeAABB(vertices: Float32Array) {
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        for(let i=0; i<vertices.length; i+=3) {
+            const x = vertices[i], y = vertices[i+1], z = vertices[i+2];
+            if(x < minX) minX = x; if(x > maxX) maxX = x;
+            if(y < minY) minY = y; if(y > maxY) maxY = y;
+            if(z < minZ) minZ = z; if(z > maxZ) maxZ = z;
+        }
+        if (minX === Infinity) return { min: {x:0,y:0,z:0}, max: {x:0,y:0,z:0} };
+        return {
+            min: { x: minX, y: minY, z: minZ },
+            max: { x: maxX, y: maxY, z: maxZ }
+        };
+    }
+
     private createDefaultPhysicsMaterials() {
         this.createPhysicsMaterial('Concrete', { staticFriction: 0.8, dynamicFriction: 0.7, bounciness: 0.1, density: 2.4 });
         this.createPhysicsMaterial('Rubber', { staticFriction: 0.9, dynamicFriction: 0.8, bounciness: 0.8, density: 1.1 });
@@ -83,6 +106,7 @@ class AssetManagerService {
         const asset = this.getAsset(id);
         if (asset && asset.type === 'PHYSICS_MATERIAL') {
             asset.data = { ...asset.data, ...partialData };
+            eventBus.emit('ASSET_UPDATED', { id, type: asset.type });
         }
     }
 
@@ -90,6 +114,7 @@ class AssetManagerService {
         const asset = this.getAsset(id);
         if (asset && !asset.isProtected) {
             asset.name = newName;
+            eventBus.emit('ASSET_UPDATED', { id, type: asset.type });
         }
     }
 
@@ -108,6 +133,7 @@ class AssetManagerService {
             asset.data.nodes = JSON.parse(JSON.stringify(nodes));
             asset.data.connections = JSON.parse(JSON.stringify(connections));
             asset.data.glsl = glsl;
+            eventBus.emit('ASSET_UPDATED', { id, type: asset.type });
         }
     }
 
@@ -116,6 +142,7 @@ class AssetManagerService {
         if (asset && (asset.type === 'SCRIPT' || asset.type === 'RIG')) {
             asset.data.nodes = JSON.parse(JSON.stringify(nodes));
             asset.data.connections = JSON.parse(JSON.stringify(connections));
+            eventBus.emit('ASSET_UPDATED', { id, type: asset.type });
         }
     }
 
@@ -127,6 +154,7 @@ class AssetManagerService {
         copy.name = `${original.name} (Copy)`;
         copy.isProtected = false; 
         this.registerAsset(copy);
+        eventBus.emit('ASSET_CREATED', { id: copy.id, type: copy.type });
         return copy;
     }
 
@@ -161,40 +189,39 @@ class AssetManagerService {
                 this.rigIntToUuid.delete(intId);
             }
         }
+        eventBus.emit('ASSET_DELETED', { id, type: asset.type });
     }
 
     registerAsset(asset: Asset, forcedIntId?: number): number {
-        // Ensure path defaults to /Content if missing (migration)
         if (!asset.path) asset.path = '/Content';
         
         this.assets.set(asset.id, asset);
         
+        let intId = 0;
+
         if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
             if (this.meshUuidToInt.has(asset.id)) return this.meshUuidToInt.get(asset.id)!;
-            const intId = forcedIntId || this.nextMeshIntId++;
+            intId = forcedIntId || this.nextMeshIntId++;
             this.meshIntToUuid.set(intId, asset.id);
             this.meshUuidToInt.set(asset.id, intId);
-            return intId;
         } else if (asset.type === 'MATERIAL') {
             if (this.matUuidToInt.has(asset.id)) return this.matUuidToInt.get(asset.id)!;
-            const intId = this.nextMatIntId++;
+            intId = this.nextMatIntId++;
             this.matIntToUuid.set(intId, asset.id);
             this.matUuidToInt.set(asset.id, intId);
-            return intId;
         } else if (asset.type === 'PHYSICS_MATERIAL') {
             if (this.physMatUuidToInt.has(asset.id)) return this.physMatUuidToInt.get(asset.id)!;
-            const intId = this.nextPhysMatIntId++;
+            intId = this.nextPhysMatIntId++;
             this.physMatIntToUuid.set(intId, asset.id);
             this.physMatUuidToInt.set(asset.id, intId);
-            return intId;
         } else if (asset.type === 'RIG') {
             if (this.rigUuidToInt.has(asset.id)) return this.rigUuidToInt.get(asset.id)!;
-            const intId = this.nextRigIntId++;
+            intId = this.nextRigIntId++;
             this.rigIntToUuid.set(intId, asset.id);
             this.rigUuidToInt.set(asset.id, intId);
-            return intId;
         }
-        return 0;
+        
+        return intId;
     }
 
     getAsset(id: string) {
@@ -226,6 +253,7 @@ class AssetManagerService {
         const img = new Image();
         img.onload = () => { if (engineInstance?.meshSystem) engineInstance.meshSystem.uploadTexture(asset.layerIndex, img); };
         img.src = asset.source;
+        eventBus.emit('ASSET_CREATED', { id: asset.id, type: 'TEXTURE' });
         return asset;
     }
 
@@ -237,6 +265,7 @@ class AssetManagerService {
             data: { nodes: JSON.parse(JSON.stringify(base.nodes)), connections: JSON.parse(JSON.stringify(base.connections)), glsl: '' }
         };
         this.registerAsset(mat);
+        eventBus.emit('ASSET_CREATED', { id: mat.id, type: 'MATERIAL' });
         return mat;
     }
 
@@ -244,6 +273,7 @@ class AssetManagerService {
         const id = crypto.randomUUID();
         const asset: PhysicsMaterialAsset = { id, name, type: 'PHYSICS_MATERIAL', path, data: data || { staticFriction: 0.6, dynamicFriction: 0.6, bounciness: 0.0, density: 1.0 } };
         this.registerAsset(asset);
+        eventBus.emit('ASSET_CREATED', { id: asset.id, type: 'PHYSICS_MATERIAL' });
         return asset;
     }
 
@@ -262,6 +292,7 @@ class AssetManagerService {
         ];
         const asset: ScriptAsset = { id, name, type: 'SCRIPT', path, data: { nodes, connections } };
         this.registerAsset(asset);
+        eventBus.emit('ASSET_CREATED', { id: asset.id, type: 'SCRIPT' });
         return asset;
     }
 
@@ -270,10 +301,11 @@ class AssetManagerService {
         const base = template || RIG_TEMPLATES[0];
         const asset: RigAsset = { id, name, type: 'RIG', path, data: { nodes: JSON.parse(JSON.stringify(base.nodes)), connections: JSON.parse(JSON.stringify(base.connections)) } };
         this.registerAsset(asset);
+        eventBus.emit('ASSET_CREATED', { id: asset.id, type: 'RIG' });
         return asset;
     }
 
-    async importFile(fileName: string, content: string | ArrayBuffer, type: 'MESH' | 'SKELETAL_MESH', importScale: number = 1.0): Promise<Asset> {
+    async importFile(fileName: string, content: string | ArrayBuffer, type: 'MESH' | 'SKELETAL_MESH', importScale: number = 1.0, detectQuads: boolean = true): Promise<Asset> {
         const id = crypto.randomUUID();
         const name = fileName.split('.')[0] || 'Imported_Mesh';
         let geometryData: any = { v: [], n: [], u: [], idx: [], faces: [], triToFace: [] };
@@ -285,17 +317,58 @@ class AssetManagerService {
         if (ext.endsWith('.obj')) {
             geometryData = this.parseOBJ(typeof content === 'string' ? content : new TextDecoder().decode(content), importScale);
         } else if (ext.endsWith('.fbx')) {
-            const fbxData = await this.parseFBX(content, importScale);
+            const fbxData = await this.parseFBX(content, importScale, detectQuads);
             if (fbxData) {
                 geometryData = fbxData.geometry;
                 skeletonData = fbxData.skeleton;
                 animations = fbxData.animations;
-                // Force type to SKELETAL if bones detected
                 if (skeletonData) type = 'SKELETAL_MESH';
             }
         } else {
             console.warn("Unsupported format. Using fallback cylinder.");
             geometryData = ProceduralGeneration.createCylinder(24);
+        }
+
+        const hasFaces = geometryData.faces && geometryData.faces.length > 0;
+        const isAllTriangles = hasFaces && geometryData.faces.every((f: any[]) => f.length === 3);
+
+        // For FBX or triangulated OBJ, use reconstructQuads
+        if (detectQuads && geometryData.idx.length > 0 && (!hasFaces || isAllTriangles)) {
+             const verts = geometryData.v instanceof Float32Array ? geometryData.v : new Float32Array(geometryData.v);
+             const norms = geometryData.n instanceof Float32Array ? geometryData.n : new Float32Array(geometryData.n);
+             
+             // [CHANGED] Robust topology reconstruction based on feedback
+             const topology = this.reconstructQuads(geometryData.idx, verts, norms, { 
+                 planarThreshold: 0.7, // Relaxed for FBX
+                 angleTolerance: 0.25,
+                 maxEdgeLengthRatio: 3.0
+             }); 
+             
+             // Use reconstruction if valid
+             if (topology.faces.length > 0) {
+                 geometryData.faces = topology.faces;
+                 geometryData.triToFace = topology.triToFace;
+             } else if (!hasFaces) {
+                 // Fallback if failed
+                 geometryData.faces = [];
+                 geometryData.triToFace = [];
+                 for(let i=0; i<geometryData.idx.length; i+=3) {
+                     geometryData.faces.push([geometryData.idx[i], geometryData.idx[i+1], geometryData.idx[i+2]]);
+                     geometryData.triToFace.push(i/3);
+                 }
+             }
+        } 
+        
+        // Final fallback: If no faces exist (e.g. detectQuads=false), build simple triangle topology
+        if (!geometryData.faces || geometryData.faces.length === 0) {
+             const faces = [];
+             const triToFace = [];
+             for(let i=0; i<geometryData.idx.length; i+=3) {
+                 faces.push([geometryData.idx[i], geometryData.idx[i+1], geometryData.idx[i+2]]);
+                 triToFace.push(i/3);
+             }
+             geometryData.faces = faces;
+             geometryData.triToFace = triToFace;
         }
 
         const v2f = new Map<number, number[]>();
@@ -320,7 +393,6 @@ class AssetManagerService {
 
         const vertexCount = geometryData.v.length / 3;
         
-        // Ensure Skin Data Exists
         if (!geometryData.jointIndices || geometryData.jointIndices.length === 0) {
             geometryData.jointIndices = new Float32Array(vertexCount * 4).fill(0);
             geometryData.jointWeights = new Float32Array(vertexCount * 4).fill(0);
@@ -328,6 +400,7 @@ class AssetManagerService {
         }
         
         const colors = new Float32Array(vertexCount * 3).fill(1.0);
+        const aabb = this.computeAABB(geometryData.v instanceof Float32Array ? geometryData.v : new Float32Array(geometryData.v));
 
         const assetBase = {
             id, name, type,
@@ -337,7 +410,8 @@ class AssetManagerService {
                 normals: new Float32Array(geometryData.n),
                 uvs: new Float32Array(geometryData.u),
                 colors: colors,
-                indices: new Uint16Array(geometryData.idx)
+                indices: new Uint16Array(geometryData.idx),
+                aabb
             },
             topology
         };
@@ -364,11 +438,13 @@ class AssetManagerService {
                  animations: animations
              };
              this.registerAsset(skelAsset);
+             eventBus.emit('ASSET_CREATED', { id: skelAsset.id, type: 'SKELETAL_MESH' });
              return skelAsset;
         }
 
         const staticAsset: StaticMeshAsset = { ...assetBase, type: 'MESH' };
         this.registerAsset(staticAsset);
+        eventBus.emit('ASSET_CREATED', { id: staticAsset.id, type: 'MESH' });
         return staticAsset;
     }
 
@@ -397,13 +473,11 @@ class AssetManagerService {
             else if (type === 'f') {
                 const poly = parts.slice(1);
                 const polyVertIndices = [];
-                
                 const resolveIndex = (indexStr: string, arrayLength: number) => {
                     if (!indexStr) return 0;
                     const idx = parseInt(indexStr);
                     return idx < 0 ? arrayLength + idx : idx - 1;
                 };
-
                 for (const vertStr of poly) {
                     if (cache.has(vertStr)) {
                         polyVertIndices.push(cache.get(vertStr)!);
@@ -420,7 +494,6 @@ class AssetManagerService {
                         polyVertIndices.push(nextIdx++);
                     }
                 }
-
                 const faceIdx = logicalFaces.length;
                 logicalFaces.push(polyVertIndices);
                 for (let i = 1; i < polyVertIndices.length - 1; i++) {
@@ -433,118 +506,110 @@ class AssetManagerService {
         return { v: finalV, n: finalN, u: finalU, idx: finalIdx, faces: logicalFaces, triToFace };
     }
 
-    private async parseFBX(content: ArrayBuffer | string, importScale: number) {
+    private async parseFBX(content: ArrayBuffer | string, importScale: number, detectQuads: boolean) {
         try {
-            // Dynamic import for FBXLoader (works with esm.sh)
+            // @ts-ignore
             const { FBXLoader } = await import('https://esm.sh/three@0.182.0/examples/jsm/loaders/FBXLoader.js?alias=three:three');
             const loader = new FBXLoader();
-            
-            // Parse (FBXLoader supports ArrayBuffer)
             const group = loader.parse(content, '');
             
-            // Extract First Skinned Mesh
             let targetMesh: THREE.SkinnedMesh | null = null;
-            group.traverse((obj: any) => {
-                if (obj.isSkinnedMesh && !targetMesh) targetMesh = obj;
-            });
-
-            if (!targetMesh) {
-                // Fallback: look for static mesh
-                group.traverse((obj: any) => {
-                    if (obj.isMesh && !targetMesh) targetMesh = obj;
-                });
-            }
-
+            group.traverse((obj: any) => { if (obj.isSkinnedMesh && !targetMesh) targetMesh = obj; });
+            if (!targetMesh) group.traverse((obj: any) => { if (obj.isMesh && !targetMesh) targetMesh = obj; });
             if (!targetMesh) throw new Error("No mesh found in FBX");
 
-            // --- Geometry Extraction ---
-            const geo = (targetMesh as any).geometry;
-            const pos = geo.attributes.position.array;
-            const norm = geo.attributes.normal ? geo.attributes.normal.array : null;
-            const uv = geo.attributes.uv ? geo.attributes.uv.array : new Float32Array((pos.length / 3) * 2);
-            const idx: number[] = geo.index ? Array.from(geo.index.array) : [];
-            
-            const skinIndices = geo.attributes.skinIndex ? geo.attributes.skinIndex.array : null;
-            const skinWeights = geo.attributes.skinWeight ? geo.attributes.skinWeight.array : null;
+            targetMesh.updateMatrixWorld(true);
 
-            // Apply Scale
+            let pos, norm, uv, idx, skinIndices, skinWeights;
+
+            if ((targetMesh as any).isSkinnedMesh) {
+                const geo = (targetMesh as any).geometry;
+                pos = geo.attributes.position.array;
+                norm = geo.attributes.normal ? geo.attributes.normal.array : null;
+                uv = geo.attributes.uv ? geo.attributes.uv.array : new Float32Array((pos.length / 3) * 2);
+                // Fix: Cast explicitly to avoid type error
+                idx = geo.index ? Array.from(geo.index.array as ArrayLike<number>) as number[] : [];
+                skinIndices = geo.attributes.skinIndex ? geo.attributes.skinIndex.array : null;
+                skinWeights = geo.attributes.skinWeight ? geo.attributes.skinWeight.array : null;
+            } else {
+                const bakedGeo = (targetMesh as any).geometry.clone();
+                bakedGeo.applyMatrix4(targetMesh.matrixWorld);
+                pos = bakedGeo.attributes.position.array;
+                norm = bakedGeo.attributes.normal ? bakedGeo.attributes.normal.array : null;
+                uv = bakedGeo.attributes.uv ? bakedGeo.attributes.uv.array : new Float32Array((pos.length / 3) * 2);
+                idx = bakedGeo.index ? Array.from(bakedGeo.index.array as ArrayLike<number>) as number[] : [];
+                skinIndices = null;
+                skinWeights = null;
+            }
+
+            if (idx.length === 0) {
+                const count = pos.length / 3;
+                for(let i=0; i<count; i++) idx.push(i);
+            }
+            
             const v = new Float32Array(pos.length);
             for(let i=0; i<pos.length; i++) v[i] = pos[i] * importScale;
 
             const n = norm ? new Float32Array(norm) : new Float32Array(pos.length);
-            // Generate normals if missing
             if (!norm) this.generateMissingNormals(Array.from(v), Array.from(n), idx);
 
-            // --- Skeleton Extraction ---
             let skeletonData = null;
-            const bones: any[] = [];
-            
             if ((targetMesh as any).isSkinnedMesh) {
-                const skeleton = (targetMesh as any).skeleton;
+                const skinnedMesh = targetMesh as THREE.SkinnedMesh;
+                const skeleton = skinnedMesh.skeleton;
+                const bones: any[] = [];
                 if (skeleton) {
-                    skeleton.bones.forEach((b: THREE.Bone) => {
-                        const invBind = new Float32Array(16);
-                        // Find inverse bind matrix. FBXLoader calculates it.
-                        // THREE.Skeleton stores boneInverses[] matching bones[]
-                        const bIdx = skeleton.bones.indexOf(b);
-                        if (skeleton.boneInverses[bIdx]) {
-                            skeleton.boneInverses[bIdx].toArray(invBind);
-                        } else {
-                            // Identity fallback
-                            invBind[0]=1; invBind[5]=1; invBind[10]=1; invBind[15]=1;
-                        }
-
-                        // Local Transform as Bind Pose (Approximate)
+                    skeleton.bones.forEach((b: THREE.Bone, i: number) => {
                         b.updateMatrix();
                         const bindPose = new Float32Array(16);
                         b.matrix.toArray(bindPose);
-
-                        bones.push({
-                            name: b.name,
-                            parentIndex: b.parent && b.parent.isBone ? skeleton.bones.indexOf(b.parent as THREE.Bone) : -1,
-                            bindPose: bindPose,
-                            inverseBindPose: invBind
-                        });
+                        if (importScale !== 1.0) { bindPose[12] *= importScale; bindPose[13] *= importScale; bindPose[14] *= importScale; }
+                        const inverseBindPose = new Float32Array(16);
+                        if (skeleton.boneInverses && skeleton.boneInverses[i]) {
+                            skeleton.boneInverses[i].toArray(inverseBindPose);
+                             if (importScale !== 1.0) { inverseBindPose[12] *= importScale; inverseBindPose[13] *= importScale; inverseBindPose[14] *= importScale; }
+                        } else {
+                            const inv = new THREE.Matrix4().fromArray(bindPose).invert(); 
+                            inv.toArray(inverseBindPose);
+                        }
+                        bones.push({ name: b.name, parentIndex: b.parent && (b.parent as any).isBone ? skeleton.bones.indexOf(b.parent as THREE.Bone) : -1, bindPose: bindPose, inverseBindPose: inverseBindPose });
                     });
                     skeletonData = { bones };
                 }
             }
 
-            // --- Animation Extraction ---
             const animations: any[] = [];
             if (group.animations && group.animations.length > 0) {
                 group.animations.forEach((clip: THREE.AnimationClip) => {
                     const tracks: any[] = [];
-                    clip.tracks.forEach((t) => {
-                        // Map THREE track types to engine types
-                        let type = 'position';
-                        if (t.name.endsWith('.quaternion')) type = 'rotation';
-                        if (t.name.endsWith('.scale')) type = 'scale';
-                        
-                        // Sanitize name (remove .position/quaternion suffix)
-                        const name = t.name.split('.')[0];
-                        
-                        tracks.push({
-                            name,
-                            type,
-                            times: new Float32Array(t.times),
-                            values: new Float32Array(t.values)
-                        });
+                    clip.tracks.forEach((t: any) => {
+                        let type = 'position'; if (t.name.endsWith('.quaternion')) type = 'rotation'; if (t.name.endsWith('.scale')) type = 'scale';
+                        const trackName = t.name.split('.')[0]; 
+                        let values = new Float32Array(t.values);
+                        if (type === 'position' && importScale !== 1.0) { for(let k=0; k<values.length; k++) values[k] *= importScale; }
+                        tracks.push({ name: trackName, type, times: new Float32Array(t.times), values: values });
                     });
-                    animations.push({
-                        name: clip.name,
-                        duration: clip.duration,
-                        tracks
-                    });
+                    animations.push({ name: clip.name, duration: clip.duration, tracks });
                 });
             }
 
-            // Build logical faces (assume triangles from THREE)
-            const logicalFaces = [];
-            const triToFace = [];
-            for (let i = 0; i < idx.length; i+=3) {
-                logicalFaces.push([idx[i], idx[i+1], idx[i+2]]);
-                triToFace.push(i/3);
+            let logicalFaces: number[][] = [];
+            let triToFace: number[] = [];
+            
+            if (detectQuads) {
+                // Pass lenient parameters for FBX since triangulation is likely
+                const recon = this.reconstructQuads(idx, v, n, { 
+                    planarThreshold: 0.7, 
+                    angleTolerance: 0.25,
+                    maxEdgeLengthRatio: 3.0
+                });
+                logicalFaces = recon.faces;
+                triToFace = recon.triToFace;
+            } else {
+                for (let i = 0; i < idx.length; i+=3) {
+                    logicalFaces.push([idx[i], idx[i+1], idx[i+2]]);
+                    triToFace.push(i/3);
+                }
             }
 
             return {
@@ -563,6 +628,241 @@ class AssetManagerService {
             console.error("FBX Load Failed:", e);
             return null;
         }
+    }
+
+    private weldByPosition(vertices: Float32Array, indices: number[], epsilon: number = 1e-4) {
+        const map = new Map<string, number>();
+        const remap = new Int32Array(vertices.length / 3);
+        let next = 0;
+
+        for (let i = 0; i < vertices.length / 3; i++) {
+            const x = vertices[i * 3], y = vertices[i * 3 + 1], z = vertices[i * 3 + 2];
+            // High precision rounding
+            const key = `${Math.round(x / epsilon)},${Math.round(y / epsilon)},${Math.round(z / epsilon)}`;
+            if (!map.has(key)) {
+                map.set(key, next++);
+            }
+            remap[i] = map.get(key)!;
+        }
+
+        const weldedIndices = new Int32Array(indices.length);
+        for(let i=0; i<indices.length; i++) {
+            weldedIndices[i] = remap[indices[i]];
+        }
+        
+        return { weldedIndices, remap };
+    }
+
+    private reconstructQuads(
+        indices: number[], 
+        vertices: Float32Array,
+        normals: Float32Array, // Explicit normal requirement
+        options?: Partial<ReconstructionOptions>
+    ): { faces: number[][], triToFace: number[] } {
+        // [NEW] Early exit for small meshes
+        if (indices.length < 12) { 
+            const faces: number[][] = [];
+            const triToFace: number[] = [];
+            for (let i = 0; i < indices.length / 3; i++) {
+                faces.push([indices[i*3], indices[i*3+1], indices[i*3+2]]);
+                triToFace.push(i);
+            }
+            return { faces, triToFace };
+        }
+
+        const opts = {
+            planarThreshold: 0.7, // ~45 degrees, stricter than before to respect hard edges
+            angleTolerance: 0.2,  // ~78 degrees min angle for corner
+            maxEdgeLengthRatio: 3.0,
+            ...options
+        };
+
+        const faces: number[][] = [];
+        const triToFace: number[] = new Array(indices.length / 3).fill(-1);
+        const used = new Uint8Array(indices.length / 3);
+
+        // 1. Weld Topology for Analysis (Critical for FBX)
+        const { weldedIndices } = this.weldByPosition(vertices, indices);
+
+        // Helper Math
+        const getVec = (i: number) => ({ x: vertices[i*3], y: vertices[i*3+1], z: vertices[i*3+2] });
+        const sub = (a: any, b: any) => ({ x: a.x-b.x, y: a.y-b.y, z: a.z-b.z });
+        const dot = (a: any, b: any) => a.x*b.x + a.y*b.y + a.z*b.z;
+        const cross = (a: any, b: any) => ({ x: a.y*b.z - a.z*b.y, y: a.z*b.x - a.x*b.z, z: a.x*b.y - a.y*b.x });
+        const len = (v: any) => Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+        const normalize = (v: any) => { const l=len(v); return l>0?{x:v.x/l, y:v.y/l, z:v.z/l}:{x:0,y:0,z:0}; };
+        
+        // Return 1.0 for 90deg, 0.0 for 0/180deg
+        const orthogonality = (a: any, b: any) => {
+            const d = dot(normalize(a), normalize(b));
+            return 1.0 - Math.abs(d); 
+        };
+
+        // 2. Precompute Triangle Normals
+        const triCount = indices.length / 3;
+        const triNormals = new Float32Array(triCount * 3);
+        
+        for(let t=0; t<triCount; t++) {
+            // Calculate geometric normal for flatness check
+            const i0 = indices[t*3], i1 = indices[t*3+1], i2 = indices[t*3+2];
+            const v0 = getVec(i0), v1 = getVec(i1), v2 = getVec(i2);
+            const e1 = sub(v1, v0), e2 = sub(v2, v0);
+            const n = normalize(cross(e1, e2));
+            triNormals[t*3] = n.x; triNormals[t*3+1] = n.y; triNormals[t*3+2] = n.z;
+        }
+
+        // 3. Build Edge Map & Valence using WELDED indices
+        const edgeMap = new Map<string, number[]>();
+        const valence = new Map<number, number>(); // Counts unique edges connected to vertex
+        
+        // First pass: Count valence based on edges
+        const uniqueEdges = new Set<string>();
+        
+        for (let t = 0; t < triCount; t++) {
+            const w0 = weldedIndices[t*3], w1 = weldedIndices[t*3+1], w2 = weldedIndices[t*3+2];
+            const edges = [
+                [w0, w1].sort((a,b)=>a-b).join('|'),
+                [w1, w2].sort((a,b)=>a-b).join('|'),
+                [w2, w0].sort((a,b)=>a-b).join('|')
+            ];
+            
+            edges.forEach(e => {
+                if(!edgeMap.has(e)) edgeMap.set(e, []);
+                edgeMap.get(e)!.push(t);
+                
+                if (!uniqueEdges.has(e)) {
+                    uniqueEdges.add(e);
+                    const [v1, v2] = e.split('|').map(Number);
+                    valence.set(v1, (valence.get(v1)||0)+1);
+                    valence.set(v2, (valence.get(v2)||0)+1);
+                }
+            });
+        }
+
+        // 5. Candidate Evaluation
+        interface Candidate { t1: number; t2: number; quad: number[]; score: number; }
+        const candidates: Candidate[] = [];
+
+        for (const [_, tris] of edgeMap) {
+            if (tris.length !== 2) continue;
+            
+            const t1 = tris[0];
+            const t2 = tris[1];
+            
+            // Hard Edge / Planarity Check
+            // We use the geometric normals to detect sharp creases which should NOT be bridged
+            const n1 = { x: triNormals[t1*3], y: triNormals[t1*3+1], z: triNormals[t1*3+2] };
+            const n2 = { x: triNormals[t2*3], y: triNormals[t2*3+1], z: triNormals[t2*3+2] };
+            const planarity = dot(n1, n2);
+            
+            if (planarity < opts.planarThreshold) continue;
+
+            // Get Welded Indices to find topology
+            const w1 = [weldedIndices[t1*3], weldedIndices[t1*3+1], weldedIndices[t1*3+2]];
+            const w2 = [weldedIndices[t2*3], weldedIndices[t2*3+1], weldedIndices[t2*3+2]];
+            
+            // Shared Welded Vertices
+            const sharedW = w1.filter(v => w2.includes(v));
+            if (sharedW.length !== 2) continue;
+
+            // Unique Welded Vertices
+            const u1W = w1.find(v => !sharedW.includes(v))!;
+            const u2W = w2.find(v => !sharedW.includes(v))!;
+
+            // Reconstruct Quad using ORIGINAL indices
+            const getOriginal = (tIdx: number, wVal: number) => {
+                 const base = tIdx * 3;
+                 if (weldedIndices[base] === wVal) return indices[base];
+                 if (weldedIndices[base+1] === wVal) return indices[base+1];
+                 return indices[base+2];
+            };
+            
+            // Winding Check
+            const idxU1 = w1.indexOf(u1W);
+            const wS1 = w1[(idxU1 + 1) % 3];
+            const wS2 = w1[(idxU1 + 2) % 3];
+            
+            // T2 must share S1 and S2. T2 should be U2 -> S2 -> S1 for manifold consistency
+            const idxU2 = w2.indexOf(u2W);
+            const wS2_check = w2[(idxU2 + 1) % 3];
+            const wS1_check = w2[(idxU2 + 2) % 3];
+            
+            if (wS1 !== wS1_check || wS2 !== wS2_check) continue; 
+
+            // Form Quad Indices: U1 -> S1 -> U2 -> S2
+            const qU1 = getOriginal(t1, u1W);
+            const qS1 = getOriginal(t1, wS1);
+            const qU2 = getOriginal(t2, u2W);
+            const qS2 = getOriginal(t1, wS2); 
+
+            const quad = [qU1, qS1, qU2, qS2];
+
+            // 6. Metrics & Scoring
+            const p = quad.map(getVec);
+            const edges = [
+                sub(p[1], p[0]), sub(p[2], p[1]),
+                sub(p[3], p[2]), sub(p[0], p[3])
+            ];
+            const lens = edges.map(len);
+            
+            // Rectangularity (Corner Angles)
+            let angleScore = 0;
+            let badAngle = false;
+            for(let k=0; k<4; k++) {
+                const orth = orthogonality(edges[k], edges[(k+1)%4]); // 1.0 is 90deg
+                if (orth < 0.2) badAngle = true; // Reject extremely skewed corners (< ~12 deg from 90)
+                angleScore += orth;
+            }
+            if (badAngle) continue;
+
+            // Aspect Ratio Check
+            const maxLen = Math.max(...lens);
+            const minLen = Math.min(...lens);
+            if (maxLen / minLen > opts.maxEdgeLengthRatio) continue;
+
+            // Valence Steering (Maya Style)
+            // We penalize removing edges from vertices that are already valence 4 or less.
+            // We encourage removing edges from high-valence poles (>4).
+            // sharedW[0] and sharedW[1] are the vertices losing an edge.
+            const v1Val = valence.get(sharedW[0]) || 0;
+            const v2Val = valence.get(sharedW[1]) || 0;
+            
+            let valencePenalty = 0;
+            if (v1Val <= 4) valencePenalty += 2.0; // Protect low valence
+            if (v2Val <= 4) valencePenalty += 2.0;
+            
+            // Score (Higher is better)
+            // - Rectangularity (0-4)
+            // - Planarity (0-1)
+            // - Valence (Penalty subtracts)
+            const score = (angleScore * 2.0) + (planarity * 5.0) - valencePenalty;
+
+            candidates.push({ t1, t2, quad, score });
+        }
+
+        // 7. Merge (Best Score First)
+        candidates.sort((a,b) => b.score - a.score);
+        
+        for (const c of candidates) {
+            if (used[c.t1] || used[c.t2]) continue;
+            
+            faces.push(c.quad);
+            const fIdx = faces.length - 1;
+            triToFace[c.t1] = fIdx;
+            triToFace[c.t2] = fIdx;
+            used[c.t1] = 1;
+            used[c.t2] = 1;
+        }
+
+        // 8. Remaining Triangles
+        for (let i = 0; i < triCount; i++) {
+            if (!used[i]) {
+                faces.push([indices[i*3], indices[i*3+1], indices[i*3+2]]);
+                triToFace[i] = faces.length - 1;
+            }
+        }
+
+        return { faces, triToFace };
     }
 
     private generateMissingNormals(v: number[], n: number[], idx: number[]) {
@@ -586,9 +886,8 @@ class AssetManagerService {
         const data = generator();
         const v2f = new Map<number, number[]>();
         data.faces?.forEach((f: number[], i: number) => f.forEach(v => { if(!v2f.has(v)) v2f.set(v, []); v2f.get(v)!.push(i); }));
-        
-        // Allocate Colors (White)
         const colors = new Float32Array(data.v.length).fill(1.0);
+        const aabb = this.computeAABB(new Float32Array(data.v));
 
         const topology: LogicalMesh = { 
             faces: data.faces, 
@@ -596,10 +895,7 @@ class AssetManagerService {
             vertexToFaces: v2f 
         };
         
-        // Build Topology
-        if (data.faces) {
-            topology.graph = MeshTopologyUtils.buildTopology(topology, data.v.length / 3);
-        }
+        if (data.faces) topology.graph = MeshTopologyUtils.buildTopology(topology, data.v.length / 3);
 
         return { 
             id: crypto.randomUUID(), name: `SM_${name}`, type: 'MESH', isProtected: true, path: '/Content/Meshes',
@@ -608,21 +904,19 @@ class AssetManagerService {
                 normals: new Float32Array(data.n), 
                 uvs: new Float32Array(data.u), 
                 colors: colors,
-                indices: new Uint16Array(data.idx) 
+                indices: new Uint16Array(data.idx),
+                aabb
             },
             topology
         };
     }
 
     private registerDefaultAssets() {
-        // Register Primitives using modular procedural generation
         this.registerAsset(this.createPrimitive('Cube', () => ProceduralGeneration.createCube()), MESH_TYPES['Cube']);
         this.registerAsset(this.createPrimitive('Sphere', () => ProceduralGeneration.createSphere(24)), MESH_TYPES['Sphere']);
         this.registerAsset(this.createPrimitive('Plane', () => ProceduralGeneration.createPlane()), MESH_TYPES['Plane']);
         this.registerAsset(this.createPrimitive('Cylinder', () => ProceduralGeneration.createCylinder(24)), MESH_TYPES['Cylinder']);
         this.registerAsset(this.createPrimitive('Cone', () => ProceduralGeneration.createCone(24)), MESH_TYPES['Cone']);
-        
-        // Register Root Folders
         this.registerAsset({ id: 'root_content', name: 'Content', type: 'FOLDER', path: '/' });
         this.registerAsset({ id: 'folder_mat', name: 'Materials', type: 'FOLDER', path: '/Content' });
         this.registerAsset({ id: 'folder_mesh', name: 'Meshes', type: 'FOLDER', path: '/Content' });

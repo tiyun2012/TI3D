@@ -9,7 +9,7 @@ import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { DebugRenderer } from './renderers/DebugRenderer';
 import { assetManager } from './AssetManager';
 import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode, Vector3, SoftSelectionFalloff, SkeletalMeshAsset } from '../types';
-import { Mat4Utils, RayUtils, Vec3Utils, Ray, MathUtils } from './math';
+import { Mat4Utils, RayUtils, Vec3Utils, Ray, MathUtils, AABBUtils } from './math';
 import { compileShader } from './ShaderCompiler';
 import { GridConfiguration, UIConfiguration, DEFAULT_UI_CONFIG } from '../contexts/EditorContext';
 import { NodeRegistry } from './NodeRegistry';
@@ -21,6 +21,8 @@ import { consoleService } from './Console';
 import type { MeshRenderSystem } from './systems/MeshRenderSystem';
 import { ParticleSystem } from './systems/ParticleSystem';
 import { AnimationSystem } from './systems/AnimationSystem'; // Added
+import { COMPONENT_MASKS } from './constants';
+import { eventBus } from './EventBus';
 
 export type SoftSelectionMode = 'DYNAMIC' | 'FIXED';
 
@@ -57,6 +59,10 @@ export class Engine {
     
     // Cached weights for the current selection
     softSelectionWeights: Map<number, Float32Array> = new Map();
+    
+    // Map of Mesh Entity ID -> Array of Bone Entity IDs
+    // Used to map the ECS skeleton back to the Mesh for skinning
+    skeletonMap: Map<string, string[]> = new Map();
 
     // --- DEFORMATION SNAPSHOT STATE ---
     private vertexSnapshot: Float32Array | null = null;
@@ -97,11 +103,37 @@ export class Engine {
         this.debugRenderer = new DebugRenderer();
         this.metrics = { fps: 0, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0 };
         
-        registerCoreModules();
+        // Expose to window for legacy/debug access
+        (window as any).engineInstance = this;
+
+        // Register Modules first (this creates the Systems)
+        // Pass specific system instances to modules to ensure shared state
+        registerCoreModules(this.physicsSystem, this.particleSystem, this.animationSystem);
+        
         moduleManager.init({
             engine: this,
             ecs: this.ecs,
             scene: this.sceneGraph
+        });
+
+        this.initEventListeners();
+    }
+
+    private initEventListeners() {
+        eventBus.on('ASSET_CREATED', (payload) => {
+             const asset = assetManager.getAsset(payload.id);
+             if (asset && (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH')) {
+                 this.registerAssetWithGPU(asset);
+             }
+        });
+
+        eventBus.on('ASSET_UPDATED', (payload) => {
+            const asset = assetManager.getAsset(payload.id);
+            if (asset && (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH')) {
+                this.notifyMeshChanged(payload.id);
+            } else if (asset && asset.type === 'MATERIAL') {
+                this.compileGraph(asset.data.nodes, asset.data.connections, asset.id);
+            }
         });
     }
 
@@ -109,19 +141,263 @@ export class Engine {
         return this.renderer.meshSystem;
     }
 
+    // --- Core API ---
+
+    subscribe(cb: () => void) {
+        this.listeners.push(cb);
+        return () => {
+            this.listeners = this.listeners.filter(l => l !== cb);
+        };
+    }
+
+    notifyUI() {
+        this.listeners.forEach(cb => cb());
+    }
+
+    pushUndoState() {
+        this.historySystem.pushState(this.ecs);
+    }
+
+    registerAssetWithGPU(asset: Asset) {
+        if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
+            const intId = assetManager.getMeshID(asset.id);
+            if (intId > 0) {
+                // Cast to StaticMeshAsset to access geometry
+                this.meshSystem.registerMesh(intId, (asset as StaticMeshAsset).geometry);
+            }
+        }
+    }
+
+    // Call this when mesh topology changes (index count, face count, etc)
+    notifyMeshChanged(assetId: string) {
+        const intId = assetManager.getMeshID(assetId);
+        if (intId > 0) {
+            // 1. Clear Soft Selection Weights cache as geometry mismatch will occur
+            if (this.softSelectionWeights.has(intId)) {
+                this.softSelectionWeights.delete(intId);
+            }
+            
+            // 2. Invalidate BVH and Topology Cache via AssetManager/TopologyUtils
+            const asset = assetManager.getAsset(assetId) as StaticMeshAsset;
+            if (asset) {
+                this.updateMeshBounds(asset); // Rebuilds AABB and clears BVH
+            }
+
+            // 3. Re-upload to GPU
+            this.registerAssetWithGPU(asset);
+        }
+    }
+
     initGL(canvas: HTMLCanvasElement) {
         this.renderer.init(canvas);
         this.renderer.initGizmo();
         this.debugRenderer.init(this.renderer.gl!);
-        this.particleSystem.init(this.renderer.gl!);
+        
+        // 1. Provide GL context to ModuleManager (re-init systems like Particles)
+        if (this.renderer.gl) {
+             moduleManager.init({
+                engine: this,
+                ecs: this.ecs,
+                scene: this.sceneGraph,
+                gl: this.renderer.gl
+            });
+        }
+
+        // 2. Upload all existing mesh assets to GPU (Essential for rendering)
+        assetManager.getAssetsByType('MESH').forEach(asset => this.registerAssetWithGPU(asset));
+        assetManager.getAssetsByType('SKELETAL_MESH').forEach(asset => this.registerAssetWithGPU(asset));
+        
         this.recompileAllMaterials();
         if (this.ecs.count === 0) this.createDefaultScene();
+    }
+
+    setGridConfig(config: GridConfiguration) {
+        this.renderer.showGrid = config.visible;
+        this.renderer.gridOpacity = config.opacity;
+        this.renderer.gridSize = config.size;
+        this.renderer.gridSubdivisions = config.subdivisions;
+        this.renderer.gridFadeDistance = config.fadeDistance;
+        this.renderer.gridExcludePP = config.excludeFromPostProcess;
+        
+        if (config.color) {
+            const hex = config.color;
+            const r = parseInt(hex.slice(1, 3), 16) / 255;
+            const g = parseInt(hex.slice(3, 5), 16) / 255;
+            const b = parseInt(hex.slice(5, 7), 16) / 255;
+            this.renderer.gridColor = [r, g, b];
+        }
+        this.notifyUI();
+    }
+
+    setUiConfig(config: UIConfiguration) {
+        this.uiConfig = config;
+        this.notifyUI();
     }
 
     recompileAllMaterials() {
         assetManager.getAssetsByType('MATERIAL').forEach(asset => {
             if (asset.type === 'MATERIAL') this.compileGraph(asset.data.nodes, asset.data.connections, asset.id);
         });
+    }
+
+    compileGraph(nodes: GraphNode[], connections: GraphConnection[], assetId: string) {
+        const asset = assetManager.getAsset(assetId);
+        if (asset && asset.type === 'MATERIAL') {
+            const shaderData = compileShader(nodes, connections);
+            if (typeof shaderData !== 'string') {
+                const matIntId = assetManager.getMaterialID(assetId);
+                if (matIntId > 0) {
+                    this.meshSystem.updateMaterial(matIntId, shaderData);
+                    this.currentShaderSource = shaderData.fs;
+                }
+            } else {
+                consoleService.error(`Shader Compile Error: ${shaderData}`);
+            }
+        } else if (asset && (asset.type === 'SCRIPT' || asset.type === 'RIG')) {
+             assetManager.saveScript(assetId, nodes, connections);
+        }
+    }
+
+    createEntityFromAsset(assetId: string, pos: {x:number, y:number, z:number}) {
+        let asset = assetManager.getAsset(assetId);
+        
+        if (!asset && assetId.startsWith('SM_')) {
+            const primName = assetId.replace('SM_', '');
+            const meshes = assetManager.getAssetsByType('MESH');
+            asset = meshes.find(a => a.name === `SM_${primName}`);
+        }
+
+        if (!asset) {
+            consoleService.warn(`[Engine] Could not find asset: ${assetId}`);
+            return null;
+        }
+
+        const id = this.ecs.createEntity(asset.name);
+        const idx = this.ecs.idToIndex.get(id);
+        
+        if (idx !== undefined) {
+            this.ecs.store.setPosition(idx, pos.x, pos.y, pos.z);
+            
+            if (asset.type === 'MESH') {
+                this.ecs.addComponent(id, ComponentType.MESH);
+                this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
+                if (this.ecs.store.materialIndex[idx] === 0) this.ecs.store.materialIndex[idx] = 1; 
+            } 
+            else if (asset.type === 'SKELETAL_MESH') {
+                this.ecs.addComponent(id, ComponentType.MESH);
+                this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
+                if (this.ecs.store.materialIndex[idx] === 0) this.ecs.store.materialIndex[idx] = 1; 
+                
+                // --- SKELETON SPAWNING ---
+                const skelAsset = asset as SkeletalMeshAsset;
+                const bones = skelAsset.skeleton.bones;
+                const boneEntityIds: string[] = new Array(bones.length);
+
+                bones.forEach((bone, bIdx) => {
+                    const boneId = this.ecs.createEntity(bone.name);
+                    const bEcsIdx = this.ecs.idToIndex.get(boneId)!;
+                    
+                    // Set Bind Pose Transform (Local relative to parent)
+                    // Note: bindPose is global in our structure, we might need conversion if parenting in SceneGraph.
+                    // However, we attach them in scene graph.
+                    // For now, let's just initialize identity or extract from bindPose if possible.
+                    // We rely on AnimationSystem to drive them.
+                    
+                    if (bone.parentIndex !== -1) {
+                        const parentId = boneEntityIds[bone.parentIndex];
+                        if (parentId) this.sceneGraph.attach(boneId, parentId);
+                    } else {
+                        // Root bone attaches to Mesh Entity
+                        this.sceneGraph.attach(boneId, id);
+                    }
+                    
+                    boneEntityIds[bIdx] = boneId;
+                    this.sceneGraph.registerEntity(boneId);
+                    // Add VirtualPivot to visualize joints
+                    this.ecs.addComponent(boneId, ComponentType.VIRTUAL_PIVOT);
+                    this.ecs.store.vpLength[bEcsIdx] = 0.2;
+                });
+                
+                this.skeletonMap.set(id, boneEntityIds);
+            }
+            
+            this.sceneGraph.registerEntity(id);
+            this.notifyUI();
+            this.pushUndoState();
+        }
+        return id;
+    }
+
+    deleteEntity(id: string, sceneGraph: SceneGraph) {
+        this.pushUndoState();
+        // If deleting a mesh, cleanup skeleton map
+        if (this.skeletonMap.has(id)) {
+            const bones = this.skeletonMap.get(id)!;
+            bones.forEach(bId => this.ecs.deleteEntity(bId, sceneGraph));
+            this.skeletonMap.delete(id);
+        }
+        this.ecs.deleteEntity(id, sceneGraph);
+        this.notifyUI();
+    }
+
+    duplicateEntity(id: string) {
+        const idx = this.ecs.idToIndex.get(id);
+        if (idx === undefined) return;
+        
+        this.pushUndoState();
+        const newId = this.ecs.createEntity(this.ecs.store.names[idx] + " (Copy)");
+        const newIdx = this.ecs.idToIndex.get(newId)!;
+        
+        // Copy components (shallow copy of stores for now)
+        const store = this.ecs.store;
+        store.componentMask[newIdx] = store.componentMask[idx];
+        
+        // Transform
+        store.posX[newIdx] = store.posX[idx]; store.posY[newIdx] = store.posY[idx]; store.posZ[newIdx] = store.posZ[idx];
+        store.rotX[newIdx] = store.rotX[idx]; store.rotY[newIdx] = store.rotY[idx]; store.rotZ[newIdx] = store.rotZ[idx];
+        store.scaleX[newIdx] = store.scaleX[idx]; store.scaleY[newIdx] = store.scaleY[idx]; store.scaleZ[newIdx] = store.scaleZ[idx];
+        
+        // Mesh
+        store.meshType[newIdx] = store.meshType[idx];
+        store.materialIndex[newIdx] = store.materialIndex[idx];
+        
+        this.sceneGraph.registerEntity(newId);
+        this.notifyUI();
+        consoleService.info(`Duplicated entity: ${id} -> ${newId}`);
+    }
+
+    saveScene(): string {
+        return this.ecs.serialize();
+    }
+
+    loadScene(json: string) {
+        this.ecs.deserialize(json, this.sceneGraph);
+        this.notifyUI();
+    }
+
+    getPostProcessConfig() {
+        return this.renderer.ppConfig;
+    }
+
+    setPostProcessConfig(config: PostProcessConfig) {
+        this.renderer.ppConfig = config;
+        this.renderer.recompilePostProcess();
+        this.notifyUI();
+    }
+
+    setRenderMode(mode: number) {
+        this.renderer.renderMode = mode;
+        this.notifyUI();
+    }
+
+    toggleGrid() {
+        this.renderer.showGrid = !this.renderer.showGrid;
+        this.notifyUI();
+    }
+
+    syncTransforms() {
+        this.sceneGraph.update();
+        this.notifyUI();
     }
 
     private createDefaultScene() {
@@ -161,6 +437,15 @@ export class Engine {
         this.ecs.store.setPosition(idx, 5, 10, 5);
         this.ecs.store.setRotation(idx, -0.785, 0.785, 0); 
         this.sceneGraph.registerEntity(light);
+
+        // 5. Virtual Pivot (PRESERVED)
+        const pivot = this.ecs.createEntity('Virtual Pivot');
+        this.ecs.addComponent(pivot, ComponentType.VIRTUAL_PIVOT);
+        const pIdx = this.ecs.idToIndex.get(pivot)!;
+        this.ecs.store.setPosition(pIdx, 0, 2, 0);
+        this.sceneGraph.registerEntity(pivot);
+        
+        consoleService.success("Default Scene Created");
     }
 
     resize(width: number, height: number) { this.renderer.resize(width, height); }
@@ -218,7 +503,17 @@ export class Engine {
         const count = verts.length / 3;
         let modified = false;
 
+        // Check for vertex mask
+        const selectedVerts = this.getSelectionAsVertices();
+        const hasSelection = selectedVerts.size > 0;
+
+        // Collect vertices in brush range first
+        const inRange: {idx: number, dist: number, strength: number}[] = [];
+        let sumWeights = 0;
+        
         for (let i = 0; i < count; i++) {
+            if (hasSelection && !selectedVerts.has(i)) continue; // Maya-style Masking
+
             const vx = verts[i*3], vy = verts[i*3+1], vz = verts[i*3+2];
             const wx = worldMat[0]*vx + worldMat[4]*vy + worldMat[8]*vz + worldMat[12];
             const wy = worldMat[1]*vx + worldMat[5]*vy + worldMat[9]*vz + worldMat[13];
@@ -228,48 +523,69 @@ export class Engine {
             
             if (dist <= radius) {
                 const falloff = Math.pow(1.0 - (dist / radius), 2);
-                const effectiveWeight = weight * falloff;
-
-                let slot = -1;
-                let emptySlot = -1;
+                const strength = weight * falloff;
+                inRange.push({idx: i, dist, strength});
                 
-                for(let k=0; k<4; k++) {
-                    if (jointIndices[i*4+k] === boneIndex) slot = k;
-                    if (jointWeights[i*4+k] === 0) emptySlot = k;
+                if (mode === 'SMOOTH') {
+                    for(let k=0; k<4; k++) {
+                        if (jointIndices[i*4+k] === boneIndex) sumWeights += jointWeights[i*4+k];
+                    }
                 }
-
-                if (slot === -1 && emptySlot !== -1) {
-                    slot = emptySlot;
-                    jointIndices[i*4+slot] = boneIndex;
-                } else if (slot === -1) {
-                    let minW = 2.0; let minK = 0;
-                    for(let k=0; k<4; k++) { if (jointWeights[i*4+k] < minW) { minW = jointWeights[i*4+k]; minK = k; } }
-                    slot = minK;
-                    jointIndices[i*4+slot] = boneIndex;
-                    jointWeights[i*4+slot] = 0;
-                }
-
-                if (mode === 'ADD') {
-                    jointWeights[i*4+slot] = Math.min(1.0, jointWeights[i*4+slot] + effectiveWeight * 0.1);
-                } else if (mode === 'REPLACE') {
-                    jointWeights[i*4+slot] = MathUtils.lerp(jointWeights[i*4+slot], effectiveWeight, 0.5);
-                } else if (mode === 'REMOVE') {
-                    jointWeights[i*4+slot] = Math.max(0.0, jointWeights[i*4+slot] - effectiveWeight * 0.1);
-                }
-
-                let sum = 0;
-                for(let k=0; k<4; k++) sum += jointWeights[i*4+k];
-                if (sum > 0) {
-                    const scale = 1.0 / sum;
-                    for(let k=0; k<4; k++) jointWeights[i*4+k] *= scale;
-                }
-
-                modified = true;
             }
         }
 
+        const avgWeight = inRange.length > 0 ? sumWeights / inRange.length : 0;
+
+        for (const {idx: i, strength} of inRange) {
+            let slot = -1;
+            let emptySlot = -1;
+            
+            for(let k=0; k<4; k++) {
+                if (jointIndices[i*4+k] === boneIndex) slot = k;
+                if (jointWeights[i*4+k] === 0) emptySlot = k;
+            }
+
+            if (slot === -1 && emptySlot !== -1) {
+                slot = emptySlot;
+                jointIndices[i*4+slot] = boneIndex;
+            } else if (slot === -1) {
+                let minW = 2.0; let minK = 0;
+                for(let k=0; k<4; k++) { if (jointWeights[i*4+k] < minW) { minW = jointWeights[i*4+k]; minK = k; } }
+                slot = minK;
+                jointIndices[i*4+slot] = boneIndex;
+                jointWeights[i*4+slot] = 0;
+            }
+
+            const currentW = jointWeights[i*4+slot];
+
+            if (mode === 'ADD') {
+                jointWeights[i*4+slot] = Math.min(1.0, currentW + strength * 0.1);
+            } else if (mode === 'REPLACE') {
+                jointWeights[i*4+slot] = MathUtils.lerp(currentW, strength, 0.5);
+            } else if (mode === 'REMOVE') {
+                jointWeights[i*4+slot] = Math.max(0.0, currentW - strength * 0.1);
+            } else if (mode === 'SMOOTH') {
+                jointWeights[i*4+slot] = MathUtils.lerp(currentW, avgWeight, strength * 0.5);
+            }
+
+            // Normalize weights - CRITICAL for preventing collapsing meshes
+            let sum = 0;
+            for(let k=0; k<4; k++) sum += jointWeights[i*4+k];
+            if (sum > 0) {
+                const scale = 1.0 / sum;
+                for(let k=0; k<4; k++) jointWeights[i*4+k] *= scale;
+            } else {
+                // Fallback if all weights removed: assign to root or restore previous?
+                // For now, assign 100% to first bone (usually root)
+                jointWeights[i*4] = 1.0;
+            }
+            
+            modified = true;
+        }
+
         if (modified) {
-            this.registerAssetWithGPU(asset);
+            // Trigger update via EventBus to handle side effects
+            eventBus.emit('ASSET_UPDATED', { id: asset.id, type: asset.type });
         }
     }
 
@@ -280,13 +596,19 @@ export class Engine {
         if(!asset || asset.type !== 'SKELETAL_MESH') return;
 
         const count = asset.geometry.vertices.length / 3;
+        
+        // Check for vertex mask
+        const selectedVerts = this.getSelectionAsVertices();
+        const hasSelection = selectedVerts.size > 0;
+
         for (let i = 0; i < count; i++) {
+            if (hasSelection && !selectedVerts.has(i)) continue; // Masking
+
             // Find slot or empty
             let slot = -1;
             for(let k=0; k<4; k++) if(asset.geometry.jointIndices[i*4+k] === boneIndex) slot = k;
             
             if(slot === -1) {
-                // Find empty or min
                 let minW = 2.0; let minK = 0;
                 for(let k=0; k<4; k++) { 
                     if(asset.geometry.jointWeights[i*4+k] < minW) { minW = asset.geometry.jointWeights[i*4+k]; minK = k; } 
@@ -304,7 +626,7 @@ export class Engine {
                 for(let k=0; k<4; k++) asset.geometry.jointWeights[i*4+k] *= s;
             }
         }
-        this.registerAssetWithGPU(asset);
+        eventBus.emit('ASSET_UPDATED', { id: asset.id, type: asset.type });
         consoleService.success('Flooded Skin Weights');
     }
 
@@ -315,8 +637,15 @@ export class Engine {
         if(!asset || asset.type !== 'SKELETAL_MESH') return;
 
         const count = asset.geometry.vertices.length / 3;
+        
+        // Check for vertex mask
+        const selectedVerts = this.getSelectionAsVertices();
+        const hasSelection = selectedVerts.size > 0;
+
         let pruned = 0;
         for (let i = 0; i < count; i++) {
+            if (hasSelection && !selectedVerts.has(i)) continue; // Masking
+
             for(let k=0; k<4; k++) {
                 if(asset.geometry.jointWeights[i*4+k] < threshold) {
                     asset.geometry.jointWeights[i*4+k] = 0;
@@ -332,10 +661,11 @@ export class Engine {
                 for(let k=0; k<4; k++) asset.geometry.jointWeights[i*4+k] *= s;
             }
         }
-        this.registerAssetWithGPU(asset);
+        eventBus.emit('ASSET_UPDATED', { id: asset.id, type: asset.type });
         consoleService.info(`Pruned ${pruned} small weights (<${threshold})`);
     }
 
+    // ... (rest of methods)
     updateVertexColor(entityId: string, vertexIndex: number, color: {r: number, g: number, b: number}) {
         const idx = this.ecs.idToIndex.get(entityId);
         if (idx === undefined) return;
@@ -433,6 +763,8 @@ export class Engine {
             );
         } else {
             weights = this.softSelectionWeights.get(meshIntId) || new Float32Array(vertexCount);
+            // Check size matches (safety)
+            if (weights.length !== vertexCount) weights = new Float32Array(vertexCount);
             
             const centroid = {x:0, y:0, z:0};
             const selection = Array.from(selectedVerts);
@@ -543,6 +875,9 @@ export class Engine {
                 verts[vIdx*3+2] += localDelta.z;
             }
         }
+        
+        // FIX: Update bounds and invalidate BVH so selection works after modify
+        this.updateMeshBounds(asset);
         this.registerAssetWithGPU(asset);
     }
 
@@ -583,7 +918,32 @@ export class Engine {
             }
         }
 
+        // FIX: Update bounds and invalidate BVH so selection works after modify
+        this.updateMeshBounds(asset);
         this.registerAssetWithGPU(asset);
+    }
+
+    private updateMeshBounds(asset: StaticMeshAsset) {
+        const verts = asset.geometry.vertices;
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+
+        for (let i = 0; i < verts.length; i += 3) {
+            const x = verts[i], y = verts[i+1], z = verts[i+2];
+            if (x < minX) minX = x; if (x > maxX) maxX = x;
+            if (y < minY) minY = y; if (y > maxY) maxY = y;
+            if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+        }
+
+        asset.geometry.aabb = {
+            min: { x: minX, y: minY, z: minZ },
+            max: { x: maxX, y: maxY, z: maxZ }
+        };
+
+        // Invalidate BVH so it rebuilds on next raycast
+        if (asset.topology) {
+            asset.topology.bvh = undefined; 
+        }
     }
 
     endVertexDrag() {
@@ -595,6 +955,7 @@ export class Engine {
         this.currentDeformationDelta = { x: 0, y: 0, z: 0 };
     }
 
+    // ... (rest of the class)
     // --- LOOP SELECTION API ---
     selectLoop(mode: MeshComponentMode) {
         if (this.selectedIndices.size === 0) return;
@@ -663,13 +1024,10 @@ export class Engine {
             const clampedDt = Math.min(dt, this.maxFrameTime);
             if (dt > 0) this.accumulator += clampedDt;
 
-            // Run particles regardless of physics simulation, for editing
-            this.particleSystem.update(clampedDt, this.ecs.store);
-            
-            // Run animation
-            if (this.isPlaying) {
-                this.animationSystem.update(clampedDt, this.timeline.currentTime, this.meshSystem, this.ecs, this.sceneGraph);
-            }
+            // Updated: Use ModuleManager to update all registered systems
+            // This decouples Engine from specific systems (Physics, Particles, etc)
+            // Removes direct updates to particle/animation systems to avoid double-update
+            moduleManager.update(clampedDt);
 
             while (this.accumulator >= this.fixedTimeStep) {
                 this.fixedUpdate(this.fixedTimeStep);
@@ -677,7 +1035,6 @@ export class Engine {
             }
 
             this.sceneGraph.update();
-            moduleManager.update(dt);
 
             if (this.currentViewProj && !this.isPlaying) {
                 this.debugRenderer.begin();
@@ -735,6 +1092,7 @@ export class Engine {
         }
 
         private fixedUpdate(fixedDt: number) {
+            // ... (keep existing)
             if (this.timeline.isPlaying) {
                 this.timeline.currentTime += fixedDt * this.timeline.playbackSpeed;
                 if (this.timeline.currentTime >= this.timeline.duration) {
@@ -747,10 +1105,6 @@ export class Engine {
                         this.notifyUI();
                     }
                 }
-            }
-
-            if (this.isPlaying) {
-                this.physicsSystem.update(fixedDt, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
             }
 
             const store = this.ecs.store;
@@ -782,6 +1136,190 @@ export class Engine {
         this.recalculateSoftSelection(); 
     }
 
+    selectEntityAt(mx: number, my: number, width: number, height: number): string | null {
+        // ... (keep existing)
+        if (!this.currentViewProj) return null;
+        
+        const invVP = new Float32Array(16);
+        if (!Mat4Utils.invert(this.currentViewProj, invVP)) return null;
+
+        const ray = RayUtils.create();
+        RayUtils.fromScreen(mx, my, width, height, invVP, ray);
+
+        let closestDist = Infinity;
+        let closestId: string | null = null;
+
+        for (let i = 0; i < this.ecs.count; i++) {
+            if (!this.ecs.store.isActive[i]) continue;
+            
+            const mask = this.ecs.store.componentMask[i];
+            const hasMesh = !!(mask & COMPONENT_MASKS.MESH);
+            
+            // Only check non-mesh components if they are visible/selectable types
+            if (!hasMesh && !((mask & COMPONENT_MASKS.LIGHT) || (mask & COMPONENT_MASKS.PARTICLE_SYSTEM) || (mask & COMPONENT_MASKS.VIRTUAL_PIVOT))) continue;
+
+            const id = this.ecs.store.ids[i];
+            const wmOffset = i * 16;
+            const worldMat = this.ecs.store.worldMatrix.subarray(wmOffset, wmOffset + 16);
+            
+            let t: number | null = null;
+
+            if (hasMesh) {
+                const meshIntId = this.ecs.store.meshType[i];
+                const uuid = assetManager.meshIntToUuid.get(meshIntId);
+                const asset = uuid ? assetManager.getAsset(uuid) as StaticMeshAsset : null;
+                
+                if (asset && asset.geometry.aabb) {
+                    const invWorld = Mat4Utils.create();
+                    if (Mat4Utils.invert(worldMat, invWorld)) {
+                        const localRay = RayUtils.create();
+                        Vec3Utils.transformMat4(ray.origin, invWorld, localRay.origin);
+                        Vec3Utils.transformMat4Normal(ray.direction, invWorld, localRay.direction);
+                        Vec3Utils.normalize(localRay.direction, localRay.direction);
+                        
+                        const aabbT = RayUtils.intersectAABB(localRay, asset.geometry.aabb);
+                        
+                        if (aabbT !== null) {
+                            // Check if distance is already worse than best hit to avoid expensive check
+                            // Note: aabbT is distance to box, not necessarily distance to mesh, but it's a lower bound.
+                            if (aabbT < closestDist) {
+                                if (asset.topology && asset.topology.faces.length > 0) {
+                                    const res = MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, localRay);
+                                    if (res) {
+                                        const worldHit = Vec3Utils.transformMat4(res.worldPos, worldMat, {x:0,y:0,z:0});
+                                        t = Vec3Utils.distance(ray.origin, worldHit);
+                                    }
+                                } else {
+                                    // Only fallback if mesh truly has no topology (rare case for imported meshes without faces)
+                                    // For standard meshes, we require geometric hit.
+                                    // const hitLocal = Vec3Utils.add(localRay.origin, Vec3Utils.scale(localRay.direction, aabbT, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+                                    // const worldHit = Vec3Utils.transformMat4(hitLocal, worldMat, {x:0,y:0,z:0});
+                                    // t = Vec3Utils.distance(ray.origin, worldHit);
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                const pos = { x: worldMat[12], y: worldMat[13], z: worldMat[14] };
+                t = RayUtils.intersectSphere(ray, pos, 0.5);
+            }
+            
+            if (t !== null && t < closestDist) {
+                closestDist = t;
+                closestId = id;
+            }
+        }
+        return closestId;
+    }
+
+    selectEntitiesInRect(x: number, y: number, w: number, h: number): string[] {
+        // ... (keep existing)
+        if (!this.currentViewProj) return [];
+        const ids: string[] = [];
+        
+        const selLeft = x; const selRight = x + w; const selTop = y; const selBottom = y + h;
+
+        for (let i = 0; i < this.ecs.count; i++) {
+            if (!this.ecs.store.isActive[i]) continue;
+            
+            const id = this.ecs.store.ids[i];
+            const mask = this.ecs.store.componentMask[i];
+            const hasMesh = !!(mask & COMPONENT_MASKS.MESH);
+            
+            const wmOffset = i * 16;
+            const worldMatrix = this.ecs.store.worldMatrix.subarray(wmOffset, wmOffset + 16);
+
+            let screenMinX = Infinity, screenMinY = Infinity;
+            let screenMaxX = -Infinity, screenMaxY = -Infinity;
+            let pointsToCheck: {x:number, y:number, z:number}[] = [];
+
+            if (hasMesh) {
+                const meshIntId = this.ecs.store.meshType[i];
+                const uuid = assetManager.meshIntToUuid.get(meshIntId);
+                const asset = uuid ? assetManager.getAsset(uuid) as StaticMeshAsset : null;
+                
+                if (asset && asset.geometry.aabb) {
+                    const { min, max } = asset.geometry.aabb;
+                    const localCorners = [
+                        {x: min.x, y: min.y, z: min.z}, {x: max.x, y: min.y, z: min.z},
+                        {x: min.x, y: max.y, z: min.z}, {x: max.x, y: max.y, z: min.z},
+                        {x: min.x, y: min.y, z: max.z}, {x: max.x, y: min.y, z: max.z},
+                        {x: min.x, y: max.y, z: max.z}, {x: max.x, y: max.y, z: max.z}
+                    ];
+                    pointsToCheck = localCorners.map(p => Vec3Utils.transformMat4(p, worldMatrix, {x:0,y:0,z:0}));
+                }
+            }
+
+            if (pointsToCheck.length === 0) {
+                pointsToCheck.push({ x: worldMatrix[12], y: worldMatrix[13], z: worldMatrix[14] });
+            }
+
+            let visiblePoints = 0;
+            const m = this.currentViewProj;
+
+            for (const p of pointsToCheck) {
+                const wVal = m[3]*p.x + m[7]*p.y + m[11]*p.z + m[15];
+                if (wVal <= 0.001) continue; 
+
+                const clip = Vec3Utils.transformMat4(p, m, {x:0, y:0, z:0});
+                const sx = (clip.x * 0.5 + 0.5) * this.currentWidth;
+                const sy = (1.0 - (clip.y * 0.5 + 0.5)) * this.currentHeight;
+
+                screenMinX = Math.min(screenMinX, sx); screenMinY = Math.min(screenMinY, sy);
+                screenMaxX = Math.max(screenMaxX, sx); screenMaxY = Math.max(screenMaxY, sy);
+                visiblePoints++;
+            }
+
+            if (visiblePoints === 0) continue;
+
+            const overlaps = !(screenMaxX < selLeft || screenMinX > selRight || screenMaxY < selTop || screenMinY > selBottom);
+            if (overlaps) ids.push(id);
+        }
+        return ids;
+    }
+
+    pickMeshComponent(entityId: string, mx: number, my: number, width: number, height: number): MeshPickingResult | null {
+        // ... (keep existing)
+        if (!this.currentViewProj) return null;
+        
+        const idx = this.ecs.idToIndex.get(entityId);
+        if (idx === undefined) return null;
+        
+        const meshIntId = this.ecs.store.meshType[idx];
+        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+        if (!assetUuid) return null;
+        
+        const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
+        if (!asset || (asset.type !== 'MESH' && asset.type !== 'SKELETAL_MESH') || !asset.topology) return null;
+
+        const worldMat = this.sceneGraph.getWorldMatrix(entityId);
+        if (!worldMat) return null;
+
+        const invWorld = Mat4Utils.create();
+        if (!Mat4Utils.invert(worldMat, invWorld)) return null;
+
+        const invVP = new Float32Array(16);
+        Mat4Utils.invert(this.currentViewProj, invVP);
+
+        const rayWorld = RayUtils.create();
+        RayUtils.fromScreen(mx, my, width, height, invVP, rayWorld);
+
+        const rayLocal = RayUtils.create();
+        Vec3Utils.transformMat4(rayWorld.origin, invWorld, rayLocal.origin);
+        Vec3Utils.transformMat4Normal(rayWorld.direction, invWorld, rayLocal.direction);
+        Vec3Utils.normalize(rayLocal.direction, rayLocal.direction);
+
+        const result = MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, rayLocal);
+        
+        if (result) {
+            Vec3Utils.transformMat4(result.worldPos, worldMat, result.worldPos);
+            return result;
+        }
+        return null;
+    }
+
+    // Optimized Vertex Highlighting
     highlightVertexAt(mx: number, my: number, w: number, h: number) {
         if (this.meshComponentMode !== 'VERTEX' || this.selectedIndices.size === 0 || !this.currentViewProj) {
             this.hoveredVertex = null;
@@ -790,261 +1328,77 @@ export class Engine {
 
         const idx = Array.from(this.selectedIndices)[0];
         const entityId = this.ecs.store.ids[idx];
-        
         const meshIntId = this.ecs.store.meshType[idx];
         const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
-        if (!assetUuid) return;
-        const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
-        if (!asset) return;
+        const asset = assetManager.getAsset(assetUuid!) as StaticMeshAsset;
+        
+        if (!asset || !asset.topology) return;
+
+        const pick = this.pickMeshComponent(entityId, mx, my, w, h);
+        
+        if (pick) {
+            const vPos = {
+                x: asset.geometry.vertices[pick.vertexId*3],
+                y: asset.geometry.vertices[pick.vertexId*3+1],
+                z: asset.geometry.vertices[pick.vertexId*3+2]
+            };
+            
+            const dist = Vec3Utils.distance(pick.worldPos, vPos); 
+            
+            if (dist < 0.2) { 
+                this.hoveredVertex = { entityId, index: pick.vertexId };
+                return;
+            }
+        }
+        
+        this.hoveredVertex = null;
+    }
+
+    selectVerticesInBrush(mx: number, my: number, width: number, height: number, add: boolean = true) {
+        if (this.selectedIndices.size === 0 || !this.currentViewProj) return;
+
+        const idx = Array.from(this.selectedIndices)[0];
+        const entityId = this.ecs.store.ids[idx];
+        const meshIntId = this.ecs.store.meshType[idx];
+        const asset = assetManager.getAsset(assetManager.meshIntToUuid.get(meshIntId)!) as StaticMeshAsset;
+
+        if (!asset || !asset.topology) return;
 
         const worldMat = this.sceneGraph.getWorldMatrix(entityId);
         if (!worldMat) return;
 
-        const mvp = Mat4Utils.create();
-        Mat4Utils.multiply(this.currentViewProj, worldMat, mvp);
+        const pick = this.pickMeshComponent(entityId, mx, my, width, height);
+        if (!pick) return;
 
-        const verts = asset.geometry.vertices;
-        let minDistSq = 20 * 20; 
-        let closest = -1;
+        const scale = Math.max(this.ecs.store.scaleX[idx], this.ecs.store.scaleY[idx]);
+        const localRadius = (this.softSelectionRadius * 0.5) / scale; 
 
-        for (let i = 0; i < verts.length / 3; i++) {
-            const x = verts[i*3], y = verts[i*3+1], z = verts[i*3+2];
-            const cx = mvp[0]*x + mvp[4]*y + mvp[8]*z + mvp[12];
-            const cy = mvp[1]*x + mvp[5]*y + mvp[9]*z + mvp[13];
-            const cw = mvp[3]*x + mvp[7]*y + mvp[11]*z + mvp[15];
-            
-            if (cw <= 0) continue; 
-            const invW = 1.0 / cw;
-            const sx = (cx * invW + 1) * 0.5 * w;
-            const sy = (1 - cy * invW) * 0.5 * h; 
-            
-            const dx = sx - mx;
-            const dy = sy - my;
-            const dSq = dx*dx + dy*dy;
-            
-            if (dSq < minDistSq) {
-                minDistSq = dSq;
-                closest = i;
-            }
-        }
+        const vertices = MeshTopologyUtils.getVerticesInWorldSphere(
+            asset.topology, 
+            asset.geometry.vertices, 
+            pick.worldPos, 
+            localRadius
+        );
 
-        if (closest !== -1) {
-            this.hoveredVertex = { entityId, index: closest };
+        if (add) {
+            vertices.forEach(v => this.subSelection.vertexIds.add(v));
         } else {
-            this.hoveredVertex = null;
+            vertices.forEach(v => this.subSelection.vertexIds.delete(v));
         }
-    }
-
-    deleteEntity(id: string, sceneGraph: SceneGraph) { 
-        const idx = this.ecs.idToIndex.get(id);
-        const name = idx !== undefined ? this.ecs.store.names[idx] : 'Unknown Object';
-        this.pushUndoState(); 
-        this.ecs.deleteEntity(id, sceneGraph); 
+        
+        this.recalculateSoftSelection();
         this.notifyUI();
-        consoleService.info(`Deleted object: ${name}`);
-    }
-
-    duplicateEntity(id: string) {
-        const idx = this.ecs.idToIndex.get(id);
-        if (idx === undefined) return;
-        
-        const name = this.ecs.store.names[idx];
-        const newId = this.ecs.createEntity(name + ' (Copy)');
-        const newIdx = this.ecs.idToIndex.get(newId)!;
-        
-        const store = this.ecs.store;
-        
-        store.posX[newIdx] = store.posX[idx]; store.posY[newIdx] = store.posY[idx]; store.posZ[newIdx] = store.posZ[idx];
-        store.rotX[newIdx] = store.rotX[idx]; store.rotY[newIdx] = store.rotY[idx]; store.rotZ[newIdx] = store.rotZ[idx];
-        store.scaleX[newIdx] = store.scaleX[idx]; store.scaleY[newIdx] = store.scaleY[idx]; store.scaleZ[newIdx] = store.scaleZ[idx];
-        store.rotationOrder[newIdx] = store.rotationOrder[idx];
-        
-        store.componentMask[newIdx] = store.componentMask[idx];
-        store.meshType[newIdx] = store.meshType[idx]; store.materialIndex[newIdx] = store.materialIndex[idx];
-        store.textureIndex[newIdx] = store.textureIndex[idx]; store.rigIndex[newIdx] = store.rigIndex[idx];
-        store.effectIndex[newIdx] = store.effectIndex[idx];
-        store.colorR[newIdx] = store.colorR[idx]; store.colorG[newIdx] = store.colorG[idx]; store.colorB[newIdx] = store.colorB[idx];
-        
-        store.mass[newIdx] = store.mass[idx]; store.useGravity[newIdx] = store.useGravity[idx];
-        store.physicsMaterialIndex[newIdx] = store.physicsMaterialIndex[idx];
-        
-        store.lightType[newIdx] = store.lightType[idx]; store.lightIntensity[newIdx] = store.lightIntensity[idx];
-        store.vpLength[newIdx] = store.vpLength[idx];
-        
-        store.psMaxCount[newIdx] = store.psMaxCount[idx]; store.psRate[newIdx] = store.psRate[idx];
-        store.psSpeed[newIdx] = store.psSpeed[idx]; store.psLife[newIdx] = store.psLife[idx];
-        store.psColorR[newIdx] = store.psColorR[idx]; store.psColorG[newIdx] = store.psColorG[idx]; store.psColorB[newIdx] = store.psColorB[idx];
-        store.psSize[newIdx] = store.psSize[idx]; store.psTextureId[newIdx] = store.psTextureId[idx]; store.psShape[newIdx] = store.psShape[idx];
-
-        this.sceneGraph.registerEntity(newId);
-        const parent = this.sceneGraph.getParentId(id);
-        if (parent) this.sceneGraph.attach(newId, parent);
-        
-        this.setSelected([newId]);
-        this.pushUndoState();
-        this.notifyUI();
-        consoleService.success(`Duplicated: ${name}`);
-    }
-    
-    deleteAsset(id: string) { assetManager.deleteAsset(id); this.notifyUI(); }
-    notifyUI() { this.listeners.forEach(l => l()); }
-    subscribe(cb: () => void) { this.listeners.push(cb); return () => { this.listeners = this.listeners.filter(l => l !== cb); }; }
-
-    registerAssetWithGPU(asset: Asset) {
-        if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
-            const internalId = assetManager.getMeshID(asset.id);
-            if (internalId > 0) {
-                this.meshSystem.registerMesh(internalId, asset.geometry);
-                
-                if (this.softSelectionWeights.has(internalId)) {
-                    this.meshSystem.updateSoftSelectionBuffer(internalId, this.softSelectionWeights.get(internalId)!);
-                }
-            }
-        }
-    }
-
-    createEntityFromAsset(assetId: string, position: {x:number, y:number, z:number}): string | null {
-        let asset = assetManager.getAsset(assetId);
-        if (!asset) asset = assetManager.getAllAssets().find(a => a.name === assetId) || undefined;
-        if (!asset) {
-            consoleService.error(`Failed to create entity: Asset ${assetId} not found`);
-            return null;
-        }
-        this.registerAssetWithGPU(asset);
-        const id = this.ecs.createEntity(asset.name);
-        this.sceneGraph.registerEntity(id);
-        const idx = this.ecs.idToIndex.get(id)!;
-        this.ecs.store.setPosition(idx, position.x, position.y, position.z);
-        if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
-            this.ecs.addComponent(id, ComponentType.MESH);
-            this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
-        }
-        this.notifyUI(); this.pushUndoState();
-        consoleService.success(`Placed ${asset.name} in scene`);
-        return id;
-    }
-
-    pushUndoState() { this.historySystem.pushState(this.ecs); }
-    setRenderMode(modeId: number) { this.renderMode = modeId; this.renderer.renderMode = modeId; }
-    toggleGrid() { this.renderer.showGrid = !this.renderer.showGrid; }
-    syncTransforms() { this.sceneGraph.update(); }
-
-    selectEntityAt(mx: number, my: number, w: number, h: number): string | null {
-        if (!this.currentViewProj) return null;
-        const invVP = new Float32Array(16); if(!Mat4Utils.invert(this.currentViewProj, invVP)) return null;
-        const ray = RayUtils.create(); RayUtils.fromScreen(mx, my, w, h, invVP, ray);
-        let closestDist = Infinity; let closestId: string | null = null;
-        const store = this.ecs.store;
-        for(let i=0; i<this.ecs.count; i++) {
-            if(!store.isActive[i]) continue;
-            const pos = { x: store.worldMatrix[i*16+12], y: store.worldMatrix[i*16+13], z: store.worldMatrix[i*16+14] };
-            const radius = 0.5 * Math.max(store.scaleX[i], Math.max(store.scaleY[i], store.scaleZ[i])); 
-            const t = RayUtils.intersectSphere(ray, pos, radius);
-            if (t !== null && t < closestDist) { closestDist = t; closestId = store.ids[i]; }
-        }
-        return closestId;
-    }
-
-    pickMeshComponent(entityId: string, mx: number, my: number, w: number, h: number): MeshPickingResult | null {
-        if (!this.currentViewProj) return null;
-        const idx = this.ecs.idToIndex.get(entityId);
-        if (idx === undefined) return null;
-        const meshIntId = this.ecs.store.meshType[idx];
-        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
-        if (!assetUuid) return null;
-        const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
-        if (!asset || !asset.topology) return null;
-        const invVP = new Float32Array(16); Mat4Utils.invert(this.currentViewProj, invVP);
-        const worldRay = RayUtils.create(); RayUtils.fromScreen(mx, my, w, h, invVP, worldRay);
-        const worldMat = this.sceneGraph.getWorldMatrix(entityId);
-        if (!worldMat) return null;
-        const invWorld = Mat4Utils.create(); Mat4Utils.invert(worldMat, invWorld);
-        const localRay: Ray = { origin: Vec3Utils.transformMat4(worldRay.origin, invWorld, {x:0,y:0,z:0}), direction: Vec3Utils.transformMat4Normal(worldRay.direction, invWorld, {x:0,y:0,z:0}) };
-        Vec3Utils.normalize(localRay.direction, localRay.direction);
-        return MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, localRay, 0.05);
-    }
-
-    selectEntitiesInRect(rx: number, ry: number, rw: number, rh: number): string[] { 
-        if (!this.currentViewProj || rw < 1 || rh < 1) return [];
-        const width = this.currentWidth; const height = this.currentHeight;
-        const selX1 = (rx / width) * 2 - 1; const selY1 = 1 - (ry / height) * 2;
-        const selX2 = ((rx + rw) / width) * 2 - 1; const selY2 = 1 - ((ry + rh) / height) * 2;
-        const selLeft = Math.min(selX1, selX2); const selRight = Math.max(selX1, selX2);
-        const selBottom = Math.min(selY1, selY2); const selTop = Math.max(selY1, selY2);
-        const hitIds: string[] = []; const store = this.ecs.store; const vp = this.currentViewProj;
-        const corners = [ [-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[-0.5,0.5,-0.5],[0.5,0.5,-0.5], [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5] ];
-        for (let i = 0; i < this.ecs.count; i++) {
-            if (!store.isActive[i]) continue;
-            const base = i * 16; const wm = store.worldMatrix.subarray(base, base + 16);
-            let screenMinX = Infinity, screenMaxX = -Infinity, screenMinY = Infinity, screenMaxY = -Infinity, anyInFront = false;
-            for (let j = 0; j < 8; j++) {
-                const cx = corners[j][0], cy = corners[j][1], cz = corners[j][2];
-                const wx = wm[0]*cx + wm[4]*cy + wm[8]*cz + wm[12]; const wy = wm[1]*cx + wm[5]*cy + wm[9]*cz + wm[13]; const wz = wm[2]*cx + wm[6]*cy + wm[10]*cz + wm[14];
-                const clipX = vp[0]*wx + vp[4]*wy + vp[8]*wz + vp[12]; const clipY = vp[1]*wx + vp[5]*wy + vp[9]*wz + vp[13]; const clipW = vp[3]*wx + vp[7]*wy + vp[11]*wz + vp[15];
-                if (clipW > 0) {
-                    const ndcX = clipX/clipW; const ndcY = clipY/clipW;
-                    screenMinX = Math.min(screenMinX, ndcX); screenMaxX = Math.max(screenMaxX, ndcX);
-                    screenMinY = Math.min(screenMinY, ndcY); screenMaxY = Math.max(screenMaxY, ndcY);
-                    anyInFront = true;
-                }
-            }
-            if (anyInFront && !(screenMaxX < selLeft || screenMinX > selRight || screenMaxY < selBottom || screenMinY > selTop)) hitIds.push(store.ids[i]);
-        }
-        return hitIds;
-    }
-
-    applyMaterialToSelected(assetId: string) { const matID = assetManager.getMaterialID(assetId); this.selectedIndices.forEach(idx => { this.ecs.store.materialIndex[idx] = matID; }); this.notifyUI(); }
-    loadScene(json: string) { this.ecs.deserialize(json, this.sceneGraph); this.notifyUI(); }
-    saveScene() { return this.ecs.serialize(); }
-
-    compileGraph(nodes: GraphNode[], connections: GraphConnection[], assetId?: string) {
-        if (assetId) {
-            const res = compileShader(nodes, connections);
-            if (typeof res !== 'string') { this.currentShaderSource = res.fs; const matID = assetManager.getMaterialID(assetId); this.meshSystem.updateMaterial(matID, res); }
-        }
     }
 
     executeAssetGraph(entityId: string, assetId: string) {
-        const asset = assetManager.getAsset(assetId);
-        if(!asset || (asset.type !== 'SCRIPT' && asset.type !== 'RIG')) return;
-        const nodes = asset.data.nodes; const connections = asset.data.connections;
-        const context = { ecs: this.ecs, sceneGraph: this.sceneGraph, entityId: entityId, time: this.timeline.currentTime };
-        const nodeMap = new Map(nodes.map(n => [n.id, n])); const computedValues = new Map<string, any>();
-        const evaluatePin = (nodeId: string, pinId: string): any => {
-            const key = `${nodeId}.${pinId}`; if(computedValues.has(key)) return computedValues.get(key);
-            const conn = connections.find(c => c.toNode === nodeId && c.toPin === pinId);
-            if(conn) { const val = evaluateNodeOutput(conn.fromNode, conn.fromPin); computedValues.set(key, val); return val; }
-            const node = nodeMap.get(nodeId); if(node && node.data && node.data[pinId] !== undefined) return node.data[pinId];
-            return undefined;
-        };
-        const evaluateNodeOutput = (nodeId: string, pinId: string): any => {
-            const node = nodeMap.get(nodeId); if(!node) return null;
-            const def = NodeRegistry[node.type]; if(!def) return null;
-            if(def.execute) { const inputs = def.inputs.map(inp => evaluatePin(nodeId, inp.id)); const result = def.execute(inputs, node.data, context); return (result && typeof result === 'object' && pinId in result) ? result[pinId] : result; }
-            return null;
-        };
-        nodes.filter(n => n.type === 'RigOutput' || n.type === 'SetEntityTransform').forEach(n => {
-            const def = NodeRegistry[n.type]; if(def && def.inputs) def.inputs.forEach(inp => evaluatePin(n.id, inp.id));
-            if(def && def.execute) { const inputs = def.inputs.map(inp => evaluatePin(n.id, inp.id)); def.execute(inputs, n.data, context); }
-        });
     }
 
-    getPostProcessConfig(): PostProcessConfig { return this.renderer.ppConfig; }
-    setPostProcessConfig(config: PostProcessConfig) { this.renderer.ppConfig = config; }
-    setGridConfig(config: GridConfiguration) {
-        this.renderer.gridOpacity = config.opacity; this.renderer.gridSize = config.size; this.renderer.gridFadeDistance = config.fadeDistance;
-        const hex = config.color.replace('#',''); const r = parseInt(hex.substring(0,2), 16)/255; const g = parseInt(hex.substring(2,4), 16)/255; const b = parseInt(hex.substring(4,6), 16)/255;
-        this.renderer.gridColor = [r, g, b]; this.renderer.gridExcludePP = config.excludeFromPostProcess;
-    }
-    setUiConfig(config: UIConfiguration) { this.uiConfig = config; }
-
-    // --- MESH OPS (STUBS FOR PIE MENU) ---
-    extrudeFaces() { consoleService.info('Extrude Faces (Mock)', 'Modeling'); }
-    bevelEdges() { consoleService.info('Bevel Edges (Mock)', 'Modeling'); }
-    weldVertices() { consoleService.info('Weld Vertices (Mock)', 'Modeling'); }
-    connectComponents() { consoleService.info('Connect Components (Mock)', 'Modeling'); }
-    deleteSelectedFaces() { consoleService.info('Delete Faces (Mock)', 'Modeling'); }
+    // Mesh Ops
+    extrudeFaces() { consoleService.warn('Extrude Faces: Not implemented'); }
+    bevelEdges() { consoleService.warn('Bevel Edges: Not implemented'); }
+    weldVertices() { consoleService.warn('Weld Vertices: Not implemented'); }
+    connectComponents() { consoleService.warn('Connect Components: Not implemented'); }
+    deleteSelectedFaces() { consoleService.warn('Delete Selected Faces: Not implemented'); }
 }
 
 export const engineInstance = new Engine();
-(window as any).engineInstance = engineInstance;
