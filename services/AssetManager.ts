@@ -513,7 +513,7 @@ class AssetManagerService {
             const loader = new FBXLoader();
             const group = loader.parse(content, '');
             
-            let targetMesh: THREE.SkinnedMesh | null = null;
+            let targetMesh: any = null;
             group.traverse((obj: any) => { if (obj.isSkinnedMesh && !targetMesh) targetMesh = obj; });
             if (!targetMesh) group.traverse((obj: any) => { if (obj.isMesh && !targetMesh) targetMesh = obj; });
             if (!targetMesh) throw new Error("No mesh found in FBX");
