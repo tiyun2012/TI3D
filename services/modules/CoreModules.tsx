@@ -1,4 +1,3 @@
-
 import React, { useContext } from 'react';
 import { EngineModule, ComponentType, InspectorProps, TransformSpace, StaticMeshAsset, SkeletalMeshAsset, IGameSystem } from '../../types';
 import { EditorContext } from '../../contexts/EditorContext';
@@ -138,7 +137,7 @@ export const MeshModule: EngineModule = {
     InspectorComponent: MeshInspector,
     onRender: (gl, viewProj, ctx) => {
         const engine = ctx.engine;
-        const selectedIndices = engine.selectionSystem.selectedIndices; 
+        const selectedIndices = engine.selectionSystem.selectedIndices; // Updated
         
         if (selectedIndices.size === 0 || engine.isPlaying) return;
         
@@ -184,7 +183,7 @@ export const MeshModule: EngineModule = {
                         
                         if (!isObjectMode && !isVertexMode) {
                             const edgeKey = [vA, vB].sort((a,b)=>a-b).join('-');
-                            if (engine.selectionSystem.subSelection.edgeIds.has(edgeKey)) color = colSel;
+                            if (engine.selectionSystem.subSelection.edgeIds.has(edgeKey)) color = colSel; // Updated
                         }
                         engine.debugRenderer.drawLine(pA, pB, color);
                     }
@@ -203,8 +202,8 @@ export const MeshModule: EngineModule = {
                     const wy = m1*x + m5*y + m9*z + m13;
                     const wz = m2*x + m6*y + m10*z + m14;
 
-                    const isSelected = engine.selectionSystem.subSelection.vertexIds.has(i);
-                    const isHovered = engine.selectionSystem.hoveredVertex?.entityId === entityId && engine.selectionSystem.hoveredVertex?.index === i;
+                    const isSelected = engine.selectionSystem.subSelection.vertexIds.has(i); // Updated
+                    const isHovered = engine.selectionSystem.hoveredVertex?.entityId === entityId && engine.selectionSystem.hoveredVertex?.index === i; // Updated
                     
                     let size = baseSize;
                     let border = 0.0;
@@ -368,14 +367,12 @@ const createAnimationSystemAdapter = (sys: AnimationSystem): IGameSystem => ({
     update: (dt, ctx) => {
         sys.update(
             dt, 
-            ctx.engine.timeline.currentTime,
-            ctx.engine.timeline.isPlaying, // isPlaying
-            ctx.engine.skeletonMap,        // skeletonMap
+            ctx.engine.timeline.currentTime, 
             ctx.engine.meshSystem, 
             ctx.ecs, 
             ctx.scene,
             ctx.engine.debugRenderer, 
-            ctx.engine.selectionSystem.selectedIndices,
+            ctx.engine.selectionSystem.selectedIndices, // Updated
             ctx.engine.meshComponentMode
         );
     }

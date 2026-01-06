@@ -1,4 +1,3 @@
-
 import React, { useContext, useState, useEffect } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
 import { Icon } from './Icon';
@@ -82,7 +81,7 @@ export const SkinningEditor: React.FC = () => {
                 const mx = e.clientX - rect.left;
                 const my = e.clientY - rect.top;
                 
-                const result = engineInstance.selectionSystem.pickMeshComponent(entityId, mx, my, rect.width, rect.height);
+                const result = engineInstance.selectionSystem.pickMeshComponent(entityId, mx, my, rect.width, rect.height); // Updated
                 
                 if (result) {
                     setIsPainting(true);
@@ -107,7 +106,7 @@ export const SkinningEditor: React.FC = () => {
 
     if (!asset) {
         return (
-            <div className="h-full flex flex-col items-center justify-center text-text-secondary select-none bg-[#1a1a1a]">
+            <div className="h-full flex flex-col items-center justify-center text-text-secondary select-none">
                 <Icon name="PersonStanding" size={48} className="opacity-30 mb-2" strokeWidth={1} />
                 <span className="text-xs">Select a Skeletal Mesh</span>
                 <span className="text-[10px] opacity-60">to edit skin weights</span>
@@ -129,17 +128,16 @@ export const SkinningEditor: React.FC = () => {
             
             <div className="p-3 border-b border-white/5 space-y-3 bg-black/20">
                 <div className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Paint Operation</div>
-                <div className="grid grid-cols-4 gap-1">
+                <div className="grid grid-cols-2 gap-2">
                     {['ADD', 'REPLACE', 'SMOOTH', 'REMOVE'].map(m => (
                         <button 
                             key={m}
                             onClick={() => setMode(m as any)} 
-                            className={`py-1.5 rounded border text-center transition-colors text-[9px] uppercase font-bold
+                            className={`py-1.5 rounded border text-center transition-colors text-[10px] uppercase font-bold
                                 ${mode === m ? 'bg-accent border-accent text-white' : 'border-white/10 text-text-secondary hover:text-white bg-white/5'}
                             `}
-                            title={m}
                         >
-                            {m.slice(0, 3)}
+                            {m}
                         </button>
                     ))}
                 </div>
@@ -160,7 +158,7 @@ export const SkinningEditor: React.FC = () => {
 
                 <div className="space-y-2 pt-1">
                     <div className="flex items-center justify-between">
-                        <span className="text-text-secondary">Brush Radius</span>
+                        <span className="text-text-secondary">Radius</span>
                         <span className="font-mono bg-black/40 px-1.5 rounded text-white">{softSelectionRadius.toFixed(2)}</span>
                     </div>
                     <input 
@@ -183,7 +181,7 @@ export const SkinningEditor: React.FC = () => {
             </div>
 
             <div className="flex-1 flex flex-col min-h-0">
-                <div className="px-3 py-2 bg-black/10 border-b border-white/5 flex items-center gap-2 shrink-0">
+                <div className="px-3 py-2 bg-black/10 border-b border-white/5 flex items-center gap-2">
                     <Icon name="Search" size={12} className="text-text-secondary" />
                     <input 
                         type="text" 
