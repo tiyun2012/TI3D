@@ -1,4 +1,5 @@
-import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset, LogicalMesh, FolderAsset } from '../types';
+
+import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset, LogicalMesh, FolderAsset, BoneData } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 import { MESH_TYPES } from './constants';
 import { engineInstance } from './engine';
@@ -94,6 +95,36 @@ class AssetManagerService {
             min: { x: minX, y: minY, z: minZ },
             max: { x: maxX, y: maxY, z: maxZ }
         };
+    }
+
+    // Helper to identify coincident vertices
+    private computeSiblings(vertices: Float32Array | number[]): Map<number, number[]> {
+        const siblings = new Map<number, number[]>();
+        const posMap = new Map<string, number[]>();
+        
+        const v = vertices instanceof Float32Array ? vertices : new Float32Array(vertices);
+        const count = v.length / 3;
+
+        for(let i=0; i<count; i++) {
+            // Quantize to merge close vertices
+            const x = Math.round(v[i*3] * 10000);
+            const y = Math.round(v[i*3+1] * 10000);
+            const z = Math.round(v[i*3+2] * 10000);
+            const key = `${x},${y},${z}`;
+            
+            if(!posMap.has(key)) posMap.set(key, []);
+            posMap.get(key)!.push(i);
+        }
+
+        posMap.forEach(group => {
+            if (group.length > 1) {
+                group.forEach(idx => {
+                    siblings.set(idx, group);
+                });
+            }
+        });
+        
+        return siblings;
     }
 
     private createDefaultPhysicsMaterials() {
@@ -305,6 +336,54 @@ class AssetManagerService {
         return asset;
     }
 
+    createSkeleton(name: string, path: string = '/Content/Skeletons'): SkeletalMeshAsset {
+        const id = crypto.randomUUID();
+
+        const identityMatrix = new Float32Array([
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            0, 0, 0, 1
+        ]);
+
+        const rootBone: BoneData = {
+            name: 'Root',
+            parentIndex: -1,
+            bindPose: new Float32Array(identityMatrix),
+            inverseBindPose: new Float32Array(identityMatrix),
+            visual: {
+                shape: 'Sphere',
+                size: 0.2,
+                color: { x: 1, y: 1, z: 1 }
+            }
+        };
+
+        const newAsset: SkeletalMeshAsset = {
+            id,
+            name,
+            type: 'SKELETAL_MESH',
+            path,
+            isProtected: false,
+            skeleton: {
+                bones: [rootBone]
+            },
+            geometry: {
+                vertices: new Float32Array(0),
+                normals: new Float32Array(0),
+                uvs: new Float32Array(0),
+                colors: new Float32Array(0),
+                indices: new Uint16Array(0),
+                jointIndices: new Float32Array(0),
+                jointWeights: new Float32Array(0)
+            },
+            animations: []
+        };
+
+        this.registerAsset(newAsset);
+        eventBus.emit('ASSET_CREATED', { id: newAsset.id, type: 'SKELETAL_MESH' });
+        return newAsset;
+    }
+
     async importFile(fileName: string, content: string | ArrayBuffer, type: 'MESH' | 'SKELETAL_MESH', importScale: number = 1.0, detectQuads: boolean = true): Promise<Asset> {
         const id = crypto.randomUUID();
         const name = fileName.split('.')[0] || 'Imported_Mesh';
@@ -372,11 +451,22 @@ class AssetManagerService {
         }
 
         const v2f = new Map<number, number[]>();
+        const siblings = this.computeSiblings(geometryData.v);
+
         if (geometryData.faces) {
             geometryData.faces.forEach((f: number[], i: number) => {
                 f.forEach(vIdx => {
+                    // Populate v2f for this vertex
                     if(!v2f.has(vIdx)) v2f.set(vIdx, []);
-                    v2f.get(vIdx)!.push(i);
+                    if(!v2f.get(vIdx)!.includes(i)) v2f.get(vIdx)!.push(i);
+
+                    // Propagate to siblings (Spatial Welding for connectivity)
+                    if (siblings.has(vIdx)) {
+                        siblings.get(vIdx)!.forEach(sib => {
+                            if(!v2f.has(sib)) v2f.set(sib, []);
+                            if(!v2f.get(sib)!.includes(i)) v2f.get(sib)!.push(i);
+                        });
+                    }
                 });
             });
         }
@@ -384,7 +474,8 @@ class AssetManagerService {
         const topology: LogicalMesh = {
             faces: geometryData.faces || [],
             triangleToFaceIndex: new Int32Array(geometryData.triToFace || []),
-            vertexToFaces: v2f
+            vertexToFaces: v2f,
+            siblings // Store siblings map for edge walking
         };
         
         if (geometryData.v.length > 0) {
@@ -927,14 +1018,33 @@ private reconstructQuads(
     private createPrimitive(name: string, generator: () => any): StaticMeshAsset {
         const data = generator();
         const v2f = new Map<number, number[]>();
-        data.faces?.forEach((f: number[], i: number) => f.forEach(v => { if(!v2f.has(v)) v2f.set(v, []); v2f.get(v)!.push(i); }));
+        
+        // Compute siblings for hard-edge traversal support
+        const siblings = this.computeSiblings(data.v);
+
+        data.faces?.forEach((f: number[], i: number) => {
+            f.forEach(vIdx => {
+                if(!v2f.has(vIdx)) v2f.set(vIdx, []);
+                if(!v2f.get(vIdx)!.includes(i)) v2f.get(vIdx)!.push(i);
+                
+                // Propagate to siblings
+                if (siblings.has(vIdx)) {
+                    siblings.get(vIdx)!.forEach(sib => {
+                        if(!v2f.has(sib)) v2f.set(sib, []);
+                        if(!v2f.get(sib)!.includes(i)) v2f.get(sib)!.push(i);
+                    });
+                }
+            });
+        });
+        
         const colors = new Float32Array(data.v.length).fill(1.0);
         const aabb = this.computeAABB(new Float32Array(data.v));
 
         const topology: LogicalMesh = { 
             faces: data.faces, 
             triangleToFaceIndex: new Int32Array(data.triToFace), 
-            vertexToFaces: v2f 
+            vertexToFaces: v2f,
+            siblings // Store siblings map
         };
         
         if (data.faces) topology.graph = MeshTopologyUtils.buildTopology(topology, data.v.length / 3);

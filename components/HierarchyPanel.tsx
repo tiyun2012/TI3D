@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Entity, ComponentType } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
@@ -22,15 +21,15 @@ const getEntityIcon = (entity: Entity) => {
 
 const HierarchyItem: React.FC<{
   entityId: string;
-  entities: Entity[];
+  entityMap: Map<string, Entity>;
   sceneGraph: SceneGraph;
   selectedIds: string[];
   onSelect: (ids: string[]) => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
   depth: number;
-}> = ({ entityId, entities, sceneGraph, selectedIds, onSelect, onContextMenu, depth }) => {
+}> = ({ entityId, entityMap, sceneGraph, selectedIds, onSelect, onContextMenu, depth }) => {
   const [expanded, setExpanded] = useState(true);
-  const entity = entities.find(e => e.id === entityId);
+  const entity = entityMap.get(entityId);
   if (!entity) return null;
 
   const childrenIds = sceneGraph.getChildren(entityId);
@@ -48,11 +47,34 @@ const HierarchyItem: React.FC<{
       }
   };
 
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
+      e.dataTransfer.setData('text/plain', entity.id);
+      e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const childId = e.dataTransfer.getData('text/plain');
+      if (!childId) return;
+      if (childId === entity.id) return;
+      let current = sceneGraph.getParentId(entity.id);
+      while (current) {
+          if (current === childId) return;
+          current = sceneGraph.getParentId(current);
+      }
+      sceneGraph.attach(childId, entity.id);
+      engineInstance.notifyUI();
+  };
+
   return (
     <div>
       <div 
+        draggable
         onClick={handleClick}
         onContextMenu={(e) => onContextMenu(e, entity.id)}
+        onDragStart={handleDragStart}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={handleDrop}
         className={`group flex items-center gap-1.5 py-1 pr-2 cursor-pointer text-xs select-none transition-colors border-l-2
             ${isSelected 
                 ? 'bg-accent/20 border-accent text-white' 
@@ -78,10 +100,10 @@ const HierarchyItem: React.FC<{
       {hasChildren && expanded && (
         <div>
           {childrenIds.map(childId => (
-            <HierarchyItem 
+            <HierarchyItemMemo
               key={childId}
               entityId={childId}
-              entities={entities}
+              entityMap={entityMap}
               sceneGraph={sceneGraph}
               selectedIds={selectedIds}
               onSelect={onSelect}
@@ -95,8 +117,11 @@ const HierarchyItem: React.FC<{
   );
 };
 
+const HierarchyItemMemo = React.memo(HierarchyItem);
+
 export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneGraph, selectedIds, onSelect }) => {
   const rootIds = sceneGraph.getRootIds();
+  const entityMap = useMemo(() => new Map(entities.map(entity => [entity.id, entity])), [entities]);
   const [searchTerm, setSearchTerm] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, id: string, visible: boolean } | null>(null);
 
@@ -151,6 +176,14 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
         <div 
             className="flex items-center gap-2 text-xs text-text-primary px-3 py-1 font-semibold opacity-70 cursor-default"
             onClick={() => onSelect([])}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+                e.preventDefault();
+                const childId = e.dataTransfer.getData('text/plain');
+                if (!childId) return;
+                sceneGraph.attach(childId, null);
+                engineInstance.notifyUI();
+            }}
         >
             <Icon name="Cuboid" size={12} />
             <span>MainScene</span>
@@ -158,10 +191,10 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
         
         <div className="mt-1">
             {rootIds.map(id => (
-                <HierarchyItem 
+                <HierarchyItemMemo
                   key={id}
                   entityId={id}
-                  entities={entities}
+                  entityMap={entityMap}
                   sceneGraph={sceneGraph}
                   selectedIds={selectedIds}
                   onSelect={onSelect}
