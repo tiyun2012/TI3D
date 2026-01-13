@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
 import { engineInstance, SoftSelectionMode } from '@/engine/engine';
-import { skeletonTool } from '@/engine/tools/SkeletonTool';
+import { registerCoreModules } from '@/engine/modules/CoreModules';
 import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode, SoftSelectionFalloff } from '@/types';
 import { EditorContext, EditorContextType, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG, SnapSettings, DEFAULT_SNAP_CONFIG, DEFAULT_SKELETON_VIZ, SkeletonVizSettings } from '@/editor/state/EditorContext';
 import { assetManager } from '@/engine/AssetManager';
@@ -22,6 +22,14 @@ import { UVEditor } from '@/editor/components/UVEditor';
 import { Timeline } from '@/editor/components/Timeline';
 import { SkinningEditor } from '@/editor/components/SkinningEditor';
 import { ToolOptionsPanel } from '@/editor/components/ToolOptionsPanel'; 
+import { WorkspaceShell } from '@/editor/components/WorkspaceShell';
+
+// --- Core module registration (editor-only; keeps engine core decoupled from React) ---
+let __coreModulesRegistered = false;
+if (!__coreModulesRegistered) {
+  registerCoreModules(engineInstance.physicsSystem, engineInstance.particleSystem, engineInstance.animationSystem);
+  __coreModulesRegistered = true;
+}
 
 // --- Widget Wrappers ---
 
@@ -312,11 +320,13 @@ const EditorInterface: React.FC = () => {
             {/* Unified Top Toolbar (Menus + Tools + Transport) */}
             <Toolbar onSave={handleSave} onLoad={handleLoad} />
 
-            <div className="absolute inset-0 top-[40px] bottom-[24px] z-0">
-                <SceneWrapper />
+            <div className="flex-1 min-h-0 relative z-0">
+                <WorkspaceShell>
+                    <SceneWrapper />
+                </WorkspaceShell>
             </div>
 
-            <div className="absolute bottom-0 w-full h-6 bg-panel-header/90 backdrop-blur flex items-center px-4 justify-between text-[10px] text-text-secondary shrink-0 select-none z-50 border-t border-white/5">
+            <div className="w-full h-6 bg-panel-header/90 backdrop-blur flex items-center px-4 justify-between text-[10px] text-text-secondary shrink-0 select-none z-50 border-t border-white/5">
                 <StatusBarInfo />
                 <div className="flex items-center gap-4 font-mono opacity-60">
                     <span>{engineInstance.metrics.entityCount} Objects</span>
@@ -363,7 +373,7 @@ const App: React.FC = () => {
 
     // Sync Skeleton visualization settings to the engine debug tool
     useEffect(() => {
-        skeletonTool.setOptions(skeletonViz);
+        engineInstance.skeletonTool.setOptions(skeletonViz);
     }, [skeletonViz]);
 
     useEffect(() => {

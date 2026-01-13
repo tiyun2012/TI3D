@@ -1,5 +1,6 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
+import { useViewportSize } from '@/editor/hooks/useViewportSize';
 import { engineInstance } from '@/engine/engine';
 import { Mat4Utils, Vec3Utils } from '@/engine/math';
 import { SHADER_VARYINGS } from '@/engine/constants';
@@ -55,6 +56,9 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({
     autoRotate = true
 }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const viewportSize = useViewportSize(containerRef, { dprCap: 2 });
+    const glRef = useRef<WebGL2RenderingContext | null>(null);
     const requestRef = useRef<number>(0);
     const programRef = useRef<WebGLProgram | null>(null);
     const VERTEX_SHADER = useMemo(() => getVertexShader(), []);
@@ -66,6 +70,22 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({
         radius: 4.5, 
         target: { x: 0, y: 0, z: 0 } 
     });
+
+    const cameraRef = useRef(camera);
+    useEffect(() => { cameraRef.current = camera; }, [camera]);
+
+    // Resize WebGL canvas to match HiDPI viewport (avoids per-frame size checks)
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        const gl = glRef.current;
+        if (!canvas || !gl) return;
+        const w = viewportSize.pixelWidth;
+        const h = viewportSize.pixelHeight;
+        if (canvas.width !== w || canvas.height !== h) {
+            canvas.width = w; canvas.height = h;
+            gl.viewport(0, 0, w, h);
+        }
+    }, [viewportSize.pixelWidth, viewportSize.pixelHeight]);
     
     const [dragState, setDragState] = useState<{
         mode: 'ORBIT' | 'PAN' | 'ZOOM';
@@ -84,6 +104,17 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({
         if (!canvas) return;
         const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true, antialias: true });
         if (!gl) return;
+
+        glRef.current = gl;
+
+        // Initial HiDPI sizing (subsequent resizes handled by useViewportSize)
+        {
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            const w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
+            const h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
+            canvas.width = w; canvas.height = h;
+            gl.viewport(0, 0, w, h);
+        }
 
         const generateSphere = (lat: number, lon: number) => {
             const verts = [], norms = [], uvs = [], idx = [];
@@ -168,21 +199,17 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({
                 compile(compiledSource);
             }
             
-            if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight) {
-                canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
-                gl.viewport(0, 0, canvas.width, canvas.height);
-            }
-            
             gl.clearColor(0.1, 0.1, 0.1, 1.0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
             gl.enable(gl.DEPTH_TEST);
 
             if (isProgramReady.current && programRef.current && vaoRef.current) {
                 gl.useProgram(programRef.current);
                 
+                const cam = cameraRef.current;
                 const timelineRotation = autoRotate ? engineInstance.timeline.currentTime * 0.5 : 0;
-                const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta + timelineRotation);
-                const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
-                const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta + timelineRotation);
+                const eyeX = cam.target.x + cam.radius * Math.sin(cam.phi) * Math.cos(cam.theta + timelineRotation);
+                const eyeY = cam.target.y + cam.radius * Math.cos(cam.phi);
+                const eyeZ = cam.target.z + cam.radius * Math.sin(cam.phi) * Math.sin(cam.theta + timelineRotation);
                 const eye = { x: eyeX, y: eyeY, z: eyeZ };
 
                 const aspect = canvas.width / canvas.height;
@@ -190,7 +217,7 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({
                 Mat4Utils.perspective(45 * Math.PI / 180, aspect, 0.1, 100.0, proj);
 
                 const view = Mat4Utils.create();
-                Mat4Utils.lookAt(eye, camera.target, { x: 0, y: 1, z: 0 }, view);
+                Mat4Utils.lookAt(eye, cam.target, { x: 0, y: 1, z: 0 }, view);
 
                 const mvp = Mat4Utils.create();
                 Mat4Utils.multiply(proj, view, mvp);
@@ -210,7 +237,7 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({
         };
         requestRef.current = requestAnimationFrame(render);
         return () => { cancelAnimationFrame(requestRef.current); if (vaoRef.current) gl.deleteVertexArray(vaoRef.current); };
-    }, [primitive, autoRotate, camera, VERTEX_SHADER]); 
+    }, [primitive, autoRotate, VERTEX_SHADER]); 
 
     const handleMouseDown = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -223,7 +250,7 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({
             if (e.button === 1) mode = 'PAN';
             if (e.button === 2) mode = 'ZOOM';
         }
-        setDragState({ mode, startX: e.clientX, startY: e.clientY, startCamera: { ...camera } });
+        setDragState({ mode, startX: e.clientX, startY: e.clientY, startCamera: { ...cameraRef.current } });
         e.preventDefault();
     };
 
@@ -261,7 +288,7 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({
     };
 
     return (
-        <div className={`w-full h-full flex flex-col relative overflow-hidden group/viewport ${minimal ? 'rounded-md' : 'bg-black'}`}>
+        <div ref={containerRef} className={`w-full h-full flex flex-col relative overflow-hidden group/viewport ${minimal ? 'rounded-md' : 'bg-black'}`}>
             <div className="absolute inset-0 z-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'linear-gradient(#333 1px, transparent 1px), linear-gradient(90deg, #333 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
             <canvas ref={canvasRef} className={`w-full h-full block relative z-10 ${dragState ? 'cursor-grabbing' : 'cursor-grab'} active:cursor-grabbing`} onMouseDown={handleMouseDown} onWheel={handleWheel} onContextMenu={e => e.preventDefault()} />
             {error && (

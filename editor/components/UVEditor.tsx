@@ -1,5 +1,6 @@
 
-import React, { useRef, useEffect, useState, useContext, useLayoutEffect } from 'react';
+import React, { useRef, useEffect, useState, useContext } from 'react';
+import { useViewportSize, resizeCanvasToViewport } from '@/editor/hooks/useViewportSize';
 import { EditorContext } from '@/editor/state/EditorContext';
 import { assetManager } from '@/engine/AssetManager';
 import { engineInstance } from '@/engine/engine';
@@ -16,6 +17,7 @@ export const UVEditor: React.FC = () => {
     
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const viewportSize = useViewportSize(containerRef, { dprCap: 2 });
     
     const [transform, setTransform] = useState({ x: 50, y: 50, k: 300 }); 
     const [selectedVertex, setSelectedVertex] = useState<number>(-1);
@@ -23,7 +25,6 @@ export const UVEditor: React.FC = () => {
     const [selectionMode, setSelectionMode] = useState<SelectionMode>('VERTEX');
     
     const [isDragging, setIsDragging] = useState(false);
-    const [viewportSize, setViewportSize] = useState({ w: 1, h: 1 });
     const [editingAsset, setEditingAsset] = useState<StaticMeshAsset | SkeletalMeshAsset | null>(null);
     const [uvBuffer, setUvBuffer] = useState<Float32Array | null>(null);
 
@@ -57,31 +58,21 @@ export const UVEditor: React.FC = () => {
         }
     }, [selectedAssetIds, selectedEntityIds, editingAsset?.id]);
 
-    useLayoutEffect(() => {
-        if (!containerRef.current) return;
-        const observer = new ResizeObserver(entries => {
-            const { width, height } = entries[0].contentRect;
-            if (width > 0 && height > 0) setViewportSize({ w: width, h: height });
-        });
-        observer.observe(containerRef.current);
-        return () => observer.disconnect();
-    }, []);
-
     useEffect(() => {
         const canvas = canvasRef.current;
         if (!canvas) return;
-        if (canvas.width !== viewportSize.w || canvas.height !== viewportSize.h) {
-            canvas.width = viewportSize.w; canvas.height = viewportSize.h;
-        }
+        resizeCanvasToViewport(canvas, viewportSize);
         const ctx2d = canvas.getContext('2d');
         if (!ctx2d) return;
 
+        // Draw in CSS pixel space (mouse coords + UI layout), while the canvas is scaled to physical pixels.
+        ctx2d.setTransform(viewportSize.dpr, 0, 0, viewportSize.dpr, 0, 0);
         ctx2d.fillStyle = '#151515';
-        ctx2d.fillRect(0, 0, canvas.width, canvas.height);
+        ctx2d.fillRect(0, 0, viewportSize.cssWidth, viewportSize.cssHeight);
 
         if (!editingAsset || !uvBuffer) {
             ctx2d.fillStyle = '#444'; ctx2d.font = '12px Inter, sans-serif'; ctx2d.textAlign = 'center';
-            ctx2d.fillText("No Mesh Selected", canvas.width/2, canvas.height/2);
+            ctx2d.fillText("No Mesh Selected", viewportSize.cssWidth/2, viewportSize.cssHeight/2);
             return;
         }
 
@@ -151,7 +142,7 @@ export const UVEditor: React.FC = () => {
             const label = `UV: ${uvBuffer[selectedVertex*2].toFixed(3)}, ${uvBuffer[selectedVertex*2+1].toFixed(3)}`;
             ctx2d.fillText(label, toX(uvBuffer[selectedVertex*2]) + 12, toY(uvBuffer[selectedVertex*2+1]) + 4);
         }
-    }, [editingAsset, uvBuffer, transform, selectedVertex, selectedIndices, viewportSize]);
+    }, [editingAsset, uvBuffer, transform, selectedVertex, selectedIndices, viewportSize.cssWidth, viewportSize.cssHeight, viewportSize.dpr]);
 
     const handleMouseDown = (e: React.MouseEvent) => {
         if (!containerRef.current) return;

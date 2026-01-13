@@ -32,10 +32,14 @@ export const DraggableWindow = ({
         y: Math.max(50, window.innerHeight / 2 - 200 + (id.length * 10))
     });
 
-    const [size, setSize] = useState<{w: number, h: number | string}>({ w: width, h: height });
+    const [size, setSize] = useState<{w: number | string, h: number | string}>({ w: width, h: height });
     
     const [isDragging, setIsDragging] = useState(false);
     const [resizing, setResizing] = useState<ResizeDir | null>(null);
+    
+    // Maximize State
+    const [isMaximized, setIsMaximized] = useState(false);
+    const preMaximizeState = useRef<{x: number, y: number, w: number | string, h: number | string} | null>(null);
 
     const dragOffset = useRef({ x: 0, y: 0 });
     const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0, lx: 0, ly: 0 });
@@ -47,12 +51,13 @@ export const DraggableWindow = ({
         top: position.y, 
         width: size.w, 
         height: size.h === 'auto' ? undefined : size.h,
-        maxHeight: '90vh',
+        maxHeight: isMaximized ? 'calc(100vh - 40px)' : '90vh',
         position: 'fixed' as const,
-        borderRadius: uiConfig.windowBorderRadius,
+        borderRadius: isMaximized ? 0 : uiConfig.windowBorderRadius,
         '--handle-size': `${uiConfig.resizeHandleThickness}px`,
         '--handle-color': uiConfig.resizeHandleColor,
-        '--handle-opacity': uiConfig.resizeHandleOpacity
+        '--handle-opacity': uiConfig.resizeHandleOpacity,
+        transition: isDragging || resizing ? 'none' : 'all 0.2s cubic-bezier(0.25, 1, 0.5, 1)' 
     } as React.CSSProperties;
 
     // Helper to calculate geometry for centered edge handles based on length offset
@@ -72,6 +77,8 @@ export const DraggableWindow = ({
 
     useEffect(() => {
         const handleMove = (e: MouseEvent) => {
+            if (isMaximized) return; // Disable drag/resize when maximized
+
             if (resizing && windowRef.current) {
                 const dx = e.clientX - resizeStart.current.x;
                 const dy = e.clientY - resizeStart.current.y;
@@ -103,7 +110,7 @@ export const DraggableWindow = ({
             else if (isDragging) {
                 // Allow dragging slightly offscreen but keep header visible
                 const newX = e.clientX - dragOffset.current.x;
-                const newY = Math.max(0, Math.min(window.innerHeight - 30, e.clientY - dragOffset.current.y));
+                const newY = Math.max(40, Math.min(window.innerHeight - 30, e.clientY - dragOffset.current.y));
                 
                 setPosition({ x: newX, y: newY });
             }
@@ -123,10 +130,11 @@ export const DraggableWindow = ({
             window.removeEventListener('mousemove', handleMove);
             window.removeEventListener('mouseup', handleUp);
         };
-    }, [isDragging, resizing]);
+    }, [isDragging, resizing, isMaximized]);
 
     const handleMouseDown = (e: React.MouseEvent) => {
         if (onMouseDown) onMouseDown(); // Bring to front
+        if (isMaximized) return;
         if (e.button !== 0) return;
         if ((e.target as HTMLElement).closest('button')) return; // Don't drag if clicking buttons
         if (resizing) return;
@@ -138,7 +146,26 @@ export const DraggableWindow = ({
         };
     };
 
+    const handleMaximize = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (isMaximized) {
+            // Restore
+            if (preMaximizeState.current) {
+                setPosition({ x: preMaximizeState.current.x, y: preMaximizeState.current.y });
+                setSize({ w: preMaximizeState.current.w, h: preMaximizeState.current.h });
+            }
+            setIsMaximized(false);
+        } else {
+            // Maximize
+            preMaximizeState.current = { x: position.x, y: position.y, w: size.w, h: size.h };
+            setPosition({ x: 0, y: 40 }); // Below main toolbar
+            setSize({ w: '100%', h: 'calc(100vh - 40px)' });
+            setIsMaximized(true);
+        }
+    };
+
     const handleResizeStart = (e: React.MouseEvent, dir: ResizeDir) => {
+        if (isMaximized) return;
         e.stopPropagation();
         e.preventDefault();
         if (onMouseDown) onMouseDown();
@@ -164,7 +191,6 @@ export const DraggableWindow = ({
     };
 
     // Style injection for hover
-    // We inject a small style tag to handle the hover state using the CSS variables
     const hoverStyle = `
         .resize-handle:hover {
             background-color: var(--handle-color);
@@ -175,7 +201,7 @@ export const DraggableWindow = ({
     return (
         <div 
             ref={windowRef}
-            className={`glass-panel flex flex-col overflow-visible transition-transform duration-75 ${className}`}
+            className={`glass-panel flex flex-col overflow-visible ${className}`}
             style={windowStyle}
             onMouseDown={onMouseDown}
         >
@@ -183,9 +209,12 @@ export const DraggableWindow = ({
 
             {/* Header */}
             <div 
-                className="h-8 px-3 flex justify-between items-center shrink-0 cursor-move select-none border-b border-white/5 bg-gradient-to-r from-white/10 to-transparent overflow-hidden"
-                style={{ borderTopLeftRadius: uiConfig.windowBorderRadius, borderTopRightRadius: uiConfig.windowBorderRadius }}
+                className={`h-8 px-3 flex justify-between items-center shrink-0 border-b border-white/5 bg-gradient-to-r from-white/10 to-transparent overflow-hidden
+                    ${isMaximized ? 'cursor-default' : 'cursor-move'}
+                `}
+                style={{ borderTopLeftRadius: isMaximized ? 0 : uiConfig.windowBorderRadius, borderTopRightRadius: isMaximized ? 0 : uiConfig.windowBorderRadius }}
                 onMouseDown={handleMouseDown}
+                onDoubleClick={handleMaximize}
             >
                 <div className="flex items-center gap-2 text-white/90">
                     {icon && <Icon name={icon as any} size={14} className="text-accent opacity-90" />}
@@ -197,7 +226,14 @@ export const DraggableWindow = ({
                         className="p-1.5 hover:bg-white/10 rounded text-text-secondary hover:text-accent transition-colors"
                         title="Minimize to Bubble"
                     >
-                        <Icon name="Minimize2" size={14}/>
+                        <Icon name="Minimize2" size={12}/>
+                    </button>
+                    <button 
+                        onClick={handleMaximize} 
+                        className="p-1.5 hover:bg-white/10 rounded text-text-secondary hover:text-white transition-colors"
+                        title={isMaximized ? "Restore" : "Maximize"}
+                    >
+                        <Icon name={isMaximized ? "Minimize" : "Square"} size={12}/>
                     </button>
                     <button 
                         onClick={(e) => { e.stopPropagation(); onClose(); }} 
@@ -212,66 +248,70 @@ export const DraggableWindow = ({
             {/* Content */}
             <div 
                 className="flex-1 overflow-auto custom-scrollbar flex flex-col relative text-xs bg-black/20"
-                style={{ borderBottomLeftRadius: uiConfig.windowBorderRadius, borderBottomRightRadius: uiConfig.windowBorderRadius }}
+                style={{ borderBottomLeftRadius: isMaximized ? 0 : uiConfig.windowBorderRadius, borderBottomRightRadius: isMaximized ? 0 : uiConfig.windowBorderRadius }}
             >
                 {children}
             </div>
 
-            {/* Resize Handles (Dynamic) */}
-            {/* Top */}
-            <div 
-                className="resize-handle absolute cursor-ns-resize z-50 transition-colors" 
-                style={{ 
-                    top: `calc(var(--handle-size) * -0.5)`, 
-                    height: 'var(--handle-size)',
-                    left: offsetPct,
-                    width: lengthPct,
-                    ...getActiveStyle('n')
-                }}
-                onMouseDown={(e) => handleResizeStart(e, 'n')} 
-            />
-            {/* Bottom */}
-            <div 
-                className="resize-handle absolute cursor-ns-resize z-50 transition-colors" 
-                style={{ 
-                    bottom: `calc(var(--handle-size) * -0.5)`, 
-                    height: 'var(--handle-size)',
-                    left: offsetPct,
-                    width: lengthPct,
-                    ...getActiveStyle('s')
-                }}
-                onMouseDown={(e) => handleResizeStart(e, 's')} 
-            />
-            {/* Left */}
-            <div 
-                className="resize-handle absolute cursor-ew-resize z-50 transition-colors" 
-                style={{ 
-                    left: `calc(var(--handle-size) * -0.5)`, 
-                    width: 'var(--handle-size)',
-                    top: offsetPct,
-                    height: lengthPct,
-                    ...getActiveStyle('w')
-                }}
-                onMouseDown={(e) => handleResizeStart(e, 'w')} 
-            />
-            {/* Right */}
-            <div 
-                className="resize-handle absolute cursor-ew-resize z-50 transition-colors" 
-                style={{ 
-                    right: `calc(var(--handle-size) * -0.5)`, 
-                    width: 'var(--handle-size)',
-                    top: offsetPct,
-                    height: lengthPct,
-                    ...getActiveStyle('e')
-                }}
-                onMouseDown={(e) => handleResizeStart(e, 'e')} 
-            />
-            
-            {/* Corner Handles (Larger hit area) */}
-            <div className="absolute -top-1 -left-1 w-4 h-4 cursor-nwse-resize z-[51]" onMouseDown={(e) => handleResizeStart(e, 'nw')} />
-            <div className="absolute -top-1 -right-1 w-4 h-4 cursor-nesw-resize z-[51]" onMouseDown={(e) => handleResizeStart(e, 'ne')} />
-            <div className="absolute -bottom-1 -left-1 w-4 h-4 cursor-nesw-resize z-[51]" onMouseDown={(e) => handleResizeStart(e, 'sw')} />
-            <div className="absolute -bottom-1 -right-1 w-4 h-4 cursor-nwse-resize z-[51]" onMouseDown={(e) => handleResizeStart(e, 'se')} />
+            {/* Resize Handles (Dynamic) - Hidden when maximized */}
+            {!isMaximized && (
+                <>
+                    {/* Top */}
+                    <div 
+                        className="resize-handle absolute cursor-ns-resize z-50 transition-colors" 
+                        style={{ 
+                            top: `calc(var(--handle-size) * -0.5)`, 
+                            height: 'var(--handle-size)',
+                            left: offsetPct,
+                            width: lengthPct,
+                            ...getActiveStyle('n')
+                        }}
+                        onMouseDown={(e) => handleResizeStart(e, 'n')} 
+                    />
+                    {/* Bottom */}
+                    <div 
+                        className="resize-handle absolute cursor-ns-resize z-50 transition-colors" 
+                        style={{ 
+                            bottom: `calc(var(--handle-size) * -0.5)`, 
+                            height: 'var(--handle-size)',
+                            left: offsetPct,
+                            width: lengthPct,
+                            ...getActiveStyle('s')
+                        }}
+                        onMouseDown={(e) => handleResizeStart(e, 's')} 
+                    />
+                    {/* Left */}
+                    <div 
+                        className="resize-handle absolute cursor-ew-resize z-50 transition-colors" 
+                        style={{ 
+                            left: `calc(var(--handle-size) * -0.5)`, 
+                            width: 'var(--handle-size)',
+                            top: offsetPct,
+                            height: lengthPct,
+                            ...getActiveStyle('w')
+                        }}
+                        onMouseDown={(e) => handleResizeStart(e, 'w')} 
+                    />
+                    {/* Right */}
+                    <div 
+                        className="resize-handle absolute cursor-ew-resize z-50 transition-colors" 
+                        style={{ 
+                            right: `calc(var(--handle-size) * -0.5)`, 
+                            width: 'var(--handle-size)',
+                            top: offsetPct,
+                            height: lengthPct,
+                            ...getActiveStyle('e')
+                        }}
+                        onMouseDown={(e) => handleResizeStart(e, 'e')} 
+                    />
+                    
+                    {/* Corner Handles */}
+                    <div className="absolute -top-1 -left-1 w-4 h-4 cursor-nwse-resize z-[51]" onMouseDown={(e) => handleResizeStart(e, 'nw')} />
+                    <div className="absolute -top-1 -right-1 w-4 h-4 cursor-nesw-resize z-[51]" onMouseDown={(e) => handleResizeStart(e, 'ne')} />
+                    <div className="absolute -bottom-1 -left-1 w-4 h-4 cursor-nesw-resize z-[51]" onMouseDown={(e) => handleResizeStart(e, 'sw')} />
+                    <div className="absolute -bottom-1 -right-1 w-4 h-4 cursor-nwse-resize z-[51]" onMouseDown={(e) => handleResizeStart(e, 'se')} />
+                </>
+            )}
         </div>
     );
 };

@@ -1,20 +1,11 @@
-import { eventBus } from "@/engine/EventBus";
-import { assetManager } from "@/engine/AssetManager";
-import { engineInstance } from "@/engine/engine";
+import type { Engine } from '@/engine/engine';
+import { eventBus } from '@/engine/EventBus';
+import { assetManager } from '@/engine/AssetManager';
 
 export type EngineContext = {
-  engine: typeof engineInstance;
+  engine: Engine;
   assets: typeof assetManager;
   events: typeof eventBus;
   /** Feature command registry (populated by modules). */
   commands: Record<string, any>;
 };
-
-export function createEngineContext(): EngineContext {
-  return {
-    engine: engineInstance,
-    assets: assetManager,
-    events: eventBus,
-    commands: {},
-  };
-}

@@ -1,45 +1,43 @@
-
 import type { EngineAPI } from './EngineAPI';
-import { eventBus } from '@/engine/EventBus';
-import { engineInstance } from '@/engine/engine';
+import type { EngineContext } from '@/engine/core/EngineContext';
 import type { SimulationMode, MeshComponentMode } from '@/types';
 
-export function createEngineAPI(): EngineAPI {
+export function createEngineAPI(ctx: EngineContext): EngineAPI {
   return {
     commands: {
       selection: {
         setSelected(ids: string[]) {
-          engineInstance.setSelected(ids);
+          ctx.engine.setSelected(ids);
         },
         clear() {
-          engineInstance.setSelected([]);
+          ctx.engine.setSelected([]);
         },
       },
       simulation: {
         setMode(mode: SimulationMode) {
-          engineInstance.simulationMode = mode;
-          engineInstance.notifyUI();
+          ctx.engine.simulationMode = mode;
+          ctx.engine.notifyUI();
         },
       },
       mesh: {
         setComponentMode(mode: MeshComponentMode) {
-          engineInstance.meshComponentMode = mode;
-          engineInstance.notifyUI();
+          ctx.engine.meshComponentMode = mode;
+          ctx.engine.notifyUI();
         },
       },
     },
 
     subscribe(event: string, cb: (payload: any) => void) {
-      eventBus.on(event, cb);
-      return () => eventBus.off(event, cb);
+      ctx.events.on(event, cb);
+      return () => ctx.events.off(event, cb);
     },
 
     getSelectedIds() {
-      const indices = engineInstance.selectionSystem.selectedIndices;
+      const indices = ctx.engine.selectionSystem.selectedIndices;
       const ids: string[] = [];
-      indices.forEach(idx => {
-          const id = engineInstance.ecs.store.ids[idx];
-          if (id) ids.push(id);
+      indices.forEach((idx: number) => {
+        const id = ctx.engine.ecs.store.ids[idx];
+        if (id) ids.push(id);
       });
       return ids;
     },

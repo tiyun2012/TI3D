@@ -1,5 +1,4 @@
 
-import { engineInstance } from './engine';
 import { Mat4Utils, Vec3Utils } from './math';
 import { Vector3, ToolType } from '@/types';
 import { assetManager } from './AssetManager';
@@ -7,9 +6,31 @@ import { StaticMeshAsset } from '@/types';
 
 export type GizmoAxis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'VIEW' | null;
 
+export interface IGizmoEngineContext {
+    ecs: any;
+    sceneGraph: any;
+    selectionSystem: any;
+    meshComponentMode: any;
+    currentCameraPos: Vector3;
+    currentViewProj: Float32Array | null;
+    renderer: { renderGizmos: (vp: Float32Array, pos: {x:number,y:number,z:number}, scale: number, hoverAxis: GizmoAxis, activeAxis: GizmoAxis) => void };
+    syncTransforms: (notify?: boolean) => void;
+    notifyUI: () => void;
+    pushUndoState: () => void;
+    startVertexDrag: (entityId: string) => void;
+    updateVertexDrag: (entityId: string, delta: Vector3) => void;
+    endVertexDrag: () => void;
+}
+
+
 export class GizmoSystem {
+    constructor(private engine: IGizmoEngineContext) {}
+
     activeAxis: GizmoAxis = null;
     hoverAxis: GizmoAxis = null;
+
+    /** If true, also allow gizmo rendering + interaction while the active tool is SELECT. */
+    renderInSelectTool = false;
     
     private tool: ToolType = 'SELECT'; 
     private gizmoScale = 1.0;
@@ -26,51 +47,53 @@ export class GizmoSystem {
         if (tool === 'SELECT' && this.isDragging) {
             this.isDragging = false;
             this.activeAxis = null;
-            engineInstance.endVertexDrag();
+            this.engine.endVertexDrag();
         }
     }
 
     update(dt: number, mx: number, my: number, width: number, height: number, isDown: boolean, isUp: boolean) {
-        if (this.tool === 'SELECT') {
+        // By default the SELECT tool disables gizmo interaction.
+        // Asset viewports can opt-in to interaction in SELECT (Unity-style) by setting renderInSelectTool.
+        if (this.tool === 'SELECT' && !this.renderInSelectTool) {
             this.hoverAxis = null;
             this.activeAxis = null;
             return;
         }
 
-        const selected = engineInstance.selectionSystem.selectedIndices; // Updated
+        const selected = this.engine.selectionSystem.selectedIndices; // Updated
         if (selected.size === 0) return; 
         
         let worldPos = { x: 0, y: 0, z: 0 };
         let entityId: string | null = null;
 
-        const isComponentMode = engineInstance.meshComponentMode !== 'OBJECT';
+        const isComponentMode = this.engine.meshComponentMode !== 'OBJECT';
         
         if (isComponentMode) {
-            const sub = engineInstance.selectionSystem.subSelection; // Updated
+            const sub = this.engine.selectionSystem.subSelection; // Updated
             if (sub.vertexIds.size === 0 && sub.edgeIds.size === 0 && sub.faceIds.size === 0) {
                 this.hoverAxis = null;
                 this.activeAxis = null;
                 return;
             }
 
-            const idx = Array.from(selected)[0];
-            entityId = engineInstance.ecs.store.ids[idx];
+            const idx = Array.from(selected)[0] as number;
+            entityId = this.engine.ecs.store.ids[idx];
             worldPos = this.getSelectedComponentCentroid(entityId);
         } else if (selected.size === 1) {
-            const idx = Array.from(selected)[0];
-            entityId = engineInstance.ecs.store.ids[idx];
-            worldPos = engineInstance.sceneGraph.getWorldPosition(entityId);
+            const idx = Array.from(selected)[0] as number;
+            entityId = this.engine.ecs.store.ids[idx];
+            worldPos = this.engine.sceneGraph.getWorldPosition(entityId);
         } else {
             return;
         }
 
         if (!entityId) return;
 
-        const camPos = engineInstance.currentCameraPos;
+        const camPos = this.engine.currentCameraPos;
         const dist = Math.sqrt((camPos.x-worldPos.x)**2 + (camPos.y-worldPos.y)**2 + (camPos.z-worldPos.z)**2);
         this.gizmoScale = dist * 0.15;
 
-        const vp = engineInstance.currentViewProj;
+        const vp = this.engine.currentViewProj;
         if (!vp) return;
         const invVP = new Float32Array(16);
         if (!Mat4Utils.invert(vp, invVP)) return;
@@ -82,10 +105,10 @@ export class GizmoSystem {
                 this.isDragging = false;
                 this.activeAxis = null;
                 if (isComponentMode) {
-                    engineInstance.endVertexDrag();
+                    this.engine.endVertexDrag();
                 }
-                engineInstance.pushUndoState();
-                engineInstance.notifyUI();
+                this.engine.pushUndoState();
+                this.engine.notifyUI();
             } else {
                 this.handleDrag(ray, entityId, isComponentMode);
             }
@@ -101,59 +124,70 @@ export class GizmoSystem {
     }
 
     render() {
-        if (this.tool === 'SELECT') return;
+        if (this.tool === 'SELECT' && !this.renderInSelectTool) return;
 
-        const selected = engineInstance.selectionSystem.selectedIndices; // Updated
+        const selected = this.engine.selectionSystem.selectedIndices; // Updated
         if (selected.size === 0) return;
 
         let pos = { x: 0, y: 0, z: 0 };
         
-        const isComponentMode = engineInstance.meshComponentMode !== 'OBJECT';
+        const isComponentMode = this.engine.meshComponentMode !== 'OBJECT';
 
         if (isComponentMode) {
-            const sub = engineInstance.selectionSystem.subSelection; // Updated
+            const sub = this.engine.selectionSystem.subSelection; // Updated
             if (sub.vertexIds.size === 0 && sub.edgeIds.size === 0 && sub.faceIds.size === 0) return;
 
-            const idx = Array.from(selected)[0];
-            const entityId = engineInstance.ecs.store.ids[idx];
+            const idx = Array.from(selected)[0] as number;
+            const entityId = this.engine.ecs.store.ids[idx];
             pos = this.getSelectedComponentCentroid(entityId);
         } else if (selected.size === 1) {
-            const idx = Array.from(selected)[0];
+            const idx = Array.from(selected)[0] as number;
             pos = {
-                x: engineInstance.ecs.store.worldMatrix[idx*16 + 12],
-                y: engineInstance.ecs.store.worldMatrix[idx*16 + 13],
-                z: engineInstance.ecs.store.worldMatrix[idx*16 + 14]
+                x: this.engine.ecs.store.worldMatrix[idx*16 + 12],
+                y: this.engine.ecs.store.worldMatrix[idx*16 + 13],
+                z: this.engine.ecs.store.worldMatrix[idx*16 + 14]
             };
         } else {
             return;
         }
         
-        if (engineInstance.currentViewProj) {
-            engineInstance.renderer.renderGizmos(
-                engineInstance.currentViewProj, 
+        // Ensure gizmo scale stays correct even if the camera changes without a mouse-move event.
+        // (Asset preview viewports and mouse-wheel zoom can otherwise leave gizmoScale stale / zero.)
+        const camPos = this.engine.currentCameraPos;
+        const dist = Math.sqrt(
+            (camPos.x - pos.x) * (camPos.x - pos.x) +
+            (camPos.y - pos.y) * (camPos.y - pos.y) +
+            (camPos.z - pos.z) * (camPos.z - pos.z),
+        );
+        // Match engine viewport tuning: constant screen-space-ish size.
+        this.gizmoScale = Math.max(0.05, dist * 0.15);
+
+        if (this.engine.currentViewProj) {
+            this.engine.renderer.renderGizmos(
+                this.engine.currentViewProj, 
                 pos, 
                 this.gizmoScale, 
-                this.hoverAxis as string, 
-                this.activeAxis as string
+                this.hoverAxis, 
+                this.activeAxis
             );
         }
     }
 
     private getSelectedComponentCentroid(entityId: string): Vector3 {
         const centroid = { x: 0, y: 0, z: 0 };
-        const idx = engineInstance.ecs.idToIndex.get(entityId);
+        const idx = this.engine.ecs.idToIndex.get(entityId);
         if (idx === undefined) return centroid;
 
-        const meshIntId = engineInstance.ecs.store.meshType[idx];
+        const meshIntId = this.engine.ecs.store.meshType[idx];
         const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
         if (!assetUuid) return centroid;
         const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
         if (!asset) return centroid;
 
-        const worldMat = engineInstance.sceneGraph.getWorldMatrix(entityId);
+        const worldMat = this.engine.sceneGraph.getWorldMatrix(entityId);
         if (!worldMat) return centroid;
 
-        const vertexIds = Array.from(engineInstance.selectionSystem.getSelectionAsVertices()); // Updated
+        const vertexIds = Array.from(this.engine.selectionSystem.getSelectionAsVertices() as Set<number>); // Updated
         if (vertexIds.length === 0) return centroid;
 
         for (const vIdx of vertexIds) {
@@ -174,7 +208,7 @@ export class GizmoSystem {
     private startDrag(ray: any, pos: Vector3, entityId: string, isComponentMode: boolean) {
         this.startPos = { ...pos };
         const axis = this.activeAxis;
-        const viewDir = Vec3Utils.normalize(Vec3Utils.subtract(engineInstance.currentCameraPos, pos, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+        const viewDir = Vec3Utils.normalize(Vec3Utils.subtract(this.engine.currentCameraPos, pos, {x:0,y:0,z:0}), {x:0,y:0,z:0});
         
         const X = {x:1,y:0,z:0}; const Y = {x:0,y:1,z:0}; const Z = {x:0,y:0,z:1};
         
@@ -193,7 +227,7 @@ export class GizmoSystem {
         }
 
         if (isComponentMode) {
-            engineInstance.startVertexDrag(entityId);
+            this.engine.startVertexDrag(entityId);
         }
     }
 
@@ -211,21 +245,34 @@ export class GizmoSystem {
 
             if (isComponentMode) {
                 const targetPos = Vec3Utils.subtract(constrainedHit, this.clickOffset, {x:0,y:0,z:0});
-                const totalDelta = Vec3Utils.subtract(targetPos, this.startPos, {x:0,y:0,z:0});
-                engineInstance.updateVertexDrag(entityId, totalDelta);
+                const totalDeltaWorld = Vec3Utils.subtract(targetPos, this.startPos, {x:0,y:0,z:0});
+
+                // Vertex/edge/face deformation expects a local-space delta.
+                // Convert world-space drag delta into the entity's local space.
+                // (If the entity has identity transform, this is a no-op.)
+                let totalDeltaLocal = totalDeltaWorld;
+                const worldMat = this.engine.sceneGraph.getWorldMatrix?.(entityId);
+                if (worldMat) {
+                    const invWorld = Mat4Utils.create();
+                    if (Mat4Utils.invert(worldMat, invWorld)) {
+                        totalDeltaLocal = Vec3Utils.transformMat4Normal(totalDeltaWorld, invWorld, {x:0,y:0,z:0});
+                    }
+                }
+
+                this.engine.updateVertexDrag(entityId, totalDeltaLocal);
             } else {
                 const target = Vec3Utils.subtract(constrainedHit, this.clickOffset, {x:0,y:0,z:0});
                 this.setWorldPosition(entityId, target);
-                engineInstance.syncTransforms();
+                this.engine.syncTransforms();
             }
         }
     }
 
     private setWorldPosition(entityId: string, targetWorldPos: Vector3) {
-        const parentId = engineInstance.sceneGraph.getParentId(entityId);
+        const parentId = this.engine.sceneGraph.getParentId(entityId);
         const parentMat = Mat4Utils.create();
         if (parentId) {
-            const pm = engineInstance.sceneGraph.getWorldMatrix(parentId);
+            const pm = this.engine.sceneGraph.getWorldMatrix(parentId);
             if (pm) Mat4Utils.copy(parentMat, pm);
         }
         const invParent = Mat4Utils.create();
@@ -234,10 +281,10 @@ export class GizmoSystem {
         const localPos = Vec3Utils.create();
         Vec3Utils.transformMat4(targetWorldPos, invParent, localPos);
         
-        const idx = engineInstance.ecs.getEntityIndex(entityId);
+        const idx = this.engine.ecs.getEntityIndex(entityId);
         if (idx !== undefined) {
-             engineInstance.ecs.store.setPosition(idx, localPos.x, localPos.y, localPos.z);
-             engineInstance.sceneGraph.setDirty(entityId);
+             this.engine.ecs.store.setPosition(idx, localPos.x, localPos.y, localPos.z);
+             this.engine.sceneGraph.setDirty(entityId);
         }
     }
 
@@ -332,5 +379,3 @@ export class GizmoSystem {
         return Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});
     }
 }
-
-export const gizmoSystem = new GizmoSystem();

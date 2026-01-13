@@ -223,21 +223,83 @@ export class SelectionSystem {
         const pick = this.pickMeshComponent(entityId, mx, my, w, h);
         
         if (pick) {
-            const vPos = {
-                x: asset.geometry.vertices[pick.vertexId*3],
-                y: asset.geometry.vertices[pick.vertexId*3+1],
-                z: asset.geometry.vertices[pick.vertexId*3+2]
+            // Compare distances in world space (pick.worldPos is returned in world space).
+            const localV = {
+                x: asset.geometry.vertices[pick.vertexId * 3],
+                y: asset.geometry.vertices[pick.vertexId * 3 + 1],
+                z: asset.geometry.vertices[pick.vertexId * 3 + 2],
             };
-            
-            const dist = Vec3Utils.distance(pick.worldPos, vPos); 
-            
-            if (dist < 0.2) { 
+            const wm = this.engine.sceneGraph.getWorldMatrix(entityId);
+            const vWorld = wm ? Vec3Utils.transformMat4(localV, wm, { x: 0, y: 0, z: 0 }) : localV;
+
+            const dist = Vec3Utils.distance(pick.worldPos, vWorld);
+            if (dist < 0.2) {
                 this.hoveredVertex = { entityId, index: pick.vertexId };
                 return;
             }
         }
         
         this.hoveredVertex = null;
+    }
+
+    /**
+     * Marquee selection for vertices in the currently selected mesh.
+     * Returns the list of vertex indices whose projected screen position overlaps the rect.
+     */
+    selectVerticesInRect(x: number, y: number, w: number, h: number): number[] {
+        if (this.engine.meshComponentMode !== 'VERTEX' || this.selectedIndices.size === 0 || !this.engine.currentViewProj) return [];
+
+        const idx = Array.from(this.selectedIndices)[0];
+        const entityId = this.engine.ecs.store.ids[idx];
+        const meshIntId = this.engine.ecs.store.meshType[idx];
+        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+        if (!assetUuid) return [];
+        const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
+        if (!asset?.geometry?.vertices) return [];
+
+        const worldMat = this.engine.sceneGraph.getWorldMatrix(entityId);
+        if (!worldMat) return [];
+
+        const selLeft = x;
+        const selRight = x + w;
+        const selTop = y;
+        const selBottom = y + h;
+
+        const vp = this.engine.currentViewProj;
+        const verts = asset.geometry.vertices;
+        const out: number[] = [];
+
+        // Unroll world matrix for speed.
+        const m0 = worldMat[0], m1 = worldMat[1], m2 = worldMat[2], m12 = worldMat[12];
+        const m4 = worldMat[4], m5 = worldMat[5], m6 = worldMat[6], m13 = worldMat[13];
+        const m8 = worldMat[8], m9 = worldMat[9], m10 = worldMat[10], m14 = worldMat[14];
+
+        const vw = this.engine.currentWidth;
+        const vh = this.engine.currentHeight;
+
+        for (let i = 0; i < verts.length / 3; i++) {
+            const lx = verts[i * 3];
+            const ly = verts[i * 3 + 1];
+            const lz = verts[i * 3 + 2];
+
+            const wx = m0 * lx + m4 * ly + m8 * lz + m12;
+            const wy = m1 * lx + m5 * ly + m9 * lz + m13;
+            const wz = m2 * lx + m6 * ly + m10 * lz + m14;
+
+            const wClip = vp[3] * wx + vp[7] * wy + vp[11] * wz + vp[15];
+            if (wClip <= 0.001) continue;
+
+            const invW = 1.0 / wClip;
+            const ndcX = (vp[0] * wx + vp[4] * wy + vp[8] * wz + vp[12]) * invW;
+            const ndcY = (vp[1] * wx + vp[5] * wy + vp[9] * wz + vp[13]) * invW;
+
+            const sx = (ndcX * 0.5 + 0.5) * vw;
+            const sy = (1.0 - (ndcY * 0.5 + 0.5)) * vh;
+
+            if (sx >= selLeft && sx <= selRight && sy >= selTop && sy <= selBottom) out.push(i);
+        }
+
+        return out;
     }
 
     selectVerticesInBrush(mx: number, my: number, width: number, height: number, add: boolean = true) {

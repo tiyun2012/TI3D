@@ -1,9 +1,10 @@
+
 import React, { useRef, useEffect, useState, useLayoutEffect, useContext, useCallback } from 'react';
+import { useViewportSize } from '@/editor/hooks/useViewportSize';
 import { createPortal } from 'react-dom';
 import { Entity, ToolType, MeshComponentMode } from '@/types';
 import { SceneGraph } from '@/engine/SceneGraph';
 import { engineInstance } from '@/engine/engine';
-import { gizmoSystem } from '@/engine/GizmoSystem';
 import { Mat4Utils, Vec3Utils, RayUtils, AABBUtils } from '@/engine/math';
 import { VIEW_MODES, COMPONENT_MASKS } from '@/engine/constants';
 import { Icon } from './Icon';
@@ -35,8 +36,13 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         setTool
     } = useContext(EditorContext)!;
     
+    const containerRef = useRef<HTMLDivElement>(null);
+
     // --- HOOKS ---
     const { isAdjustingBrush, isBrushKeyHeld } = useBrushInteraction({
+        scopeRef: containerRef,
+        // Only allow brush/heatmap interactions in component mode (VERTEX/EDGE/FACE).
+        isBrushContextEnabled: () => meshComponentMode !== 'OBJECT',
         onBrushAdjustEnd: () => engineInstance.endVertexDrag()
     });
     
@@ -117,7 +123,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         selectedIds
     ]);
 
-    const containerRef = useRef<HTMLDivElement>(null);
+    const viewportSize = useViewportSize(containerRef, { dprCap: 2 });
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const viewMenuRef = useRef<HTMLDivElement>(null);
 
@@ -143,54 +149,56 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         if (canvasRef.current && !engineInstance.renderer.gl) {
             engineInstance.initGL(canvasRef.current);
         }
-        
-        const handleResize = () => {
-            if (containerRef.current) {
-                const { width, height } = containerRef.current.getBoundingClientRect();
-                engineInstance.resize(width, height);
-            }
+
+        // Start Engine Render Loop
+        engineInstance.startSystem();
+
+        return () => {
+            // Optional: Stop engine loop if scene view unmounts
+            engineInstance.stopSystem();
         };
-        const obs = new ResizeObserver(handleResize);
-        if (containerRef.current) obs.observe(containerRef.current);
-        
-        return () => obs.disconnect();
     }, []);
 
+    // Resize renderer (HiDPI-aware)
     useEffect(() => {
-        let lastTime = performance.now();
-        let frameId: number;
-        
-        const loop = (time: number) => {
-            const dt = (time - lastTime) / 1000;
-            lastTime = time;
-            
-            const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta);
-            const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
-            const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
-            
-            const width = containerRef.current?.clientWidth || 1;
-            const height = containerRef.current?.clientHeight || 1;
-            
-            const aspect = width / height;
-            const proj = Mat4Utils.create();
-            Mat4Utils.perspective(45 * Math.PI / 180, aspect, 0.1, 1000.0, proj);
-            const view = Mat4Utils.create();
-            Mat4Utils.lookAt({x:eyeX, y:eyeY, z:eyeZ}, camera.target, {x:0,y:1,z:0}, view);
-            const vp = Mat4Utils.create();
-            Mat4Utils.multiply(proj, view, vp);
-            engineInstance.updateCamera(vp, {x:eyeX, y:eyeY, z:eyeZ}, width, height);
-            gizmoSystem.setTool(tool);
+        engineInstance.resize(viewportSize.cssWidth, viewportSize.cssHeight, viewportSize.dpr);
+    }, [viewportSize.cssWidth, viewportSize.cssHeight, viewportSize.dpr]);
 
+
+    // Sync Camera Data to Engine on Change
+    useEffect(() => {
+        const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta);
+        const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
+        const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
+        
+        const width = viewportSize.cssWidth || 1;
+        const height = viewportSize.cssHeight || 1;
+        
+        const aspect = width / height;
+        const proj = Mat4Utils.create();
+        Mat4Utils.perspective(45 * Math.PI / 180, aspect, 0.1, 1000.0, proj);
+        const view = Mat4Utils.create();
+        Mat4Utils.lookAt({x:eyeX, y:eyeY, z:eyeZ}, camera.target, {x:0,y:1,z:0}, view);
+        const vp = Mat4Utils.create();
+        Mat4Utils.multiply(proj, view, vp);
+        
+        engineInstance.updateCamera(vp, {x:eyeX, y:eyeY, z:eyeZ}, width, height);
+        engineInstance.gizmoSystem.setTool(tool);
+    }, [camera, tool, viewportSize.cssWidth, viewportSize.cssHeight]);
+
+    // Debug Draw for Soft Selection Brush
+    useEffect(() => {
+        const updateBrushDraw = () => {
             if (engineInstance.meshComponentMode !== 'OBJECT' && engineInstance.selectionSystem.selectedIndices.size > 0 && softSelectionEnabled) {
                 const idx = Array.from(engineInstance.selectionSystem.selectedIndices)[0];
                 const entityId = engineInstance.ecs.store.ids[idx];
                 if (entityId) {
                     const worldPos = engineInstance.sceneGraph.getWorldPosition(entityId); 
-                    const scale = Math.max(engineInstance.ecs.store.scaleX[idx], engineInstance.ecs.store.scaleY[idx]);
                     const rad = softSelectionRadius;
                     
                     const segments = 32;
                     const prev = { x: worldPos.x + rad, y: worldPos.y, z: worldPos.z };
+                    engineInstance.debugRenderer.begin(); // Reset previous debug lines for this frame (handled by Engine tick usually, but safe here)
                     for(let i=1; i<=segments; i++) {
                         const th = (i/segments) * Math.PI * 2;
                         const cur = { 
@@ -203,13 +211,13 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     }
                 }
             }
-
-            engineInstance.tick(dt);
-            frameId = requestAnimationFrame(loop);
         };
-        frameId = requestAnimationFrame(loop);
-        return () => cancelAnimationFrame(frameId);
-    }, [camera, tool, softSelectionEnabled, softSelectionRadius]); 
+        // We can hook into the engine update loop via subscription if we want per-frame updates
+        // or just rely on react state changes. 
+        // For smooth brush resizing, the useBrushInteraction hook updates softSelectionRadius state, triggering this effect.
+        updateBrushDraw();
+    }, [softSelectionEnabled, softSelectionRadius, meshComponentMode, selectedIds]);
+
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -236,8 +244,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         const my = e.clientY - rect.top;
 
         if (e.button === 0 && !isAdjustingBrush && !e.altKey) {
-            gizmoSystem.update(0, mx, my, rect.width, rect.height, true, false);
-            if (gizmoSystem.activeAxis) return; 
+            engineInstance.gizmoSystem.update(0, mx, my, rect.width, rect.height, true, false);
+            if (engineInstance.gizmoSystem.activeAxis) return; 
         }
 
         if (e.button === 2 && !e.altKey) {
@@ -353,7 +361,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             engineInstance.selectionSystem.selectVerticesInBrush(mx, my, rect.width, rect.height, !e.ctrlKey); 
         }
 
-        gizmoSystem.update(0, mx, my, rect.width, rect.height, false, false);
+        engineInstance.gizmoSystem.update(0, mx, my, rect.width, rect.height, false, false);
 
         if (meshComponentMode !== 'OBJECT') {
             if (meshComponentMode === 'VERTEX') engineInstance.selectionSystem.highlightVertexAt(mx, my, rect.width, rect.height);
@@ -393,7 +401,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         engineInstance.isInputDown = false;
         if (containerRef.current) {
             const rect = containerRef.current.getBoundingClientRect();
-            gizmoSystem.update(0, e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, false, true);
+            engineInstance.gizmoSystem.update(0, e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, false, true);
         }
         setDragState(null);
     };
